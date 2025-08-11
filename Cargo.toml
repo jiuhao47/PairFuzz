@@ -46,3 +46,8 @@ path = "src/main.rs"
 [[bin]]
 name = "libafl_cc"
 path = "src/bin/libafl_cc.rs"
+
+[[bin]]
+
+name = "libafl_cxx"
+path = "src/bin/libafl_cxx.rs"

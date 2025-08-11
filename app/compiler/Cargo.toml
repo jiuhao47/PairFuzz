@@ -1,0 +1,15 @@
+[package]
+name = "libafl_compilers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libafl_cc = { path = "../../LibAFL/crates/libafl_cc" }
+
+[[bin]]
+name = "libafl_cc"
+path = "src/bin/libafl_cc.rs"
+
+[[bin]]
+name = "libafl_cxx"
+path = "src/bin/libafl_cxx.rs"

@@ -1,3 +1,5 @@
 /target
 app/src/
-app/script/patch.bak
+app/script/
+app/build/
+libs/

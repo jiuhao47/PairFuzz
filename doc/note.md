@@ -20,3 +20,4 @@
 5. 目前的diff没有去重设计，有大量的重复，解决了，通过feedback_and_fast!
 6. libafl没有做diff模式的时间收集实现，实现了一个空
    > home/jiuhao/workspace/workshop/diffray/LibAFL/crates/libafl/src/observers/mod.rs 395
+7. 时间和执行次数的控制不够精确

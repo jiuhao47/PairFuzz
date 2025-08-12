@@ -1,13 +1,14 @@
 [package]
-name = "baby_fuzzer_swap_differential"
-version = "0.15.4"
-authors = ["Addison Crump <research@addisoncrump.info>"]
+name = "diffray"
+version = "0.1.0"
+authors = ["Junyan Jiang <jiangjunyan20040728@gmail.com>"]
 edition = "2021"
-default-run = "fuzzer_sd"
+default-run = "diffray"
 
 [features]
 tui = ["libafl/tui_monitor"]
 multimap = []
+# buggy
 
 [profile.dev]
 panic = "abort"
@@ -40,7 +41,7 @@ clap = { version = "4.5", features = ["derive"] }
 libafl_cc = { path = "./LibAFL/crates/libafl_cc" }
 
 [[bin]]
-name = "fuzzer_sd"
+name = "diffray"
 path = "src/main.rs"
 
 [[bin]]

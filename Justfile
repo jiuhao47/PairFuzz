@@ -1,4 +1,4 @@
-FUZZER_NAME := 'fuzzer_sd'
+FUZZER_NAME := 'diffray'
 PROJECT_DIR := absolute_path(".")
 PROFILE := 'release'
 PROFILE_DIR := 'release'
@@ -11,12 +11,19 @@ alias build := fuzzer
 
 cc:
     cargo build --profile={{PROFILE}} --bin libafl_cc
+cxx:
+    cargo build --profile={{PROFILE}} --bin libafl_cxx
 
-fuzzer: cc
+fuzzer: cc cxx
 	cargo build --profile={{PROFILE}}
 
 run: fuzzer
-	{{FUZZER}}
+	rm -rf crashes
+	{{FUZZER}} -t 10 -i seeds/
+
+run_directly:
+	rm -rf crashes
+	{{FUZZER}} -t 10 -c -i seeds/
 
 [linux]
 [macos]

@@ -1,5 +1,18 @@
 #[cfg(windows)]
-use std::ptr::write_volatile;
+use libafl::{
+    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
+    events::SimpleEventManager,
+    executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
+    feedbacks::{CrashFeedback, MaxMapFeedback},
+    fuzzer::{Fuzzer, StdFuzzer},
+    generators::RandPrintablesGenerator,
+    inputs::{BytesInput, HasTargetBytes},
+    mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
+    observers::StdMapObserver,
+    schedulers::QueueScheduler,
+    stages::mutational::StdMutationalStage,
+    state::{HasCorpus, HasSolutions, StdState},
+};
 use std::{
     alloc::{alloc_zeroed, Layout},
     fs,
@@ -14,10 +27,11 @@ use libafl::monitors::tui::TuiMonitor;
 #[cfg(not(feature = "tui"))]
 use libafl::monitors::SimpleMonitor;
 use libafl::{
-    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus, OnDiskCorpus},
+    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleEventManager,
     executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
-    feedbacks::{CrashFeedback, MaxMapFeedback},
+    feedback_and_fast,
+    feedbacks::{DiffExitKindFeedback, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     inputs::{BytesInput, HasTargetBytes},
@@ -46,7 +60,7 @@ mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-use bindings::{inspect_first, inspect_second};
+use bindings::{libpng_parse, libspng_parse};
 
 /// 差分模糊测试器命令行参数
 #[derive(Parser, Debug)]
@@ -163,19 +177,27 @@ pub fn main() {
     let mut first_harness = |input: &BytesInput| {
         let target = input.target_bytes();
         let buf = target.as_slice();
-        if unsafe { inspect_first(buf.as_ptr(), buf.len()) } {
-            ExitKind::Crash
-        } else {
+        let result = unsafe { libpng_parse(buf.as_ptr(), buf.len()) };
+        // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
+        if result == 0 {
+            // println!("libpng_parse return {}", result);
             ExitKind::Ok
+        } else {
+            // println!("libpng_parse return {}", result);
+            ExitKind::Crash
         }
     };
     let mut second_harness = |input: &BytesInput| {
         let target = input.target_bytes();
         let buf = target.as_slice();
-        if unsafe { inspect_second(buf.as_ptr(), buf.len()) } {
-            ExitKind::Crash
-        } else {
+        let result = unsafe { libspng_parse(buf.as_ptr(), buf.len()) };
+        // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
+        if result == 0 {
+            // println!("libspng_parse return {}", result);
             ExitKind::Ok
+        } else {
+            // println!("libspng_parse return {}", result);
+            ExitKind::Crash
         }
     };
 
@@ -278,7 +300,11 @@ pub fn main() {
 
     // A feedback to choose if an input is a solution or not
     // Crash here means "both crashed", which is our objective
-    let mut objective = CrashFeedback::new();
+    // let mut objective = CrashFeedback::new();
+    let mut objective = feedback_and_fast!(
+        DiffExitKindFeedback::new(),
+        MaxMapFeedback::with_name("mapfeedback_metadata_objective", &map_observer)
+    );
 
     // create a State from scratch
     let mut state = StdState::new(
@@ -353,32 +379,35 @@ pub fn main() {
                 println!("从目录加载初始种子: {:?}", input_dir);
             }
 
-            // 从磁盘加载种子文件
-            let seed_corpus = OnDiskCorpus::new(input_dir.clone()).unwrap();
-            let seed_count = seed_corpus.count();
+            // 使用 load_initial_inputs 方法加载种子
+            state
+                .load_initial_inputs(
+                    &mut fuzzer,
+                    &mut differential_executor,
+                    &mut mgr,
+                    &[input_dir.clone()],
+                )
+                .unwrap_or_else(|err| {
+                    eprintln!("无法加载初始种子从 {:?}: {}", input_dir, err);
 
-            if seed_count > 0 {
-                if args.verbose {
-                    println!("找到 {} 个种子文件", seed_count);
-                }
+                    if args.verbose {
+                        println!("种子加载失败，生成随机初始输入");
+                    }
 
-                // 将种子加载到状态中
-                for seed_id in seed_corpus.ids() {
-                    let seed_input = seed_corpus.get(seed_id).unwrap().borrow().clone();
-                    state.corpus_mut().add(seed_input).unwrap();
-                }
-            } else {
-                println!("警告: 种子目录为空，将生成随机初始输入");
-                // Generate 8 initial inputs
-                state
-                    .generate_initial_inputs(
-                        &mut fuzzer,
-                        &mut differential_executor,
-                        &mut generator,
-                        &mut mgr,
-                        8,
-                    )
-                    .expect("Failed to generate the initial corpus");
+                    // 如果加载失败，生成随机初始输入
+                    state
+                        .generate_initial_inputs(
+                            &mut fuzzer,
+                            &mut differential_executor,
+                            &mut generator,
+                            &mut mgr,
+                            8,
+                        )
+                        .expect("Failed to generate the initial corpus");
+                });
+
+            if args.verbose {
+                println!("成功导入 {} 个输入文件", state.corpus().count());
             }
         } else {
             eprintln!("错误: 指定的种子目录不存在或不是目录: {:?}", input_dir);
@@ -408,28 +437,71 @@ pub fn main() {
         println!("开始模糊测试...");
     }
 
-    // 主模糊测试循环
-    loop {
-        // 检查是否找到差分输入
-        let has_solutions = !state.solutions().is_empty();
+    // 根据配置决定使用哪种模糊测试循环
+    if let Some(max_iter) = args.max_iterations {
+        // 使用 fuzz_loop_for 进行固定次数的模糊测试
+        if args.verbose {
+            println!("使用最大执行次数限制: {} 次", max_iter);
+        }
 
-        if has_solutions {
-            if args.verbose {
-                println!("发现 {} 个差分输入", state.solutions().count());
-            }
+        // 将大的迭代次数分成较小的块，以便检查是否发现了差分输入
+        let chunk_size = 1000u64;
+        let mut remaining_iters = max_iter;
 
-            if !args.continue_on_crash {
+        while remaining_iters > 0 {
+            // 检查是否找到差分输入
+            let has_solutions = !state.solutions().is_empty();
+            if has_solutions && !args.continue_on_crash {
                 if args.verbose {
                     println!("发现差分输入，停止模糊测试");
                 }
                 break;
-            } else if args.verbose {
-                println!("发现差分输入，但继续模糊测试...");
+            }
+
+            // 计算本次迭代的数量
+            let current_chunk = std::cmp::min(chunk_size, remaining_iters);
+
+            // 执行模糊测试
+            match fuzzer.fuzz_loop_for(
+                &mut stages,
+                &mut differential_executor,
+                &mut state,
+                &mut mgr,
+                current_chunk,
+            ) {
+                Ok(_) => {
+                    iteration_count += current_chunk;
+                    remaining_iters -= current_chunk;
+
+                    if args.verbose {
+                        let elapsed = start_time.elapsed();
+                        println!(
+                            "已完成迭代: {}, 剩余: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
+                            iteration_count,
+                            remaining_iters,
+                            elapsed.as_secs_f64(),
+                            state.corpus().count(),
+                            state.solutions().count()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("模糊测试循环中出现错误: {}", e);
+                    break;
+                }
             }
         }
+    } else if let Some(timeout) = args.timeout {
+        // 使用时间限制的模糊测试
+        if args.verbose {
+            println!("使用时间限制: {} 秒", timeout);
+        }
 
-        // 检查时间限制
-        if let Some(timeout) = args.timeout {
+        // 使用较小的迭代块来定期检查时间和差分输入
+        let chunk_size = 1000u64;
+
+        loop {
+            // 检查时间限制
             let elapsed = start_time.elapsed();
             if elapsed.as_secs() >= timeout {
                 if args.verbose {
@@ -437,43 +509,86 @@ pub fn main() {
                 }
                 break;
             }
-        }
 
-        // 检查迭代次数限制
-        if let Some(max_iter) = args.max_iterations {
-            if iteration_count >= max_iter {
+            // 检查是否找到差分输入
+            let has_solutions = !state.solutions().is_empty();
+            if has_solutions && !args.continue_on_crash {
                 if args.verbose {
-                    println!("达到最大迭代次数 {}，停止模糊测试", max_iter);
+                    println!("发现差分输入，停止模糊测试");
                 }
                 break;
+            }
+
+            // 执行一个较小的迭代块
+            match fuzzer.fuzz_loop_for(
+                &mut stages,
+                &mut differential_executor,
+                &mut state,
+                &mut mgr,
+                chunk_size,
+            ) {
+                Ok(_) => {
+                    iteration_count += chunk_size;
+
+                    if args.verbose && iteration_count % 10000 == 0 {
+                        let elapsed = start_time.elapsed();
+                        println!(
+                            "迭代: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
+                            iteration_count,
+                            elapsed.as_secs_f64(),
+                            state.corpus().count(),
+                            state.solutions().count()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("模糊测试循环中出现错误: {}", e);
+                    break;
+                }
             }
         }
+    } else {
+        // 无限制的模糊测试循环（使用传统的 fuzz_one 方法）
+        if args.verbose {
+            println!("运行无限制的模糊测试循环");
+        }
 
-        // 执行一次模糊测试迭代
-        match fuzzer.fuzz_one(
-            &mut stages,
-            &mut differential_executor,
-            &mut state,
-            &mut mgr,
-        ) {
-            Ok(_) => {
-                iteration_count += 1;
-
-                // 定期输出进度信息
-                if args.verbose && iteration_count % 1000 == 0 {
-                    let elapsed = start_time.elapsed();
-                    println!(
-                        "迭代: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
-                        iteration_count,
-                        elapsed.as_secs_f64(),
-                        state.corpus().count(),
-                        state.solutions().count()
-                    );
+        loop {
+            // 检查是否找到差分输入
+            let has_solutions = !state.solutions().is_empty();
+            if has_solutions && !args.continue_on_crash {
+                if args.verbose {
+                    println!("发现差分输入，停止模糊测试");
                 }
-            }
-            Err(e) => {
-                eprintln!("模糊测试循环中出现错误: {}", e);
                 break;
+            }
+
+            // 执行一次模糊测试迭代
+            match fuzzer.fuzz_one(
+                &mut stages,
+                &mut differential_executor,
+                &mut state,
+                &mut mgr,
+            ) {
+                Ok(_) => {
+                    iteration_count += 1;
+
+                    // 定期输出进度信息
+                    if args.verbose && iteration_count % 1000 == 0 {
+                        let elapsed = start_time.elapsed();
+                        println!(
+                            "迭代: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
+                            iteration_count,
+                            elapsed.as_secs_f64(),
+                            state.corpus().count(),
+                            state.solutions().count()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("模糊测试循环中出现错误: {}", e);
+                    break;
+                }
             }
         }
     }

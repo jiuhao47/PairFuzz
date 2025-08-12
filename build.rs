@@ -1,17 +1,21 @@
-use std::{env, path::PathBuf, str::FromStr};
+use std::{env, path::PathBuf};
 
 fn main() -> anyhow::Result<()> {
     if env::var("CARGO_BIN_NAME").map_or(true, |v| v != "libafl_cc") {
-        println!("cargo:rerun-if-changed=./first.h");
-        println!("cargo:rerun-if-changed=./first.c");
-        println!("cargo:rerun-if-changed=./second.h");
-        println!("cargo:rerun-if-changed=./second.c");
-        println!("cargo:rerun-if-changed=./common.c");
+        // Add rerun-if-changed for harness files
+        println!("cargo:rerun-if-changed=app/libs/build_png_libs/libpng_harness.h");
+        println!("cargo:rerun-if-changed=app/libs/build_png_libs/libpng_harness.cc");
+        println!("cargo:rerun-if-changed=app/libs/build_spng_libs/libspng_harness.h");
+        println!("cargo:rerun-if-changed=app/libs/build_spng_libs/libspng_harness.c");
+        // XXX:
 
-        // Configure and generate bindings.
+        // Add rerun-if-changed for the pre-built static library
+        println!("cargo:rerun-if-changed=libdifferential.a");
+
+        // Configure and generate bindings for libpng and libspng harness
         let bindings = bindgen::builder()
-            .header("first.h")
-            .header("second.h")
+            .header("app/libs/build_png_libs/libpng_harness.h")
+            .header("app/libs/build_spng_libs/libspng_harness.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()?;
 
@@ -21,24 +25,20 @@ fn main() -> anyhow::Result<()> {
             .write_to_file(out_path.join("bindings.rs"))
             .expect("Couldn't write bindings!");
 
-        let compiler = env::var("CARGO_TARGET_DIR")
-            .map_or(PathBuf::from_str("target").unwrap(), |v| {
-                PathBuf::from_str(&v).unwrap()
-            })
-            .join("release/libafl_cc");
-        println!("cargo:rerun-if-changed={}", compiler.to_str().unwrap());
-        if compiler.try_exists().unwrap_or(false) {
-            cc::Build::new()
-                .compiler(compiler)
-                .file("first.c")
-                .file("second.c")
-                .file("common.c")
-                .compile("diff-target");
+        // Tell Cargo to link with the pre-built differential.a library
+        // Assume the library is in the project root directory
+        println!("cargo:rustc-link-search=native=.");
 
-            println!("cargo:rustc-link-lib=diff-target");
-        } else {
-            println!("cargo:warning=Can't find libafl_cc; assuming that we're building it.");
-        }
+        // Link ASan first (must come before other libraries)
+        println!("cargo:rustc-link-lib=asan"); // AddressSanitizer runtime
+
+        // Then link our static library
+        println!("cargo:rustc-link-lib=static=differential");
+
+        // Finally link system libraries
+        println!("cargo:rustc-link-lib=stdc++"); // C++ standard library
+        println!("cargo:rustc-link-lib=m"); // math library
+        println!("cargo:rustc-link-lib=z"); // zlib
     }
 
     Ok(())

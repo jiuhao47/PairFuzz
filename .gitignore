@@ -2,5 +2,9 @@
 app/src/
 app/script/
 app/build/
+app/corpus
 libs/
 target/
+crashes/
+seeds/
+*.a

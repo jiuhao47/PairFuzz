@@ -1,31 +1,5 @@
-#[cfg(windows)]
-use libafl::{
-    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
-    events::SimpleEventManager,
-    executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
-    feedbacks::{CrashFeedback, MaxMapFeedback},
-    fuzzer::{Fuzzer, StdFuzzer},
-    generators::RandPrintablesGenerator,
-    inputs::{BytesInput, HasTargetBytes},
-    mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
-    observers::StdMapObserver,
-    schedulers::QueueScheduler,
-    stages::mutational::StdMutationalStage,
-    state::{HasCorpus, HasSolutions, StdState},
-};
-use std::{
-    alloc::{alloc_zeroed, Layout},
-    fs,
-    path::PathBuf,
-    time::Instant,
-};
-
 use clap::Parser;
-
-#[cfg(feature = "tui")]
-use libafl::monitors::tui::TuiMonitor;
-#[cfg(not(feature = "tui"))]
-use libafl::monitors::SimpleMonitor;
+use libafl::monitors::{OnDiskJsonMonitor, OnDiskTomlMonitor};
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleEventManager,
@@ -41,10 +15,31 @@ use libafl::{
     stages::mutational::StdMutationalStage,
     state::{HasCorpus, HasSolutions, StdState},
 };
+#[cfg(windows)]
+use libafl::{
+    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
+    events::SimpleEventManager,
+    executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
+    feedbacks::{CrashFeedback, MaxMapFeedback},
+    fuzzer::{Fuzzer, StdFuzzer},
+    generators::RandPrintablesGenerator,
+    inputs::{BytesInput, HasTargetBytes},
+    mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
+    observers::StdMapObserver,
+    schedulers::QueueScheduler,
+    stages::mutational::StdMutationalStage,
+    state::{HasCorpus, HasSolutions, StdState},
+};
 use libafl_bolts::{nonzero, rands::StdRand, tuples::tuple_list, AsSlice};
 use libafl_targets::{edges_max_num, DifferentialAFLMapSwapObserver};
 #[cfg(not(miri))]
 use mimalloc::MiMalloc;
+use std::{
+    alloc::{alloc_zeroed, Layout},
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 #[global_allocator]
 #[cfg(not(miri))]
@@ -74,18 +69,18 @@ struct Args {
     /// 最长模糊测试时间（秒）
     #[arg(
         short = 't',
-        long = "timeout",
+        long = "max_time",
         help = "最长模糊测试时间（秒）",
         conflicts_with = "max_iterations"
     )]
-    timeout: Option<u64>,
+    max_time: Option<u64>,
 
     /// 最大执行次数
     #[arg(
         short = 'n',
         long = "max-iterations",
         help = "最大执行次数",
-        conflicts_with = "timeout"
+        conflicts_with = "max_time"
     )]
     max_iterations: Option<u64>,
 
@@ -94,7 +89,7 @@ struct Args {
         short = 'o',
         long = "output",
         help = "输出差分输入的文件夹路径",
-        default_value = "./crashes"
+        default_value = "./diffs"
     )]
     output_dir: PathBuf,
 
@@ -113,6 +108,14 @@ struct Args {
     /// 详细输出
     #[arg(short = 'v', long = "verbose", help = "启用详细输出")]
     verbose: bool,
+
+    /// 单次执行超时时间（毫秒）
+    #[arg(
+        long = "timeout",
+        help = "单次执行超时时间（毫秒）",
+        default_value = "5000"
+    )]
+    timeout_ms: u64,
 }
 
 #[cfg(feature = "multimap")]
@@ -164,10 +167,11 @@ pub fn main() {
         println!("配置参数:");
         println!("  输入目录: {:?}", args.input_dir);
         println!("  输出目录: {:?}", args.output_dir);
-        println!("  超时时间: {:?}秒", args.timeout);
+        println!("  最大执行时间: {:?}秒", args.max_time);
         println!("  最大迭代次数: {:?}", args.max_iterations);
         println!("  发现差分时继续: {}", args.continue_on_crash);
         println!("  日志文件: {:?}", args.log_file);
+        println!("  执行超时时间: {}毫秒", args.timeout_ms);
     }
 
     // 记录开始时间
@@ -312,7 +316,7 @@ pub fn main() {
         StdRand::new(),
         // Corpus that will be evolved, we keep it in memory for performance
         InMemoryCorpus::new(),
-        // Corpus in which we store solutions (crashes in this example),
+        // Corpus in which we store solutions (diffs in this example),
         // on disk so the user can get them after stopping the fuzzer
         InMemoryOnDiskCorpus::new(args.output_dir.clone()).unwrap(),
         // States of the feedbacks.
@@ -324,17 +328,25 @@ pub fn main() {
     .unwrap();
 
     // The Monitor trait define how the fuzzer stats are displayed to the user
-    #[cfg(not(feature = "tui"))]
-    let mon = SimpleMonitor::new(|s| println!("{s}"));
-    #[cfg(feature = "tui")]
-    let mon = TuiMonitor::builder()
-        .title("Baby Fuzzer")
-        .enhanced_graphics(false)
-        .build();
+    let monitors = {
+        let toml_log_path = args
+            .log_file
+            .as_ref()
+            .map(|p| p.with_extension("toml"))
+            .unwrap_or_else(|| PathBuf::from("fuzzer_stats.toml"));
+        let toml_mon = OnDiskTomlMonitor::new(toml_log_path);
+        let json_log_path = args
+            .log_file
+            .as_ref()
+            .map(|p| p.with_extension("json"))
+            .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
+        let json_mon = OnDiskJsonMonitor::new(json_log_path, |_| true);
+        tuple_list!(toml_mon, json_mon)
+    };
 
     // The event manager handle the various events generated during the fuzzing loop
     // such as the notification of the addition of a new item to the corpus
-    let mut mgr = SimpleEventManager::new(mon);
+    let mut mgr = SimpleEventManager::new(monitors);
 
     // A queue policy to get testcases from the corpus
     let scheduler = QueueScheduler::new();
@@ -343,20 +355,23 @@ pub fn main() {
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     // Create the executor for an in-process function with just one observer
-    let first_executor = InProcessExecutor::new(
+    let first_executor = InProcessExecutor::with_timeout(
         &mut first_harness,
         tuple_list!(first_map_observer),
         &mut fuzzer,
         &mut state,
         &mut mgr,
+        Duration::from_millis(args.timeout_ms),
     )
     .expect("Failed to create the first executor");
-    let second_executor = InProcessExecutor::new(
+
+    let second_executor = InProcessExecutor::with_timeout(
         &mut second_harness,
         tuple_list!(second_map_observer),
         &mut fuzzer,
         &mut state,
         &mut mgr,
+        Duration::from_millis(args.timeout_ms),
     )
     .expect("Failed to create the second executor");
 
@@ -491,10 +506,10 @@ pub fn main() {
                 }
             }
         }
-    } else if let Some(timeout) = args.timeout {
+    } else if let Some(max_time) = args.max_time {
         // 使用时间限制的模糊测试
         if args.verbose {
-            println!("使用时间限制: {} 秒", timeout);
+            println!("使用时间限制: {} 秒", max_time);
         }
 
         // 使用较小的迭代块来定期检查时间和差分输入
@@ -503,9 +518,9 @@ pub fn main() {
         loop {
             // 检查时间限制
             let elapsed = start_time.elapsed();
-            if elapsed.as_secs() >= timeout {
+            if elapsed.as_secs() >= max_time {
                 if args.verbose {
-                    println!("达到时间限制 {} 秒，停止模糊测试", timeout);
+                    println!("达到时间限制 {} 秒，停止模糊测试", max_time);
                 }
                 break;
             }

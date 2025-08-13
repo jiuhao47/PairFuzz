@@ -17,13 +17,15 @@ cxx:
 fuzzer: cc cxx
 	cargo build --profile={{PROFILE}}
 
-run: fuzzer
-	rm -rf crashes
-	{{FUZZER}} -t 10 -i seeds/
+run: fuzzer pre_run
+	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ -v -l ./run/log/log.txt
 
-run_directly:
-	rm -rf crashes
-	{{FUZZER}} -t 60 -c -i seeds/
+run_directly: pre_run
+	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ -v -l ./run/log/log.txt
+
+pre_run:
+	rm -rf ./run/ && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
+	cp ./app/corpus/png/*.png run/seeds/
 
 clean:
 	cargo clean

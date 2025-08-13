@@ -6,7 +6,6 @@ edition = "2021"
 default-run = "diffray"
 
 [features]
-tui = ["libafl/tui_monitor"]
 multimap = []
 # buggy
 
@@ -26,7 +25,7 @@ bindgen = "0.71.1"
 cc = "=1.2.7"      # fix me later
 
 [dependencies]
-libafl = { path = "./LibAFL/crates/libafl", features = ["tui_monitor"] }
+libafl = { path = "./LibAFL/crates/libafl" }
 libafl_bolts = { path = "./LibAFL/crates/libafl_bolts" }
 libafl_targets = { path = "./LibAFL/crates/libafl_targets", features = [
     "sancov_pcguard_hitcounts",

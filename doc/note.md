@@ -1,7 +1,7 @@
 1. DiffExecutor对executor没有限制（可以使用Forkserver）
-   - [ ] ForkServer疑似不支持细粒度return value（只有ok，crash，timeout）
+   - [x] ForkServer疑似不支持细粒度return value（只有ok，crash，timeout）（使用了InProcessExecutor）
 2. app下的libpng和libspng已经修改为适应rust的模式，rust编译模式里更推崇使用Harness+静态编译链接（可参阅inprocess下的libpng的编译）
-   - [ ] 需要验证之前编译模式在rust下的适应性
+   - [x] 需要验证之前编译模式在rust下的适应性（改为静态库）
    - [ ] 需要确认是否需要将依赖的库进行自主编译（如libpng的依赖libzlib等）
 3. 我需要知道libpng如何编译harness的，并且仿照其写一个build（并将其参数化/配置化，或者是分离开来）
    ```just
@@ -21,3 +21,4 @@
 6. libafl没有做diff模式的时间收集实现，实现了一个空
    > home/jiuhao/workspace/workshop/diffray/LibAFL/crates/libafl/src/observers/mod.rs 395
 7. 时间和执行次数的控制不够精确
+8. CRC 校验和需要patch吗

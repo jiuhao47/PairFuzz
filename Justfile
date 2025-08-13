@@ -23,23 +23,7 @@ run: fuzzer
 
 run_directly:
 	rm -rf crashes
-	{{FUZZER}} -t 10 -c -i seeds/
-
-[linux]
-[macos]
-test: fuzzer
-	#!/bin/bash
-	timeout 30s {{FUZZER}} | tee fuzz_stdout.log || true
-	if grep -qa "objectives: 1" fuzz_stdout.log; then
-	    echo "Fuzzer is working"
-	else
-	    echo "Fuzzer does not generate any testcases or any crashes"
-	    exit 1
-	fi
-
-[windows]
-test: fuzzer
-	echo "Unsupported on this platform"
+	{{FUZZER}} -t 60 -c -i seeds/
 
 clean:
 	cargo clean

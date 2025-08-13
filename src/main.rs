@@ -60,7 +60,7 @@ mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-use bindings::{libpng_parse, libspng_parse};
+use bindings::{diffRayTestOneInput_1, diffRayTestOneInput_2};
 
 /// 差分模糊测试器命令行参数
 #[derive(Parser, Debug)]
@@ -177,7 +177,7 @@ pub fn main() {
     let mut first_harness = |input: &BytesInput| {
         let target = input.target_bytes();
         let buf = target.as_slice();
-        let result = unsafe { libpng_parse(buf.as_ptr(), buf.len()) };
+        let result = unsafe { diffRayTestOneInput_1(buf.as_ptr(), buf.len()) };
         // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
         if result == 0 {
             // println!("libpng_parse return {}", result);
@@ -190,7 +190,7 @@ pub fn main() {
     let mut second_harness = |input: &BytesInput| {
         let target = input.target_bytes();
         let buf = target.as_slice();
-        let result = unsafe { libspng_parse(buf.as_ptr(), buf.len()) };
+        let result = unsafe { diffRayTestOneInput_2(buf.as_ptr(), buf.len()) };
         // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
         if result == 0 {
             // println!("libspng_parse return {}", result);

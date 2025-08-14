@@ -5,22 +5,22 @@ mkdir -p "$TEMP_DIR"
 # Step 1: Compile harness files to object files
 echo "Compiling libpng harness..."
 
-"./app/compiler/target/release/libafl_cxx" -fPIC -fsanitize=address -c "./app/libs/build_png_libs/libpng_harness.cc" \
-    -I "./app/build/png/134ab615/usr/local/include/" \
+"../../compiler/target/release/libafl_cxx" -fPIC -fsanitize=address -c "../../libs/build_png_libs/libpng_harness.cc" \
+    -I "../../build/png/134ab615/usr/local/include/" \
     -o "$TEMP_DIR/libpng_harness.o"
 
 echo "Compiling libspng harness..."
-"./app/compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "./app/libs/build_spng_libs/libspng_harness.c" \
-    -I "./app/build/spng/adc94393/usr/local/include" \
+"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_spng_libs/libspng_harness.c" \
+    -I "../../build/spng/adc94393/usr/local/include" \
     -o "$TEMP_DIR/libspng_harness.o"
 
 # Step 2: Extract existing static libraries
 echo "Extracting libpng16.a..."
 cd "$TEMP_DIR"
-ar x "../app/build/png/134ab615/usr/local/lib/libpng16.a"
+ar x "../../../build/png/134ab615/usr/local/lib/libpng16.a"
 
 echo "Extracting libspng_static.a..."
-ar x "../app/build/spng/adc94393/usr/local/lib/libspng_static.a"
+ar x "../../../build/spng/adc94393/usr/local/lib/libspng_static.a"
 cd ..
 
 # Step 3: Create the combined static library
@@ -35,4 +35,6 @@ nm libdifferential.a | grep -E "(libpng_parse|libspng_parse)" || echo "Warning: 
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"
 
-echo "Done! libdifferential.a"
+mv libdifferential.a libdifferential_png.a
+
+echo "Done! libdifferential_png.a"

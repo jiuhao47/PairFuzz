@@ -1,5 +1,5 @@
 use clap::Parser;
-use libafl::monitors::{OnDiskJsonMonitor, OnDiskTomlMonitor};
+use libafl::monitors::OnDiskJsonMonitor;
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleEventManager,
@@ -329,19 +329,13 @@ pub fn main() {
 
     // The Monitor trait define how the fuzzer stats are displayed to the user
     let monitors = {
-        let toml_log_path = args
-            .log_file
-            .as_ref()
-            .map(|p| p.with_extension("toml"))
-            .unwrap_or_else(|| PathBuf::from("fuzzer_stats.toml"));
-        let toml_mon = OnDiskTomlMonitor::new(toml_log_path);
         let json_log_path = args
             .log_file
             .as_ref()
             .map(|p| p.with_extension("json"))
             .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
         let json_mon = OnDiskJsonMonitor::new(json_log_path, |_| true);
-        tuple_list!(toml_mon, json_mon)
+        tuple_list!(json_mon)
     };
 
     // The event manager handle the various events generated during the fuzzing loop

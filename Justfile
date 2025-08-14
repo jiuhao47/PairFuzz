@@ -5,27 +5,39 @@ PROFILE_DIR := 'release'
 CARGO_TARGET_DIR := env("CARGO_TARGET_DIR", "target")
 FUZZER := CARGO_TARGET_DIR / PROFILE_DIR / FUZZER_NAME
 LIBAFL_CC := CARGO_TARGET_DIR / PROFILE_DIR / "libafl_cc"
-
+APP := 'png'
 
 alias build := fuzzer
+
+load_app app=APP:
+	rm -rf ./libdifferential.a
+	cp "./app/differential_libs/{{app}}/libdifferential_{{app}}.a" ./libdifferential.a
 
 cc:
     cargo build --profile={{PROFILE}} --bin libafl_cc
 cxx:
     cargo build --profile={{PROFILE}} --bin libafl_cxx
 
-fuzzer: cc cxx
+fuzzer app=APP: cc cxx (load_app app)
 	cargo build --profile={{PROFILE}}
 
-run: fuzzer pre_run
+run app=APP: (fuzzer app) (pre_run app)
 	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ -v -l ./run/log/log.txt
 
-run_directly: pre_run
+run_directly app=APP: (pre_run app)
 	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ -v -l ./run/log/log.txt
 
-pre_run:
+pre_run app=APP: 
 	rm -rf ./run/ && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
-	cp ./app/corpus/png/*.png run/seeds/
+	cp ./app/corpus/{{app}}/*.{{app}} run/seeds/
 
-clean:
+clean: clean_build clean_app clean_run
+
+clean_build:
 	cargo clean
+
+clean_app:
+	rm -rf ./libdifferential.a
+
+clean_run:
+	rm -rf ./run/

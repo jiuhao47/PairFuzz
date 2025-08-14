@@ -7,7 +7,7 @@ fn main() -> anyhow::Result<()> {
 
         // Configure and generate bindings for libpng and libspng harness
         let bindings = bindgen::builder()
-            .header("diffray_harness.h")
+            .header("interface/diffray_harness.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()?;
         // Write the generated bindings to an output file.
@@ -17,8 +17,14 @@ fn main() -> anyhow::Result<()> {
             .expect("Couldn't write bindings!");
 
         // Tell Cargo to link with the pre-built differential.a library
-        // Assume the library is in the project root directory
+        // Search in the project root directory
         println!("cargo:rustc-link-search=native=.");
+
+        // Alternative examples for different locations:
+        // println!("cargo:rustc-link-search=native=./lib");  // Search in ./lib directory
+        // println!("cargo:rustc-link-search=native=/absolute/path/to/libs");  // Absolute path
+        // let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        // println!("cargo:rustc-link-search=native={}/custom_lib_dir", manifest_dir);
 
         // Link ASan first (must come before other libraries)
         println!("cargo:rustc-link-lib=asan"); // AddressSanitizer runtime

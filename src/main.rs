@@ -55,7 +55,13 @@ mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+// Custom observers
+mod observers;
+mod return_value_feedback;
+
+use crate::return_value_feedback::ReturnValueComboFeedback;
 use bindings::{diffRayTestOneInput_1, diffRayTestOneInput_2};
+use observers::ReturnValueObserver;
 
 /// 差分模糊测试器命令行参数
 #[derive(Parser, Debug)]
@@ -182,6 +188,8 @@ pub fn main() {
         let target = input.target_bytes();
         let buf = target.as_slice();
         let result = unsafe { diffRayTestOneInput_1(buf.as_ptr(), buf.len()) };
+        // store numeric return value to observer TLS
+        observers::set_last_return(result as i32);
         // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
         if result == 0 {
             // println!("libpng_parse return {}", result);
@@ -195,6 +203,8 @@ pub fn main() {
         let target = input.target_bytes();
         let buf = target.as_slice();
         let result = unsafe { diffRayTestOneInput_2(buf.as_ptr(), buf.len()) };
+        // store numeric return value to observer TLS
+        observers::set_last_return(result as i32);
         // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
         if result == 0 {
             // println!("libspng_parse return {}", result);
@@ -300,11 +310,24 @@ pub fn main() {
     };
 
     // Feedback to rate the interestingness of an input
-    let mut feedback = MaxMapFeedback::new(&map_observer);
+    // create return-value observers for both harnesses (used by the new feedbacks)
+    let first_ret_observer = ReturnValueObserver::new("first_return");
+    let second_ret_observer = ReturnValueObserver::new("second_return");
+
+    // Compose map feedback with return-value combination feedback
+    let mut feedback = feedback_and_fast!(
+        // MaxMapFeedback::new(&map_observer),
+        ReturnValueComboFeedback::new_from_observers(&[&first_ret_observer, &second_ret_observer])
+    );
 
     // A feedback to choose if an input is a solution or not
     // Crash here means "both crashed", which is our objective
     // let mut objective = CrashFeedback::new();
+    // create return-value observers for both harnesses (used by the new feedbacks)
+    let first_ret_observer = ReturnValueObserver::new("first_return");
+    let second_ret_observer = ReturnValueObserver::new("second_return");
+
+    // Combine DiffExitKindFeedback with return-value feedback and map objective
     let mut objective = feedback_and_fast!(
         DiffExitKindFeedback::new(),
         MaxMapFeedback::with_name("mapfeedback_metadata_objective", &map_observer)
@@ -351,7 +374,7 @@ pub fn main() {
     // Create the executor for an in-process function with just one observer
     let first_executor = InProcessExecutor::with_timeout(
         &mut first_harness,
-        tuple_list!(first_map_observer),
+        tuple_list!(first_map_observer, first_ret_observer),
         &mut fuzzer,
         &mut state,
         &mut mgr,
@@ -361,7 +384,7 @@ pub fn main() {
 
     let second_executor = InProcessExecutor::with_timeout(
         &mut second_harness,
-        tuple_list!(second_map_observer),
+        tuple_list!(second_map_observer, second_ret_observer),
         &mut fuzzer,
         &mut state,
         &mut mgr,

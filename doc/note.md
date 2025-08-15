@@ -55,14 +55,16 @@
 2. **feedback**  
    - `MaxMapFeedback`：用于最大化映射 count（发现更多路径/更频繁路径）。
      - [ ] 可基于此实现 NEZHA 策略。
+     - [ ] （什么是indiv，什么是joint）
      - [ ] 可实现缩减文件大小、执行时间的反馈（执行时间有 bug）。
 
 3. **corpus**  
    - 在内存，diff 结果存磁盘。
 
 4. **Monitor**  
-   - 采用 `OnDiskJson` 和 `toml` 两种格式。
-     - [ ] 可考虑删除 toml，仅保留 json（详细用于数据分析，简明用于人工查看）。
+   - 采用 `OnDiskJson` 格式。
+     - [x] 可考虑删除 toml，仅保留 json（详细用于数据分析，简明用于人工查看）。
+     - [ ] 开销问题
 
 5. **EventManager**  
    - 使用 Simple，单进程最优。

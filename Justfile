@@ -18,7 +18,7 @@ cc:
 cxx:
     cargo build --profile={{PROFILE}} --bin libafl_cxx
 
-fuzzer app=APP: cc cxx (load_app app)
+fuzzer app=APP: (load_app app) cc cxx 
 	cargo build --profile={{PROFILE}}
 
 run app=APP: (fuzzer app) (pre_run app)

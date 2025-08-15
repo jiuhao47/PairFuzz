@@ -3,7 +3,6 @@ app/src/
 app/script/
 app/build/
 app/corpus
-libs/
 target/
 run/
 *.a

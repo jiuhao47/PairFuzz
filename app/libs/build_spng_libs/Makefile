@@ -1,0 +1,37 @@
+
+
+ROOT_PATH=/home/user/workspace/workshop/diffray/app/build/spng
+
+CC := /home/user/workspace/workshop/diffray/app/compiler/target/release/libafl_cc
+CXX := /home/user/workspace/workshop/diffray/app/compiler/target/release/libafl_cxx
+FLAGS := -fsanitize=address,fuzzer-no-link
+LD_FLAGS := -rdynamic -shared  
+LIBS := -lm -lz -lspng
+
+##############################################################################
+INSTALL_PATH=$(ROOT_PATH)/$(COMMIT_HASH)/usr/local
+INC_PATH = -I$(INSTALL_PATH)/include
+LIB_PATH = -L$(INSTALL_PATH)/lib
+DYN_LIBS = -Wl,-Bdynamic,-rpath=$(INSTALL_PATH)/lib
+DYN_LIBS_DOCKER = -Wl,-Bdynamic,-rpath=/app/spng/install/usr/local/lib
+
+genlib_thread: libspngParse.c
+	$(CC) $(FLAGS)  $(INC_PATH) -fPIC -c -o libspngParse_$(COMMIT_HASH).o libspngParse.c
+	$(CC) $(LD_FLAGS) $(LIB_PATH) $(DYN_LIBS) libspngParse_$(COMMIT_HASH).o -o $(ROOT_PATH)/$(COMMIT_HASH)/libspng_$(COMMIT_HASH).so $(LIBS)
+	rm -rf libspngParse_$(COMMIT_HASH).o
+
+genlib_docker: libspngParse.c
+	$(CC) $(FLAGS)  $(INC_PATH) -fPIC -c -o libspngParse_$(COMMIT_HASH).o libspngParse.c
+	$(CC) $(LD_FLAGS) $(LIB_PATH) $(DYN_LIBS_DOCKER) libspngParse_$(COMMIT_HASH).o -o $(ROOT_PATH)/$(COMMIT_HASH)/libspng_$(COMMIT_HASH)_docker.so $(LIBS)
+	rm -rf libspngParse_$(COMMIT_HASH).o
+
+test: test.cpp
+	$(CXX) -fsanitize=address test.cpp -o test 
+
+test_thread: test_thread.cpp
+	$(CXX) -g -O2 -fsanitize=address test_thread.cpp -o test_thread -ldl
+
+clean:
+	rm -f test test_thread
+	rm -f *.o
+

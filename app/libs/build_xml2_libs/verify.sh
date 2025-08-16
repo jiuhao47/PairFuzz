@@ -1,0 +1,11 @@
+#!/bin/bash
+# files=(*)
+# for filename in ${files[@]}
+rm -f 1-verify_log.txt
+# this is used to test whether fuzz hareness is OK
+corpus_path=~/tmp/xml_init_corpus
+#  &>> 1-verify_log.txt
+for fileName in $(ls $corpus_path/*.xml); do
+    echo $fileName &>> 1-verify_log.txt
+    ./test $fileName &>> 1-verify_log.txt
+done

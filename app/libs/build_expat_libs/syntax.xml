@@ -1,0 +1,4 @@
+<!DOCTYPE a [
+    <!ELEMENT a (pppp,pp,ppp:ppppp:llal)>
+    ]>
+<a/>

@@ -44,6 +44,8 @@
 8. **CRC 校验和**  
    - [ ] 是否需要 patch，待确认。
 
+9. **Executor**
+   - [ ] 需要支持不止返回值的差分感觉
 ---
 
 ## 2. 组件说明
@@ -55,7 +57,14 @@
 2. **feedback**  
    - `MaxMapFeedback`：用于最大化映射 count（发现更多路径/更频繁路径）。
      - [ ] 可基于此实现 NEZHA 策略。
-     - [ ] （什么是indiv，什么是joint）
+       - [x] return value
+       - [ ] cov
+         - [x] indiv 
+           - [ ] 验证一个max一个min的图是否可以更好（对一个程序的位图进行最大值优化，对第二个程序的位图进行最小值优化，这样感觉会造成最大程度的语义偏离）
+         - [ ] joint （joint现在存在的问题是开销过大而且感觉意义不大。但是为了Evaluation感觉还是得实现）
+           - [ ] 当前文件`src/observers/coverage_combiner.rs`存在的问题，首先是一个过大的位图（num_edges^2）导致的开销问题，在这上面如何优化，其次是数据结构的强行拼凑的感觉（没有发挥好MaxMapFeedback等数据结构的能力，采用h(h(PA),h(PB))%bitmap_size的写入方式让语义信息离散化了。
+       - [ ] path_len
+     - [x] （什么是indiv，什么是joint）
      - [ ] 可实现缩减文件大小、执行时间的反馈（执行时间有 bug）。
 
 3. **corpus**  

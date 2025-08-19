@@ -1,7 +1,7 @@
+use crate::diff_feedback::DiffFeedback;
 use crate::observers::ReturnValueObserver;
 use libafl::executors::ExitKind;
-use libafl::feedbacks::Feedback;
-use libafl::feedbacks::StateInitializer;
+use libafl::feedbacks::{Feedback, StateInitializer};
 use libafl::Error;
 use libafl_bolts::tuples::{Handle, Handled, MatchNameRef};
 use libafl_bolts::Named;
@@ -71,20 +71,5 @@ where
     ) -> Result<bool, Error> {
         // collect current observed values from each observer handle
         let mut key: Vec<Option<i32>> = Vec::with_capacity(self.observer_handles.len());
-        for h in &self.observer_handles {
-            let obs = observers.get(h).ok_or_else(|| {
-                Error::illegal_state(
-                    "Observer referenced by ReturnValueComboFeedback not found in observers",
-                )
-            })?;
-            key.push(obs.last_value());
-        }
-
-        // If this combination was never seen before, mark as interesting and record it
-        if self.seen.insert(key) {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
+        pub use crate::feedbacks::ReturnValueComboFeedback;
+        let obs = observers.get(h).ok_or_else(|| {

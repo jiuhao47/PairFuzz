@@ -1,16 +1,15 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use libafl::monitors::OnDiskJsonMonitor;
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleEventManager,
     executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
-    feedback_and_fast,
+    feedback_and_fast, feedback_or_fast,
     feedbacks::{DiffExitKindFeedback, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     inputs::{BytesInput, HasTargetBytes},
     mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
-    observers::StdMapObserver,
     schedulers::QueueScheduler,
     stages::mutational::StdMutationalStage,
     state::{HasCorpus, HasSolutions, StdState},
@@ -25,17 +24,15 @@ use libafl::{
     generators::RandPrintablesGenerator,
     inputs::{BytesInput, HasTargetBytes},
     mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
-    observers::StdMapObserver,
     schedulers::QueueScheduler,
     stages::mutational::StdMutationalStage,
     state::{HasCorpus, HasSolutions, StdState},
 };
 use libafl_bolts::{nonzero, rands::StdRand, tuples::tuple_list, AsSlice};
-use libafl_targets::{edges_max_num, DifferentialAFLMapSwapObserver};
+use libafl_targets::edges_max_num;
 #[cfg(not(miri))]
 use mimalloc::MiMalloc;
 use std::{
-    alloc::{alloc_zeroed, Layout},
     fs,
     path::PathBuf,
     time::{Duration, Instant},
@@ -48,22 +45,42 @@ static GLOBAL: MiMalloc = MiMalloc;
 // bindings to the functions defined in the target
 mod bindings {
     #![allow(non_snake_case)]
-    #![allow(non_camel_case_types)]
     #![allow(non_upper_case_globals)]
+    #![allow(non_camel_case_types)]
     #![allow(unused)]
+    #![allow(dead_code)]
     #![allow(clippy::unreadable_literal)]
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
 // Custom observers
+mod feedbacks;
 mod observers;
-mod return_value_feedback;
+mod utils;
 
-use crate::return_value_feedback::ReturnValueComboFeedback;
+use crate::feedbacks::ReturnValueFeedback;
 use bindings::{diffRayTestOneInput_1, diffRayTestOneInput_2};
 use observers::ReturnValueObserver;
+// debug_log is provided by utils if needed
 
 /// 差分模糊测试器命令行参数
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum ModeOption {
+    None,
+    Single,
+    Combo,
+}
+
+impl std::fmt::Display for ModeOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModeOption::None => write!(f, "none"),
+            ModeOption::Single => write!(f, "single"),
+            ModeOption::Combo => write!(f, "combo"),
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "diffray")]
 #[command(about = "一个差分模糊测试器，用于发现两个程序实现之间的差异")]
@@ -122,24 +139,19 @@ struct Args {
         default_value = "5000"
     )]
     timeout_ms: u64,
+    /// coverage 模式: none|single|combo
+    #[arg(long = "cov-mode", help = "coverage 模式: none|single|combo", default_value_t = ModeOption::Combo)]
+    cov_mode: ModeOption,
+    /// return-value 模式: none|single|combo
+    #[arg(long = "rv-mode", help = "return-value 模式: none|single|combo", default_value_t = ModeOption::Combo)]
+    rv_mode: ModeOption,
 }
 
-#[cfg(feature = "multimap")]
-mod multimap {
-    pub use libafl::observers::{HitcountsIterableMapObserver, MultiMapObserver};
-    pub use libafl_bolts::ownedref::OwnedMutSlice;
-}
-#[cfg(feature = "multimap")]
-use multimap::{HitcountsIterableMapObserver, MultiMapObserver, OwnedMutSlice};
-
-#[cfg(not(feature = "multimap"))]
 mod slicemap {
     pub use libafl::observers::HitcountsMapObserver;
-
-    pub static mut EDGES: &mut [u8] = &mut [];
+    // EDGES storage moved into observers helper; no static here
 }
-#[cfg(not(feature = "multimap"))]
-use slicemap::{HitcountsMapObserver, EDGES};
+// observers and map observer types are constructed via observers::make_map_observers
 
 #[expect(clippy::too_many_lines)]
 pub fn main() {
@@ -217,96 +229,32 @@ pub fn main() {
 
     let num_edges: usize = edges_max_num(); // upper bound
 
-    #[cfg(feature = "multimap")]
+    // Build observers using helper which handles EDGES allocation and combo builder creation
+    // returns: (first_map_observer, second_map_observer, coverage_map_observer, objective_map_observer, maybe_builder)
     let (
         first_map_observer,
         second_map_observer,
-        map_swapper,
-        map_observer,
-        layout,
-        first_edges,
-        second_edges,
-    ) = {
-        // initialize the maps
-        let layout = Layout::from_size_align(num_edges, 64).unwrap();
-        let first_edges = unsafe { (alloc_zeroed(layout), num_edges) };
-        let second_edges = unsafe { (alloc_zeroed(layout), num_edges) };
+        coverage_map_observer,
+        objective_map_observer,
+        maybe_builder,
+    ) = observers::make_map_observers(num_edges, args.cov_mode == ModeOption::Combo);
 
-        let combined_edges = unsafe {
-            vec![
-                OwnedMutSlice::from_raw_parts_mut(first_edges.0, first_edges.1),
-                OwnedMutSlice::from_raw_parts_mut(second_edges.0, second_edges.1),
-            ]
-        };
+    // create a map swapper from the two map observers (requires the swapper to borrow them)
+    // map_swapper needs mutable references to the observers; declare mutable bindings here
+    let mut first_map_observer = first_map_observer;
+    let mut second_map_observer = second_map_observer;
+    let map_swapper = crate::feedbacks::coverage::make_map_swapper(
+        &mut first_map_observer,
+        &mut second_map_observer,
+    );
 
-        // create the base maps used to observe the different executors from two independent maps
-        let mut first_map_observer =
-            unsafe { StdMapObserver::from_mut_ptr("first-edges", first_edges.0, first_edges.1) };
-        let mut second_map_observer =
-            unsafe { StdMapObserver::from_mut_ptr("second-edges", second_edges.0, second_edges.1) };
-
-        // create a map swapper so that we can replace the coverage map pointer (requires feature pointer_maps!)
-        let map_swapper =
-            DifferentialAFLMapSwapObserver::new(&mut first_map_observer, &mut second_map_observer);
-
-        // create a combined map observer, e.g. for calibration
-        // we use MultiMapObserver::differential to indicate that we want to use the observer in
-        // differential mode
-        let map_observer = HitcountsIterableMapObserver::new(MultiMapObserver::differential(
-            "combined-edges",
-            combined_edges,
-        ));
-
-        (
-            first_map_observer,
-            second_map_observer,
-            map_swapper,
-            map_observer,
-            layout,
-            first_edges,
-            second_edges,
-        )
-    };
-    #[cfg(not(feature = "multimap"))]
-    let (first_map_observer, second_map_observer, map_swapper, map_observer) = {
-        // initialize the map
-        unsafe {
-            let layout = Layout::from_size_align(num_edges * 2, 64).unwrap();
-            EDGES = core::slice::from_raw_parts_mut(alloc_zeroed(layout), num_edges * 2);
-        }
-
-        // TODO: This will break soon, fix me! See https://github.com/AFLplusplus/LibAFL/issues/2786
-        #[allow(static_mut_refs)] // only a problem on nightly
-        let edges_ptr = unsafe { EDGES.as_mut_ptr() };
-
-        // create the base maps used to observe the different executors by splitting a slice
-        let mut first_map_observer =
-            unsafe { StdMapObserver::from_mut_ptr("first-edges", edges_ptr, num_edges) };
-        let mut second_map_observer = unsafe {
-            StdMapObserver::from_mut_ptr("second-edges", edges_ptr.add(num_edges), num_edges)
-        };
-
-        // create a map swapper so that we can replace the coverage map pointer (requires feature pointer_maps!)
-        let map_swapper =
-            DifferentialAFLMapSwapObserver::new(&mut first_map_observer, &mut second_map_observer);
-
-        // create a combined map observer, e.g. for calibration
-        // we use StdMapObserver::differential to indicate that we want to use the observer in
-        // differential mode
-        let map_observer = unsafe {
-            HitcountsMapObserver::new(StdMapObserver::differential_from_mut_ptr(
-                "combined-edges",
-                edges_ptr,
-                num_edges * 2,
-            ))
-        };
-
-        (
-            first_map_observer,
-            second_map_observer,
-            map_swapper,
-            map_observer,
-        )
+    // keep a combo builder instance alive and include it in observers so its hooks run.
+    let combo_builder = if args.cov_mode == ModeOption::Combo {
+        // use the provided builder
+        maybe_builder.unwrap()
+    } else {
+        // create a zero-sized builder (no allocation) to keep tuple types stable
+        observers::coverage_combiner::ComboCoverageBuilder::new("combined-edges", 0)
     };
 
     // Feedback to rate the interestingness of an input
@@ -314,12 +262,28 @@ pub fn main() {
     let first_ret_observer = ReturnValueObserver::new("first_return");
     let second_ret_observer = ReturnValueObserver::new("second_return");
 
-    // Compose map feedback with return-value combination feedback
-    let mut feedback = feedback_and_fast!(
-        // MaxMapFeedback::new(&map_observer),
-        ReturnValueComboFeedback::new_from_observers(&[&first_ret_observer, &second_ret_observer])
-    );
+    // Compose map feedback with return-value feedback according to selected modes
+    let rv_wrapper = match args.rv_mode {
+        ModeOption::None => {
+            ReturnValueFeedback::new("none", &[&first_ret_observer, &second_ret_observer])
+        }
+        ModeOption::Single => {
+            ReturnValueFeedback::new("single", &[&first_ret_observer, &second_ret_observer])
+        }
+        ModeOption::Combo => {
+            ReturnValueFeedback::new("combo", &[&first_ret_observer, &second_ret_observer])
+        }
+    };
 
+    // Coverage: use a single MaxMapFeedback over the coverage map observer for both single and combo.
+    // The observer backing is chosen by make_map_observers; we only need one MaxMapFeedback instance.
+    let coverage_pair = MaxMapFeedback::new(&coverage_map_observer);
+
+    // Wrap coverage pair in a runtime-selectable coverage feedback and combine with rv_wrapper
+    // let cov_wrapper = crate::feedbacks::CoverageFeedback::Map(coverage_pair);
+
+    let mut feedback = feedback_or_fast!(coverage_pair, rv_wrapper);
+    // let mut feedback = feedback_or_fast!(rv_wrapper);
     // A feedback to choose if an input is a solution or not
     // Crash here means "both crashed", which is our objective
     // let mut objective = CrashFeedback::new();
@@ -330,7 +294,7 @@ pub fn main() {
     // Combine DiffExitKindFeedback with return-value feedback and map objective
     let mut objective = feedback_and_fast!(
         DiffExitKindFeedback::new(),
-        MaxMapFeedback::with_name("mapfeedback_metadata_objective", &map_observer)
+        MaxMapFeedback::with_name("mapfeedback_metadata_objective", &objective_map_observer)
     );
 
     // create a State from scratch
@@ -374,6 +338,7 @@ pub fn main() {
     // Create the executor for an in-process function with just one observer
     let first_executor = InProcessExecutor::with_timeout(
         &mut first_harness,
+        // include objective_map_observer so the objective feedback can read it
         tuple_list!(first_map_observer, first_ret_observer),
         &mut fuzzer,
         &mut state,
@@ -398,7 +363,12 @@ pub fn main() {
     let mut differential_executor = DiffExecutor::new(
         first_executor,
         second_executor,
-        tuple_list!(map_swapper, map_observer),
+        tuple_list!(
+            map_swapper,
+            coverage_map_observer,
+            objective_map_observer,
+            combo_builder
+        ),
     );
 
     // Generator of printable bytearrays of max size 32
@@ -663,9 +633,5 @@ pub fn main() {
         }
     }
 
-    #[cfg(feature = "multimap")]
-    unsafe {
-        std::alloc::dealloc(first_edges.0, layout);
-        std::alloc::dealloc(second_edges.0, layout);
-    }
+    // No multimap-specific allocations to free in this build.
 }

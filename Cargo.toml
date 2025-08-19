@@ -5,9 +5,7 @@ authors = ["Junyan Jiang <jiangjunyan20040728@gmail.com>"]
 edition = "2021"
 default-run = "diffray"
 
-[features]
-multimap = []
-# buggy
+# No features defined for this crate (multimap removed)
 
 [profile.dev]
 panic = "abort"
@@ -49,6 +47,5 @@ name = "libafl_cc"
 path = "src/bin/libafl_cc.rs"
 
 [[bin]]
-
 name = "libafl_cxx"
 path = "src/bin/libafl_cxx.rs"

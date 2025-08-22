@@ -186,15 +186,18 @@ pub fn main() {
         MaxMapFeedback::with_name("mapfeedback_metadata_objective", &objective_observer)
     );
 
+    let rand = StdRand::new();
+    let corpus = InMemoryOnDiskCorpus::new(args.corpus_dir.clone()).unwrap();
+    let solution = InMemoryOnDiskCorpus::new(args.output_dir.clone()).unwrap();
     // create a State from scratch
     let mut state = StdState::new(
         // RNG
-        StdRand::new(),
+        rand,
         // Corpus that will be evolved, use an on-disk-backed in-memory corpus so items are persisted
-        InMemoryOnDiskCorpus::new(args.corpus_dir.clone()).unwrap(),
+        corpus,
         // Corpus in which we store solutions (diffs in this example),
         // on disk so the user can get them after stopping the fuzzer
-        InMemoryOnDiskCorpus::new(args.output_dir.clone()).unwrap(),
+        solution,
         // States of the feedbacks.
         // The feedbacks can report the data that should persist in the State.
         &mut feedback,

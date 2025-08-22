@@ -8,7 +8,7 @@ use libafl::{
 };
 use libafl_bolts::Named;
 
-use crate::utils::debug_log;
+use crate::utils::logging::debug_log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A differential helper that builds a combined coverage buffer from the two per-executor

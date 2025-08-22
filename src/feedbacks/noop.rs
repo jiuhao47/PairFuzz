@@ -1,6 +1,6 @@
+use libafl::executors::ExitKind;
 use libafl::feedbacks::{Feedback, StateInitializer};
 use libafl::Error;
-use libafl::executors::ExitKind;
 use libafl_bolts::Named;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -10,9 +10,12 @@ pub struct NoopFeedback {
     name: Cow<'static, str>,
 }
 
+#[allow(dead_code)]
 impl NoopFeedback {
-    pub fn new() -> Self {
-        Self { name: Cow::from("NoopFeedback") }
+    pub(crate) fn new() -> Self {
+        Self {
+            name: Cow::from("NoopFeedback"),
+        }
     }
 }
 
@@ -25,7 +28,18 @@ impl Named for NoopFeedback {
 }
 
 impl<EM, I, OT, S> Feedback<EM, I, OT, S> for NoopFeedback {
-    fn is_interesting(&mut self, _state: &mut S, _mgr: &mut EM, _input: &I, _observers: &OT, _exit: &ExitKind) -> Result<bool, Error> {
+    fn is_interesting(
+        &mut self,
+        _state: &mut S,
+        _mgr: &mut EM,
+        _input: &I,
+        _observers: &OT,
+        _exit: &ExitKind,
+    ) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    fn last_result(&self) -> Result<bool, Error> {
         Ok(false)
     }
 }

@@ -1,36 +1,23 @@
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use libafl::monitors::OnDiskJsonMonitor;
 use libafl::{
-    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
+    corpus::{Corpus, InMemoryOnDiskCorpus},
     events::SimpleEventManager,
-    executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
+    executors::{inprocess::InProcessExecutor, DiffExecutor},
     feedback_and_fast, feedback_or_fast,
     feedbacks::{DiffExitKindFeedback, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
-    inputs::{BytesInput, HasTargetBytes},
+    inputs::BytesInput,
     mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
     schedulers::QueueScheduler,
     stages::mutational::StdMutationalStage,
     state::{HasCorpus, HasSolutions, StdState},
 };
-#[cfg(windows)]
-use libafl::{
-    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
-    events::SimpleEventManager,
-    executors::{inprocess::InProcessExecutor, DiffExecutor, ExitKind},
-    feedbacks::{CrashFeedback, MaxMapFeedback},
-    fuzzer::{Fuzzer, StdFuzzer},
-    generators::RandPrintablesGenerator,
-    inputs::{BytesInput, HasTargetBytes},
-    mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
-    schedulers::QueueScheduler,
-    stages::mutational::StdMutationalStage,
-    state::{HasCorpus, HasSolutions, StdState},
-};
-use libafl_bolts::{nonzero, rands::StdRand, tuples::tuple_list, AsSlice};
+// Note: we intentionally avoid MinMapFeedback here to keep concrete feedback types
+// identical across branches; we emulate Min via inverted owned map.
+use libafl_bolts::{nonzero, rands::StdRand, tuples::tuple_list};
 use libafl_targets::edges_max_num;
-#[cfg(not(miri))]
 use mimalloc::MiMalloc;
 use std::{
     fs,
@@ -39,7 +26,6 @@ use std::{
 };
 
 #[global_allocator]
-#[cfg(not(miri))]
 static GLOBAL: MiMalloc = MiMalloc;
 
 // bindings to the functions defined in the target
@@ -54,104 +40,21 @@ mod bindings {
 }
 
 // Custom observers
+mod driver;
 mod feedbacks;
 mod observers;
 mod utils;
 
-use crate::feedbacks::ReturnValueFeedback;
-use bindings::{diffRayTestOneInput_1, diffRayTestOneInput_2};
 use observers::ReturnValueObserver;
 // debug_log is provided by utils if needed
-
-/// 差分模糊测试器命令行参数
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
-pub enum ModeOption {
-    None,
-    Single,
-    Combo,
-}
-
-impl std::fmt::Display for ModeOption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModeOption::None => write!(f, "none"),
-            ModeOption::Single => write!(f, "single"),
-            ModeOption::Combo => write!(f, "combo"),
-        }
-    }
-}
-
-#[derive(Parser, Debug)]
-#[command(name = "diffray")]
-#[command(about = "一个差分模糊测试器，用于发现两个程序实现之间的差异")]
-struct Args {
-    /// 初始种子输入文件夹
-    #[arg(short = 'i', long = "input", help = "初始种子输入文件夹路径")]
-    input_dir: Option<PathBuf>,
-
-    /// 最长模糊测试时间（秒）
-    #[arg(
-        short = 't',
-        long = "max_time",
-        help = "最长模糊测试时间（秒）",
-        conflicts_with = "max_iterations"
-    )]
-    max_time: Option<u64>,
-
-    /// 最大执行次数
-    #[arg(
-        short = 'n',
-        long = "max-iterations",
-        help = "最大执行次数",
-        conflicts_with = "max_time"
-    )]
-    max_iterations: Option<u64>,
-
-    /// 输出差分输入的文件夹
-    #[arg(
-        short = 'o',
-        long = "output",
-        help = "输出差分输入的文件夹路径",
-        default_value = "./diffs"
-    )]
-    output_dir: PathBuf,
-
-    /// 发现差分输入时不停止模糊测试器
-    #[arg(
-        short = 'c',
-        long = "continue",
-        help = "发现差分输入时不停止模糊测试器"
-    )]
-    continue_on_crash: bool,
-
-    /// 日志文件存储位置
-    #[arg(short = 'l', long = "log", help = "日志文件存储位置")]
-    log_file: Option<PathBuf>,
-
-    /// 详细输出
-    #[arg(short = 'v', long = "verbose", help = "启用详细输出")]
-    verbose: bool,
-
-    /// 单次执行超时时间（毫秒）
-    #[arg(
-        long = "timeout",
-        help = "单次执行超时时间（毫秒）",
-        default_value = "5000"
-    )]
-    timeout_ms: u64,
-    /// coverage 模式: none|single|combo
-    #[arg(long = "cov-mode", help = "coverage 模式: none|single|combo", default_value_t = ModeOption::Combo)]
-    cov_mode: ModeOption,
-    /// return-value 模式: none|single|combo
-    #[arg(long = "rv-mode", help = "return-value 模式: none|single|combo", default_value_t = ModeOption::Combo)]
-    rv_mode: ModeOption,
-}
+use crate::driver::args::{Args, ModeOption};
 
 mod slicemap {
-    pub use libafl::observers::HitcountsMapObserver;
     // EDGES storage moved into observers helper; no static here
 }
 // observers and map observer types are constructed via observers::make_map_observers
+
+mod harness;
 
 #[expect(clippy::too_many_lines)]
 pub fn main() {
@@ -192,117 +95,103 @@ pub fn main() {
         println!("  执行超时时间: {}毫秒", args.timeout_ms);
     }
 
-    // 记录开始时间
     let start_time = Instant::now();
     let mut iteration_count = 0u64;
-    // The closure that we want to fuzz
-    let mut first_harness = |input: &BytesInput| {
-        let target = input.target_bytes();
-        let buf = target.as_slice();
-        let result = unsafe { diffRayTestOneInput_1(buf.as_ptr(), buf.len()) };
-        // store numeric return value to observer TLS
-        observers::set_last_return(result as i32);
-        // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
-        if result == 0 {
-            // println!("libpng_parse return {}", result);
-            ExitKind::Ok
-        } else {
-            // println!("libpng_parse return {}", result);
-            ExitKind::Crash
-        }
-    };
-    let mut second_harness = |input: &BytesInput| {
-        let target = input.target_bytes();
-        let buf = target.as_slice();
-        let result = unsafe { diffRayTestOneInput_2(buf.as_ptr(), buf.len()) };
-        // store numeric return value to observer TLS
-        observers::set_last_return(result as i32);
-        // 将返回码转换为 ExitKind，0 表示成功，非 0 表示错误
-        if result == 0 {
-            // println!("libspng_parse return {}", result);
-            ExitKind::Ok
-        } else {
-            // println!("libspng_parse return {}", result);
-            ExitKind::Crash
-        }
-    };
-
+    let mut harness_impl_a = |input: &BytesInput| crate::harness::first_harness(input);
+    let mut harness_impl_b = |input: &BytesInput| crate::harness::second_harness(input);
     let num_edges: usize = edges_max_num(); // upper bound
 
     // Build observers using helper which handles EDGES allocation and combo builder creation
-    // returns: (first_map_observer, second_map_observer, coverage_map_observer, objective_map_observer, maybe_builder)
+    // and consume them into the concrete parts needed by executors.
     let (
-        first_map_observer,
-        second_map_observer,
-        coverage_map_observer,
-        objective_map_observer,
-        maybe_builder,
-    ) = observers::make_map_observers(num_edges, args.cov_mode == ModeOption::Combo);
+        map_observer_a,
+        map_observer_b,
+        coverage_observer_a,
+        coverage_observer_b,
+        coverage_backing0,
+        coverage_backing1,
+        objective_observer,
+        combo_builder_opt,
+        inverted_updater,
+    ) = observers::coverage_helpers::make_map_observers(
+        num_edges,
+        args.cov_mode == ModeOption::Combo,
+    )
+    .into_diff_parts();
 
     // create a map swapper from the two map observers (requires the swapper to borrow them)
-    // map_swapper needs mutable references to the observers; declare mutable bindings here
-    let mut first_map_observer = first_map_observer;
-    let mut second_map_observer = second_map_observer;
-    let map_swapper = crate::feedbacks::coverage::make_map_swapper(
-        &mut first_map_observer,
-        &mut second_map_observer,
-    );
+    let mut map_observer_a = map_observer_a;
+    let mut map_observer_b = map_observer_b;
+    let map_swapper =
+        crate::feedbacks::coverage::make_map_swapper(&mut map_observer_a, &mut map_observer_b);
 
     // keep a combo builder instance alive and include it in observers so its hooks run.
     let combo_builder = if args.cov_mode == ModeOption::Combo {
-        // use the provided builder
-        maybe_builder.unwrap()
+        combo_builder_opt.expect("combo builder missing for combo mode")
     } else {
-        // create a zero-sized builder (no allocation) to keep tuple types stable
         observers::coverage_combiner::ComboCoverageBuilder::new("combined-edges", 0)
     };
 
     // Feedback to rate the interestingness of an input
-    // create return-value observers for both harnesses (used by the new feedbacks)
-    let first_ret_observer = ReturnValueObserver::new("first_return");
-    let second_ret_observer = ReturnValueObserver::new("second_return");
+    // create return-value observers for the return-value feedback (per-implementation)
+    let rv_feedback_observer_a = ReturnValueObserver::new("first_return");
+    let rv_feedback_observer_b = ReturnValueObserver::new("second_return");
 
     // Compose map feedback with return-value feedback according to selected modes
-    let rv_wrapper = match args.rv_mode {
+    let rv_wrapper = crate::driver::feedbacks::make_rv_wrapper(
+        args.rv_mode,
+        &rv_feedback_observer_a,
+        &rv_feedback_observer_b,
+    );
+
+    // Coverage: support modes including a Max/Min split for the two halves.
+    // Build a CoverageFeedback wrapper which can be `None` when cov-mode == None.
+    let coverage_fb = match args.cov_mode {
+        ModeOption::MaxMin => {
+            let coverage_max_a_fb = MaxMapFeedback::new(&coverage_observer_a);
+            let coverage_max_b_raw = MaxMapFeedback::new(&coverage_observer_b);
+            feedback_or_fast!(coverage_max_a_fb, coverage_max_b_raw)
+        }
         ModeOption::None => {
-            ReturnValueFeedback::new("none", &[&first_ret_observer, &second_ret_observer])
+            // XXX: option none is hard to unify for rust type constrain
+            let coverage_combined_a_fb = MaxMapFeedback::new(&coverage_backing0);
+            let coverage_combined_b_raw = MaxMapFeedback::new(&coverage_backing1);
+            feedback_or_fast!(coverage_combined_a_fb, coverage_combined_b_raw)
         }
         ModeOption::Single => {
-            ReturnValueFeedback::new("single", &[&first_ret_observer, &second_ret_observer])
+            let coverage_combined_a_fb = MaxMapFeedback::new(&coverage_backing0);
+            let coverage_combined_b_raw = MaxMapFeedback::new(&coverage_backing1);
+
+            feedback_or_fast!(coverage_combined_a_fb, coverage_combined_b_raw)
         }
         ModeOption::Combo => {
-            ReturnValueFeedback::new("combo", &[&first_ret_observer, &second_ret_observer])
+            let coverage_combined_a_fb = MaxMapFeedback::new(&coverage_backing0);
+            let coverage_combined_b_raw = MaxMapFeedback::new(&coverage_backing1);
+
+            feedback_or_fast!(coverage_combined_a_fb, coverage_combined_b_raw)
         }
     };
+    // Combine coverage feedback (which may be None) with return-value wrapper into the main feedback
+    let mut feedback = feedback_or_fast!(coverage_fb, rv_wrapper);
 
-    // Coverage: use a single MaxMapFeedback over the coverage map observer for both single and combo.
-    // The observer backing is chosen by make_map_observers; we only need one MaxMapFeedback instance.
-    let coverage_pair = MaxMapFeedback::new(&coverage_map_observer);
-
-    // Wrap coverage pair in a runtime-selectable coverage feedback and combine with rv_wrapper
-    // let cov_wrapper = crate::feedbacks::CoverageFeedback::Map(coverage_pair);
-
-    let mut feedback = feedback_or_fast!(coverage_pair, rv_wrapper);
-    // let mut feedback = feedback_or_fast!(rv_wrapper);
-    // A feedback to choose if an input is a solution or not
     // Crash here means "both crashed", which is our objective
     // let mut objective = CrashFeedback::new();
-    // create return-value observers for both harnesses (used by the new feedbacks)
-    let first_ret_observer = ReturnValueObserver::new("first_return");
-    let second_ret_observer = ReturnValueObserver::new("second_return");
+    // create return-value observers that are attached to executors (per-implementation)
+    let rv_exec_observer_a = ReturnValueObserver::new("first_return");
+    let rv_exec_observer_b = ReturnValueObserver::new("second_return");
 
     // Combine DiffExitKindFeedback with return-value feedback and map objective
     let mut objective = feedback_and_fast!(
         DiffExitKindFeedback::new(),
-        MaxMapFeedback::with_name("mapfeedback_metadata_objective", &objective_map_observer)
+        MaxMapFeedback::with_name("mapfeedback_metadata_objective", &objective_observer)
     );
 
     // create a State from scratch
     let mut state = StdState::new(
         // RNG
         StdRand::new(),
-        // Corpus that will be evolved, we keep it in memory for performance
-        InMemoryCorpus::new(),
+        // Corpus that will be evolved, use an on-disk-backed in-memory corpus so items are persisted
+        InMemoryOnDiskCorpus::new(args.corpus_dir.clone()).unwrap(),
         // Corpus in which we store solutions (diffs in this example),
         // on disk so the user can get them after stopping the fuzzer
         InMemoryOnDiskCorpus::new(args.output_dir.clone()).unwrap(),
@@ -336,40 +225,44 @@ pub fn main() {
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     // Create the executor for an in-process function with just one observer
-    let first_executor = InProcessExecutor::with_timeout(
-        &mut first_harness,
-        // include objective_map_observer so the objective feedback can read it
-        tuple_list!(first_map_observer, first_ret_observer),
+    let executor_a = InProcessExecutor::with_timeout(
+        &mut harness_impl_a,
+        // include objective_observer so the objective feedback can read it
+        tuple_list!(map_observer_a, rv_exec_observer_a),
         &mut fuzzer,
         &mut state,
         &mut mgr,
         Duration::from_millis(args.timeout_ms),
     )
-    .expect("Failed to create the first executor");
+    .expect("Failed to create executor A");
 
-    let second_executor = InProcessExecutor::with_timeout(
-        &mut second_harness,
-        tuple_list!(second_map_observer, second_ret_observer),
+    let executor_b = InProcessExecutor::with_timeout(
+        &mut harness_impl_b,
+        tuple_list!(map_observer_b, rv_exec_observer_b),
         &mut fuzzer,
         &mut state,
         &mut mgr,
         Duration::from_millis(args.timeout_ms),
     )
-    .expect("Failed to create the second executor");
+    .expect("Failed to create executor B");
 
     // create the differential executor, providing both the map swapper (which will ensure the
     // instrumentation picks the correct map to write to) and the map observer (which provides the
     // combined feedback)
-    let mut differential_executor = DiffExecutor::new(
-        first_executor,
-        second_executor,
-        tuple_list!(
-            map_swapper,
-            coverage_map_observer,
-            objective_map_observer,
-            combo_builder
-        ),
+    // Include coverage half observers in the executor observer list so their data is available
+    // at feedback evaluation time. If using combo builder, it will be included as coverage_map_observer
+    let diff_observers_list = tuple_list!(
+        map_swapper,
+        coverage_observer_a,
+        coverage_observer_b,
+        coverage_backing1,
+        coverage_backing0,
+        objective_observer,
+        combo_builder,
+        inverted_updater
     );
+
+    let mut differential_executor = DiffExecutor::new(executor_a, executor_b, diff_observers_list);
 
     // Generator of printable bytearrays of max size 32
     let mut generator = RandPrintablesGenerator::new(nonzero!(32));

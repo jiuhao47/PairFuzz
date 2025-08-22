@@ -18,14 +18,14 @@ cc:
 cxx:
     cargo build --profile={{PROFILE}} --bin libafl_cxx
 
-fuzzer app=APP: (load_app app) cc cxx 
+fuzzer app=APP: (load_app app) cc cxx
 	cargo build --profile={{PROFILE}}
 
 run app=APP: (fuzzer app) (pre_run app)
-	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ -v -l ./run/log/log.txt --cov-mode none --rv-mode single
+	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ --corpus run/corpus -v -l ./run/log/log.txt --cov-mode none --rv-mode single
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ -v -l ./run/log/log.txt --cov-mode single --rv-mode none
+	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ --corpus run/corpus/ -v -l ./run/log/log.txt --cov-mode max-min --rv-mode none
 
 pre_run app=APP: 
 	rm -rf ./run/ && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log

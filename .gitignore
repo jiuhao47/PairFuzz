@@ -6,4 +6,5 @@ app/script
 target/
 libs/
 run/
+misc/
 *.a

@@ -1,5 +1,5 @@
 use crate::observers::ReturnValueObserver;
-use crate::utils::debug_log;
+use crate::utils::logging::debug_log;
 use libafl::executors::ExitKind;
 use libafl::feedbacks::{Feedback, StateInitializer};
 use libafl::Error;
@@ -15,6 +15,7 @@ pub struct ReturnValueComboFeedback {
     observer_handles: Vec<Handle<ReturnValueObserver>>,
     seen: HashSet<Vec<Option<i32>>>,
     name: Cow<'static, str>,
+    last: bool,
 }
 
 impl<S> StateInitializer<S> for ReturnValueComboFeedback {}
@@ -35,6 +36,7 @@ impl ReturnValueComboFeedback {
             observer_handles: handles,
             seen: HashSet::new(),
             name,
+            last: false,
         }
     }
 }
@@ -62,10 +64,26 @@ where
         }
 
         let log_msg = format!("New return value combo found: {:?}", key);
-        if self.seen.insert(key) {
+        let inserted = self.seen.insert(key);
+        #[cfg(feature = "track_hit_feedbacks")]
+        {
+            self.last = inserted;
+        }
+        if inserted {
             let _ = debug_log("return_value_feedback", &log_msg);
             Ok(true)
         } else {
+            Ok(false)
+        }
+    }
+
+    fn last_result(&self) -> Result<bool, Error> {
+        #[cfg(feature = "track_hit_feedbacks")]
+        {
+            Ok(self.last)
+        }
+        #[cfg(not(feature = "track_hit_feedbacks"))]
+        {
             Ok(false)
         }
     }
@@ -78,6 +96,7 @@ pub struct ReturnValueSingleFeedback {
     observer_handles: Vec<Handle<ReturnValueObserver>>,
     seen: HashSet<(String, Option<i32>)>,
     name: Cow<'static, str>,
+    last: bool,
 }
 
 /// Runtime-selectable wrapper that can be None, Single or Combo.
@@ -136,6 +155,18 @@ where
             }
         }
     }
+
+    fn last_result(&self) -> Result<bool, Error> {
+        if cfg!(feature = "track_hit_feedbacks") {
+            match self {
+                ReturnValueFeedback::None(_) => Ok(false),
+                ReturnValueFeedback::Single(s) => Ok(s.last),
+                ReturnValueFeedback::Combo(c) => Ok(c.last),
+            }
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 impl<S> StateInitializer<S> for ReturnValueSingleFeedback {}
@@ -156,6 +187,7 @@ impl ReturnValueSingleFeedback {
             observer_handles: handles,
             seen: HashSet::new(),
             name,
+            last: false,
         }
     }
 }
@@ -180,11 +212,38 @@ where
             })?;
             let key = (h.name().to_string(), obs.last_value());
             let log_msg = format!("New return value single found: {:?}", key);
-            if self.seen.insert(key) {
+            let inserted = self.seen.insert(key);
+            #[cfg(feature = "track_hit_feedbacks")]
+            {
+                self.last = inserted;
+            }
+            if inserted {
                 let _ = debug_log("return_value_feedback", &log_msg);
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    fn last_result(&self) -> Result<bool, Error> {
+        #[cfg(feature = "track_hit_feedbacks")]
+        {
+            Ok(self.last)
+        }
+        #[cfg(not(feature = "track_hit_feedbacks"))]
+        {
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(feature = "track_hit_feedbacks")]
+impl ReturnValueFeedback {
+    fn last_result(&self) -> Result<bool, Error> {
+        match self {
+            ReturnValueFeedback::None(_) => Ok(false),
+            ReturnValueFeedback::Single(s) => Ok(s.last),
+            ReturnValueFeedback::Combo(c) => Ok(c.last),
+        }
     }
 }

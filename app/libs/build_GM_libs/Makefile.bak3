@@ -1,0 +1,31 @@
+ROOT_PATH=/home/user/software/libfuzzer-workshop/fuzz_project/bmpON/analysis/rootCause/GM
+INSTALL_LIB_PATH=$(ROOT_PATH)/build/install
+
+
+CXX := clang++
+FLAGS := -O2 -Wall -g -ggdb3 -fsanitize=address,fuzzer-no-link 
+LDFLAGS := -O2 -rdynamic -shared 
+COMMONFLAGS := -DMAGICKCORE_HDRI_ENABLE=1 -DMAGICKCORE_QUANTUM_DEPTH=16
+
+INC_PATH = -I$(INSTALL_LIB_PATH)/include/GraphicsMagick
+LIB_PATH = -L$(INSTALL_LIB_PATH)/lib
+DYN_LIBS = -Wl,-Bdynamic,-rpath=$(INSTALL_LIB_PATH)/lib
+
+LIBS :=  -lGraphicsMagick++ -lGraphicsMagick -lSM -lICE -lX11 -llzma -lz -lm -lpthread 
+
+genlib: parseGM.cpp
+	$(CXX) $(FLAGS) $(COMMONFLAGS) $(INC_PATH) -fPIC -c -o parseGM.o parseGM.cpp
+	$(CXX) $(LDFLAGS) $(LIB_PATH) $(DYN_LIBS) parseGM.o -o libparseGM.so $(LIBS)
+
+INSTALL_LIB_PATH_THREAD=$(ROOT_PATH)/build_$(COMMIT_HASH)/install
+INC_PATH_THREAD = -I$(INSTALL_LIB_PATH_THREAD)/include/GraphicsMagick
+LIB_PATH_THREAD = -L$(INSTALL_LIB_PATH_THREAD)/lib
+DYN_LIBS_THREAD = -Wl,-Bdynamic,-rpath=$(INSTALL_LIB_PATH_THREAD)/lib
+
+genlib_thread: parseGM.cpp
+	$(CXX) $(FLAGS) $(COMMONFLAGS) $(INC_PATH_THREAD) -fPIC -c -o parseGM_$(COMMIT_HASH).o parseGM.cpp
+	$(CXX) $(LDFLAGS) $(LIB_PATH_THREAD) $(DYN_LIBS_THREAD) parseGM_$(COMMIT_HASH).o -o libparseGM_$(COMMIT_HASH).so $(LIBS)
+
+test_diff_thread: test_diff_thread.cpp
+	$(CXX) -g -O2 -fsanitize=address,fuzzer-no-link test_diff_thread.cpp -o test_diff_thread -ldl
+

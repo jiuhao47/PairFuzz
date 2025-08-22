@@ -15,9 +15,9 @@ echo "Compiling libspng harness..."
     -o "$TEMP_DIR/libspng_harness.o"
 
 # Step 2: Extract existing static libraries
-echo "Extracting libpng16.a..."
+echo "Extracting libMagick++-7.Q16HDRI.a..."
 cd "$TEMP_DIR"
-ar x "../../../build/png/134ab615/usr/local/lib/libpng16.a"
+ar x "../../../build/IM/0729cc470/usr/local/lib/libMagick++-7.Q16HDRI.a"
 
 echo "Extracting libspng_static.a..."
 ar x "../../../build/spng/adc94393/usr/local/lib/libspng_static.a"
@@ -35,6 +35,6 @@ nm libdifferential.a | grep -E "(libpng_parse|libspng_parse)" || echo "Warning: 
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"
 
-mv libdifferential.a libdifferential_png.a
+mv libdifferential.a libdifferential_bmp.a
 
-echo "Done! libdifferential_png.a"
+echo "Done! libdifferential_bmp.a"

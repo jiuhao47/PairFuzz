@@ -5,4 +5,3 @@ pub mod return_value;
 pub use return_value::ReturnValueFeedback;
 
 pub mod two_state_map;
-pub use two_state_map::TwoStateMapFeedback;

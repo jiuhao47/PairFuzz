@@ -47,7 +47,7 @@ mod utils;
 
 use observers::ReturnValueObserver;
 // debug_log is provided by utils if needed
-use crate::driver::args::{Args, ModeOption};
+use crate::driver::args::Args;
 
 mod slicemap {
     // EDGES storage moved into observers helper; no static here
@@ -123,33 +123,9 @@ pub fn main() {
         &rv_feedback_observer_b,
     );
 
-    let (check_high_a, check_low_a, check_high_b, check_low_b) = match args.cov_mode {
-        ModeOption::MaxMin => (true, false, false, true),
-        ModeOption::None => (false, false, false, false),
-        ModeOption::Single => (true, false, true, false),
-        ModeOption::Combo => (true, false, true, false),
-    };
-
-    let high_delta_a = 1;
-    let low_delta_a = 1;
-    let high_delta_b = 1;
-    let low_delta_b = 1;
-
-    let coverage_fb_a = crate::feedbacks::TwoStateMapFeedback::new_with_params(
-        &map_observer_a,
-        high_delta_a,
-        low_delta_a,
-        check_high_a,
-        check_low_a,
-    );
-    let coverage_fb_b = crate::feedbacks::TwoStateMapFeedback::new_with_params(
-        &map_observer_b,
-        high_delta_b,
-        low_delta_b,
-        check_high_b,
-        check_low_b,
-    );
-
+    // build coverage feedback pair according to selected mode
+    let (coverage_fb_a, coverage_fb_b) =
+        crate::driver::feedbacks::make_cov_wrapper(args.cov_mode, &map_observer_a, &map_observer_b);
     let coverage_fb = feedback_and_fast!(coverage_fb_a, coverage_fb_b);
 
     // Combine coverage feedback (which may be None) with return-value wrapper into the main feedback

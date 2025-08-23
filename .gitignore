@@ -1,8 +1,10 @@
 /target
 app/src/
-app/script/
-app/build/
+app/build
 app/corpus
+app/script
 target/
+libs/
 run/
+misc/
 *.a

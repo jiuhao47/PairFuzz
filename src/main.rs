@@ -101,36 +101,15 @@ pub fn main() {
     let mut harness_impl_b = |input: &BytesInput| crate::harness::second_harness(input);
     let num_edges: usize = edges_max_num(); // upper bound
 
-    // Build observers using helper which handles EDGES allocation and combo builder creation
-    // and consume them into the concrete parts needed by executors.
-    let (
-        map_observer_a,
-        map_observer_b,
-        coverage_observer_a,
-        coverage_observer_b,
-        coverage_backing0,
-        coverage_backing1,
-        objective_observer,
-        combo_builder_opt,
-        inverted_updater,
-    ) = observers::coverage_helpers::make_map_observers(
-        num_edges,
-        args.cov_mode == ModeOption::Combo,
-    )
-    .into_diff_parts();
+    // Build observers using helper which handles EDGES allocation
+    let (map_observer_a, map_observer_b, objective_observer) =
+        observers::coverage_helpers::make_map_observers(num_edges);
 
     // create a map swapper from the two map observers (requires the swapper to borrow them)
     let mut map_observer_a = map_observer_a;
     let mut map_observer_b = map_observer_b;
     let map_swapper =
         crate::feedbacks::coverage::make_map_swapper(&mut map_observer_a, &mut map_observer_b);
-
-    // keep a combo builder instance alive and include it in observers so its hooks run.
-    let combo_builder = if args.cov_mode == ModeOption::Combo {
-        combo_builder_opt.expect("combo builder missing for combo mode")
-    } else {
-        observers::coverage_combiner::ComboCoverageBuilder::new("combined-edges", 0)
-    };
 
     // Feedback to rate the interestingness of an input
     // create return-value observers for the return-value feedback (per-implementation)
@@ -144,33 +123,35 @@ pub fn main() {
         &rv_feedback_observer_b,
     );
 
-    // Coverage: support modes including a Max/Min split for the two halves.
-    // Build a CoverageFeedback wrapper which can be `None` when cov-mode == None.
-    let coverage_fb = match args.cov_mode {
-        ModeOption::MaxMin => {
-            let coverage_max_a_fb = MaxMapFeedback::new(&coverage_observer_a);
-            let coverage_max_b_raw = MaxMapFeedback::new(&coverage_observer_b);
-            feedback_or_fast!(coverage_max_a_fb, coverage_max_b_raw)
-        }
-        ModeOption::None => {
-            // XXX: option none is hard to unify for rust type constrain
-            let coverage_combined_a_fb = MaxMapFeedback::new(&coverage_backing0);
-            let coverage_combined_b_raw = MaxMapFeedback::new(&coverage_backing1);
-            feedback_or_fast!(coverage_combined_a_fb, coverage_combined_b_raw)
-        }
-        ModeOption::Single => {
-            let coverage_combined_a_fb = MaxMapFeedback::new(&coverage_backing0);
-            let coverage_combined_b_raw = MaxMapFeedback::new(&coverage_backing1);
-
-            feedback_or_fast!(coverage_combined_a_fb, coverage_combined_b_raw)
-        }
-        ModeOption::Combo => {
-            let coverage_combined_a_fb = MaxMapFeedback::new(&coverage_backing0);
-            let coverage_combined_b_raw = MaxMapFeedback::new(&coverage_backing1);
-
-            feedback_or_fast!(coverage_combined_a_fb, coverage_combined_b_raw)
-        }
+    let (check_high_a, check_low_a, check_high_b, check_low_b) = match args.cov_mode {
+        ModeOption::MaxMin => (true, false, false, true),
+        ModeOption::None => (false, false, false, false),
+        ModeOption::Single => (true, false, true, false),
+        ModeOption::Combo => (true, false, true, false),
     };
+
+    let high_delta_a = 1;
+    let low_delta_a = 1;
+    let high_delta_b = 1;
+    let low_delta_b = 1;
+
+    let coverage_fb_a = crate::feedbacks::TwoStateMapFeedback::new_with_params(
+        &map_observer_a,
+        high_delta_a,
+        low_delta_a,
+        check_high_a,
+        check_low_a,
+    );
+    let coverage_fb_b = crate::feedbacks::TwoStateMapFeedback::new_with_params(
+        &map_observer_b,
+        high_delta_b,
+        low_delta_b,
+        check_high_b,
+        check_low_b,
+    );
+
+    let coverage_fb = feedback_and_fast!(coverage_fb_a, coverage_fb_b);
+
     // Combine coverage feedback (which may be None) with return-value wrapper into the main feedback
     let mut feedback = feedback_or_fast!(coverage_fb, rv_wrapper);
 
@@ -183,7 +164,7 @@ pub fn main() {
     // Combine DiffExitKindFeedback with return-value feedback and map objective
     let mut objective = feedback_and_fast!(
         DiffExitKindFeedback::new(),
-        MaxMapFeedback::with_name("mapfeedback_metadata_objective", &objective_observer)
+        MaxMapFeedback::with_name("diff-max-map", &objective_observer)
     );
 
     let rand = StdRand::new();
@@ -249,22 +230,7 @@ pub fn main() {
     )
     .expect("Failed to create executor B");
 
-    // create the differential executor, providing both the map swapper (which will ensure the
-    // instrumentation picks the correct map to write to) and the map observer (which provides the
-    // combined feedback)
-    // Include coverage half observers in the executor observer list so their data is available
-    // at feedback evaluation time. If using combo builder, it will be included as coverage_map_observer
-    let diff_observers_list = tuple_list!(
-        map_swapper,
-        coverage_observer_a,
-        coverage_observer_b,
-        coverage_backing1,
-        coverage_backing0,
-        objective_observer,
-        combo_builder,
-        inverted_updater
-    );
-
+    let diff_observers_list = tuple_list!(map_swapper, objective_observer,);
     let mut differential_executor = DiffExecutor::new(executor_a, executor_b, diff_observers_list);
 
     // Generator of printable bytearrays of max size 32

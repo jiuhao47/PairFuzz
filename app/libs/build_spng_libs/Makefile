@@ -1,9 +1,9 @@
+SCRIPT_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 
+ROOT_PATH="${SCRIPT_DIR}/../../build/spng"
 
-ROOT_PATH=/home/user/workspace/workshop/diffray/app/build/spng
-
-CC := /home/user/workspace/workshop/diffray/app/compiler/target/release/libafl_cc
-CXX := /home/user/workspace/workshop/diffray/app/compiler/target/release/libafl_cxx
+CC := ${SCRIPT_DIR}/../../compiler/target/release/libafl_cc
+CXX := ${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx
 FLAGS := -fsanitize=address,fuzzer-no-link
 LD_FLAGS := -rdynamic -shared  
 LIBS := -lm -lz -lspng

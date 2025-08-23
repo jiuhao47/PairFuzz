@@ -7,7 +7,9 @@ if [ -z "$commit_hash" ]; then
   exit 1
 fi
 
-APP_PATH=/home/user/workspace/workshop/diffray/app
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+APP_PATH="${SCRIPT_DIR}/../.."
 PNG_BUILD_PATH=$APP_PATH/build/png
 PNG_SRC_PATH=$APP_PATH/src/png
 PNG_INSTALL_PATH=$APP_PATH/build/png
@@ -20,8 +22,8 @@ cd $PNG_BUILD_PATH/png_$commit_hash
 git reset --hard $commit_hash
 
 
-CC="/home/user/workspace/workshop/diffray/app/compiler/target/release/libafl_cc"
-CXX="/home/user/workspace/workshop/diffray/app/compiler/target/release/libafl_cxx"
+CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
+CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
 CFLAGS="-fsanitize=address"
 CXXFLAGS="-fsanitize=address"
 

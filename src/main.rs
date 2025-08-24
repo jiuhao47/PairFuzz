@@ -48,6 +48,7 @@ mod utils;
 use observers::ReturnValueObserver;
 // debug_log is provided by utils if needed
 use crate::driver::args::Args;
+// ...existing imports...
 
 mod slicemap {
     // EDGES storage moved into observers helper; no static here
@@ -126,13 +127,10 @@ pub fn main() {
     // build coverage feedback pair according to selected mode
     let (coverage_fb_a, coverage_fb_b) =
         crate::driver::feedbacks::make_cov_wrapper(args.cov_mode, &map_observer_a, &map_observer_b);
-    let coverage_fb = feedback_and_fast!(coverage_fb_a, coverage_fb_b);
 
-    // Combine coverage feedback (which may be None) with return-value wrapper into the main feedback
-    let mut feedback = feedback_or_fast!(coverage_fb, rv_wrapper);
+    // Defer composing the combined feedback until after we've created
+    // `state` and had a chance to initialize coverage feedback metadata.
 
-    // Crash here means "both crashed", which is our objective
-    // let mut objective = CrashFeedback::new();
     // create return-value observers that are attached to executors (per-implementation)
     let rv_exec_observer_a = ReturnValueObserver::new("first_return");
     let rv_exec_observer_b = ReturnValueObserver::new("second_return");
@@ -140,8 +138,13 @@ pub fn main() {
     // Combine DiffExitKindFeedback with return-value feedback and map objective
     let mut objective = feedback_and_fast!(
         DiffExitKindFeedback::new(),
-        MaxMapFeedback::with_name("diff-max-map", &objective_observer)
+        MaxMapFeedback::with_name("diff-cov", &objective_observer)
     );
+
+    // Compose coverage feedback (must exist before creating State so the State
+    // can capture feedbacks' persistent metadata during construction).
+    let coverage_fb = feedback_and_fast!(coverage_fb_a, coverage_fb_b);
+    let mut feedback = feedback_or_fast!(coverage_fb, rv_wrapper);
 
     let rand = StdRand::new();
     let corpus = InMemoryOnDiskCorpus::new(args.corpus_dir.clone()).unwrap();
@@ -162,6 +165,24 @@ pub fn main() {
         &mut objective,
     )
     .unwrap();
+
+    // Pre-allocate metadata via the feedback helper (avoids doing manual
+    // named-metadata manipulation here). Caller now invokes the helper
+    // with access to `state` and the observers.
+    // Use temporary TwoStateMapFeedback instances to initialize metadata
+    // now that `state` is available. This avoids needing the original
+    // `coverage_fb_a`/`coverage_fb_b` values which were moved into the
+    // composed feedback earlier.
+    {
+        use crate::feedbacks::two_state_map::TwoStateMapFeedback;
+
+        let mut tmp_a = TwoStateMapFeedback::new_with_params(&map_observer_a, 1, 1, true, true);
+        let _ = tmp_a.ensure_initialized_with_observer(&mut state, &map_observer_a);
+        let mut tmp_b = TwoStateMapFeedback::new_with_params(&map_observer_b, 1, 1, true, true);
+        let _ = tmp_b.ensure_initialized_with_observer(&mut state, &map_observer_b);
+    }
+
+    // (coverage_fb and feedback already composed above)
 
     // The Monitor trait define how the fuzzer stats are displayed to the user
     let monitors = {

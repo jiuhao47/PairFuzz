@@ -51,5 +51,8 @@ where
         check_low_b,
     );
 
+    // Note: pre-allocation must be performed once state is available; caller should call
+    // `ensure_initialized_with_observer` with a real `state` to allocate metadata.
+
     (coverage_fb_a, coverage_fb_b)
 }

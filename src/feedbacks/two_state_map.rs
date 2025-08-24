@@ -1,7 +1,12 @@
 // Two-state map feedback: track per-index max/min and first-seen transitions
 use core::fmt::Debug;
+use core::marker::PhantomData;
 use libafl::corpus::Testcase;
+use libafl::events::Event;
+use libafl::events::EventWithStats;
+// MapFeedbackMetadata used via fully-qualified path below
 use libafl::feedbacks::{Feedback, StateInitializer};
+use libafl::monitors::stats::{AggregatorOps, UserStats, UserStatsValue};
 use libafl::observers::MapObserver;
 use libafl::state::HasExecutions;
 use libafl::{Error, HasNamedMetadata};
@@ -15,7 +20,8 @@ use std::borrow::Cow;
 pub struct TwoStateStats {
     pub max_seen: Vec<u8>,
     pub min_seen: Vec<u8>,
-    pub seen_first: Vec<u8>, // 0/1 flags to avoid repeat reporting of first discovery
+    // bit-packed flags: each bit represents seen_first for an index
+    pub seen_first_bits: Vec<u8>,
 }
 
 libafl_bolts::impl_serdeany!(TwoStateStats);
@@ -23,6 +29,8 @@ libafl_bolts::impl_serdeany!(TwoStateStats);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TwoStateMapFeedback<C> {
     name: Cow<'static, str>,
+    /// user-stats name (lowercased usually) used for UpdateUserStats events
+    stats_name: Cow<'static, str>,
     map_ref: Handle<C>,
     #[cfg(feature = "track_hit_feedbacks")]
     last: bool,
@@ -44,6 +52,15 @@ where
     pub fn new(map_observer: &C) -> Self {
         Self {
             name: map_observer.name().clone(),
+            stats_name: {
+                // mimic MapFeedback::create_stats_name behavior
+                let nm = map_observer.name();
+                if nm.chars().all(char::is_lowercase) {
+                    nm.clone()
+                } else {
+                    nm.to_lowercase().into()
+                }
+            },
             map_ref: map_observer.handle(),
             #[cfg(feature = "track_hit_feedbacks")]
             last: false,
@@ -65,6 +82,14 @@ where
     ) -> Self {
         Self {
             name: map_observer.name().clone(),
+            stats_name: {
+                let nm = map_observer.name();
+                if nm.chars().all(char::is_lowercase) {
+                    nm.clone()
+                } else {
+                    nm.to_lowercase().into()
+                }
+            },
             map_ref: map_observer.handle(),
             #[cfg(feature = "track_hit_feedbacks")]
             last: false,
@@ -92,9 +117,84 @@ where
             TwoStateStats {
                 max_seen: Vec::new(),
                 min_seen: Vec::new(),
-                seen_first: Vec::new(),
+                seen_first_bits: Vec::new(),
             },
         )?;
+        // also add a MapFeedbackMetadata<u8> so tools / monitors expecting map history (like JSON monitor)
+        // can find the standard "history_map" under the same name
+        state.add_named_metadata_checked(
+            &self.name,
+            libafl::feedbacks::MapFeedbackMetadata::<u8>::default(),
+        )?;
+        Ok(())
+    }
+}
+
+impl<C> TwoStateMapFeedback<C>
+where
+    C: MapObserver + for<'it> libafl_bolts::AsIter<'it, Item = C::Entry>,
+    C::Entry: Into<u8> + Copy,
+{
+    /// Ensure named metadata vectors are initialized to observer.len() with initial values.
+    pub fn ensure_initialized_with_observer<S>(
+        &mut self,
+        state: &mut S,
+        observer: &C,
+    ) -> Result<(), Error>
+    where
+        S: HasNamedMetadata,
+    {
+        let len = observer.len();
+        let initial: C::Entry = observer.initial();
+        let initial_u8: u8 = initial.into();
+        let named = state.named_metadata_map_mut();
+
+        // init TwoStateStats if missing
+        if !named.contains::<TwoStateStats>(&self.name) {
+            let bits_len = (len + 7) / 8;
+            named
+                .try_insert::<TwoStateStats>(
+                    &self.name,
+                    TwoStateStats {
+                        max_seen: vec![initial_u8; len],
+                        min_seen: vec![initial_u8; len],
+                        seen_first_bits: vec![0u8; bits_len],
+                    },
+                )
+                .map_err(|e| {
+                    Error::illegal_state(format!("failed to insert TwoStateStats: {:?}", e))
+                })?;
+        } else {
+            let stats = named.get_mut::<TwoStateStats>(&self.name).unwrap();
+            if stats.max_seen.len() < len {
+                stats.max_seen.resize(len, initial_u8);
+            }
+            if stats.min_seen.len() < len {
+                stats.min_seen.resize(len, initial_u8);
+            }
+            let bits_len = (len + 7) / 8;
+            if stats.seen_first_bits.len() < bits_len {
+                stats.seen_first_bits.resize(bits_len, 0);
+            }
+        }
+
+        // init MapFeedbackMetadata<u8>
+        if !named.contains::<libafl::feedbacks::MapFeedbackMetadata<u8>>(&self.name) {
+            let m = libafl::feedbacks::MapFeedbackMetadata::<u8>::new(len);
+            named
+                .try_insert::<libafl::feedbacks::MapFeedbackMetadata<u8>>(&self.name, m)
+                .map_err(|e| {
+                    Error::illegal_state(format!("failed to insert MapFeedbackMetadata: {:?}", e))
+                })?;
+        } else {
+            let map_state = named
+                .get_mut::<libafl::feedbacks::MapFeedbackMetadata<u8>>(&self.name)
+                .unwrap();
+            if map_state.history_map.len() < len {
+                map_state.history_map.resize(len, initial_u8);
+            }
+        }
+
         Ok(())
     }
 }
@@ -128,8 +228,6 @@ where
             .as_ref();
         let initial = observer.initial();
         let initial_u8: u8 = initial.into();
-        let items: Vec<C::Entry> = observer.as_iter().map(|x| *x).collect();
-
         let named = state.named_metadata_map();
         let stats_opt = named.get::<TwoStateStats>(&self.name);
         if stats_opt.is_none() {
@@ -138,11 +236,13 @@ where
         let stats = stats_opt.unwrap();
 
         // iterate and decide
-        for (i, item) in items.iter().enumerate() {
-            let cur: u8 = (*item).into();
+        for (i, item_ref) in observer.as_iter().enumerate() {
+            let item = *item_ref;
+            let cur: u8 = item.into();
             let max = stats.max_seen.get(i).copied().unwrap_or(initial_u8);
             let min = stats.min_seen.get(i).copied().unwrap_or(initial_u8);
-            let first_flag = stats.seen_first.get(i).copied().unwrap_or(0);
+            let first_flag =
+                (stats.seen_first_bits.get(i >> 3).copied().unwrap_or(0) >> (i & 7)) & 1;
             // first-time discovery: history was initial (min==initial && max==initial) and now non-initial
             if max == initial_u8 && min == initial_u8 && cur != initial_u8 && first_flag == 0 {
                 #[cfg(feature = "track_hit_feedbacks")]
@@ -184,43 +284,112 @@ where
             .as_ref();
         let initial = observer.initial();
         let initial_u8: u8 = initial.into();
-        let items: Vec<C::Entry> = observer.as_iter().map(|x| *x).collect();
-
-        // Phase 2: single mutable borrow to update stats
+        // Phase 2: reduce metadata lookups by taking Vecs out once
+        let len = observer.len();
         let named = state.named_metadata_map_mut();
-        let stats = named.get_mut::<TwoStateStats>(&self.name).ok_or_else(|| {
-            Error::illegal_argument("TwoStateMapFeedback: stats metadata missing")
-        })?;
 
-        if stats.max_seen.len() < items.len() {
-            stats.max_seen.resize(items.len(), initial_u8);
+        // take stats vectors out (single small-scope borrow)
+        let (mut max_seen, mut min_seen, mut seen_first) = {
+            let stats_mut = named.get_mut::<TwoStateStats>(&self.name).ok_or_else(|| {
+                Error::illegal_argument("TwoStateMapFeedback: stats metadata missing")
+            })?;
+            (
+                std::mem::take(&mut stats_mut.max_seen),
+                std::mem::take(&mut stats_mut.min_seen),
+                std::mem::take(&mut stats_mut.seen_first_bits),
+            )
+        };
+
+        // take history_map and covered count out
+        let (mut history_map, mut covered) = {
+            let map_state_mut = named
+                .get_mut::<libafl::feedbacks::MapFeedbackMetadata<u8>>(&self.name)
+                .ok_or_else(|| {
+                    Error::illegal_argument("TwoStateMapFeedback: map metadata missing")
+                })?;
+            (
+                std::mem::take(&mut map_state_mut.history_map),
+                map_state_mut.num_covered_map_indexes,
+            )
+        };
+
+        // resize locals once
+        if max_seen.len() < len {
+            max_seen.resize(len, initial_u8);
         }
-        if stats.min_seen.len() < items.len() {
-            stats.min_seen.resize(items.len(), initial_u8);
+        if min_seen.len() < len {
+            min_seen.resize(len, initial_u8);
         }
-        if stats.seen_first.len() < items.len() {
-            stats.seen_first.resize(items.len(), 0);
+        let bits_len = (len + 7) / 8;
+        if seen_first.len() < bits_len {
+            seen_first.resize(bits_len, 0);
+        }
+        if history_map.len() < len {
+            history_map.resize(len, initial_u8);
         }
 
-        for (i, item) in items.iter().enumerate() {
-            let cur: u8 = (*item).into();
-            // update bounds
-            if cur > stats.max_seen[i] {
-                stats.max_seen[i] = cur;
-            }
-            if cur < stats.min_seen[i] {
-                stats.min_seen[i] = cur;
-            }
+        // iterate observer directly (no allocation)
+        for (i, item_ref) in observer.as_iter().enumerate() {
+            let item = *item_ref;
+            let cur: u8 = item.into();
 
-            // mark first-discovery if history was initial and now non-initial
-            if stats.max_seen[i] == initial_u8
-                && stats.min_seen[i] == initial_u8
-                && cur != initial_u8
-                && stats.seen_first[i] == 0
-            {
-                stats.seen_first[i] = 1;
+            // update covered / history_map
+            if history_map[i] == initial_u8 && cur != initial_u8 {
+                covered += 1;
+            }
+            history_map[i] = cur;
+
+            // update stats (max/min/seen_first)
+            if cur > max_seen[i] {
+                max_seen[i] = cur;
+            }
+            if cur < min_seen[i] {
+                min_seen[i] = cur;
+            }
+            if max_seen[i] == initial_u8 && min_seen[i] == initial_u8 && cur != initial_u8 {
+                // set the seen_first bit
+                let byte_idx = i >> 3;
+                let bit_mask = 1u8 << (i & 7);
+                if (seen_first[byte_idx] & bit_mask) == 0 {
+                    seen_first[byte_idx] |= bit_mask;
+                }
             }
         }
+
+        // write back metadata (two separate small-scope borrows)
+        {
+            let map_state_mut = named
+                .get_mut::<libafl::feedbacks::MapFeedbackMetadata<u8>>(&self.name)
+                .ok_or_else(|| {
+                    Error::illegal_argument("TwoStateMapFeedback: map metadata missing")
+                })?;
+            map_state_mut.history_map = history_map;
+            map_state_mut.num_covered_map_indexes = covered;
+        }
+        {
+            let stats_mut = named.get_mut::<TwoStateStats>(&self.name).ok_or_else(|| {
+                Error::illegal_argument("TwoStateMapFeedback: stats metadata missing")
+            })?;
+            stats_mut.max_seen = max_seen;
+            stats_mut.min_seen = min_seen;
+            stats_mut.seen_first_bits = seen_first;
+        }
+
+        // Fire UpdateUserStats
+        _manager.fire(
+            state,
+            EventWithStats::with_current_time(
+                Event::UpdateUserStats {
+                    name: self.stats_name.clone(),
+                    value: UserStats::new(
+                        UserStatsValue::Ratio(covered as u64, len as u64),
+                        AggregatorOps::Avg,
+                    ),
+                    phantom: PhantomData,
+                },
+                *state.executions(),
+            ),
+        )?;
 
         Ok(())
     }

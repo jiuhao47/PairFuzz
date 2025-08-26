@@ -12,14 +12,14 @@ else
 fi
 # Always disable password authentication to enforce key-based auth only
 sed -i "s/^#\?PasswordAuthentication .*/PasswordAuthentication no/" /etc/ssh/sshd_config || echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
-# Disable root login by default
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config || true
+# Allow root login with public key only (disable password auth already enforced above)
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config || true
 
 # Ensure authorized_keys permissions correct
-if [ -d /home/dev/.ssh ]; then
-    chown -R dev:dev /home/dev/.ssh || true
-    chmod 700 /home/dev/.ssh || true
-    chmod 600 /home/dev/.ssh/authorized_keys 2>/dev/null || true
+if [ -d /root/.ssh ]; then
+    chown -R root:root /root/.ssh || true
+    chmod 700 /root/.ssh || true
+    chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 fi
 
 exec /usr/sbin/sshd -D -e

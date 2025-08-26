@@ -64,33 +64,52 @@ RUN mkdir -p /var/run/sshd /etc/ssh && ssh-keygen -A || true
 COPY docker/sshd-start.sh /usr/sbin/sshd-start.sh
 RUN chmod +x /usr/sbin/sshd-start.sh
 
-# Create a non-root user to run builds
-ARG USER=dev
-ARG UID=1000
+## Run as root (no non-root user). Files created by root map to host root unless adjusted.
+## Use the container-start.sh helper (added below) to adjust ownership/permissions of
+## mounted folders at runtime so host users can access files created by root.
+
+## Use system-wide cargo and rustup locations so ssh sessions see the same
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV RUST_VERSION=1.87.0
+# Add PATH patch: include cargo and rustup bins and common sbin dirs
+ENV PATH_PATCH=/usr/local/cargo/bin:/usr/local/rustup/bin:/usr/local/sbin:/usr/sbin:/sbin
+ENV PATH=${PATH_PATCH}:$PATH
+RUN mkdir -p /usr/local/cargo /usr/local/rustup && chown -R root:root /usr/local/cargo /usr/local/rustup
+
+# Ensure login and interactive shells receive CARGO_HOME, RUSTUP_HOME and PATH
+RUN printf '%s\n' \
+    'export CARGO_HOME=/usr/local/cargo' \
+    'export RUSTUP_HOME=/usr/local/rustup' \
+    'export RUST_VERSION=1.87.0' \
+    'export PATH=/usr/local/cargo/bin:/usr/local/rustup/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' \
+    >> /etc/profile \
+    && printf '%s\n' \
+    'export CARGO_HOME=/usr/local/cargo' \
+    'export RUSTUP_HOME=/usr/local/rustup' \
+    'export RUST_VERSION=1.87.0' \
+    'export PATH=/usr/local/cargo/bin:/usr/local/rustup/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' \
+    >> /root/.bashrc
+
+WORKDIR /workspace
+
+# Copy the container start helper and make it executable. The script will run any
+# provided command (default bash) after optionally adjusting permissions.
+COPY docker/container-start.sh /usr/sbin/container-start.sh
+RUN chmod +x /usr/sbin/container-start.sh
+
+# If a developer public key was provided at build time, install it for root
 ARG DEV_PUBKEY=""
-RUN useradd -m -u ${UID} ${USER} || true 
-
-# Set a per-user cargo home so non-root builds don't try to write to /usr/local/cargo
-ENV CARGO_HOME=/home/${USER}/.cargo
-# Add PATH patch: entries present in the runtime PATH but not in the minimal base PATH
-# Second PATH differs from base by adding: /home/dev/.cargo/bin, /usr/local/cargo/bin, /usr/local/sbin, /usr/sbin, /sbin
-ENV PATH_PATCH=/home/${USER}/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/sbin:/sbin
-ENV PATH=${PATH_PATCH}:${CARGO_HOME}/bin:$PATH
-RUN mkdir -p /home/${USER}/.cargo && chown -R ${USER}:${USER} /home/${USER}/.cargo
-
-USER ${USER}
-
-WORKDIR /home/${USER}/workspace
-
-# If a developer public key was provided at build time, install it for `dev` user
-USER root
 RUN if [ -n "${DEV_PUBKEY}" ]; then \
-    mkdir -p /home/${USER}/.ssh && \
-    echo "${DEV_PUBKEY}" > /home/${USER}/.ssh/authorized_keys && \
-    chown -R ${USER}:${USER} /home/${USER}/.ssh && \
-    chmod 700 /home/${USER}/.ssh && chmod 600 /home/${USER}/.ssh/authorized_keys; \
+    mkdir -p /root/.ssh && \
+    echo "${DEV_PUBKEY}" > /root/.ssh/authorized_keys && \
+    chown -R root:root /root/.ssh && \
+    chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys; \
     fi
-USER ${USER}
 
-# Default shell when running container interactively
+# Default entrypoint uses the permission helper. To adjust permissions for a
+# mounted workspace so host users can access files, set HOST_UID and HOST_GID
+# environment variables when running the container, or set MAKE_WORLD_WRITABLE=1
+# to force permissive mode.
+ENTRYPOINT ["/usr/sbin/container-start.sh"]
 CMD ["bash"]

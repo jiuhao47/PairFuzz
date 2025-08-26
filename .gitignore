@@ -9,3 +9,5 @@ run/
 misc/
 *.a
 *.tar
+__pycache__/
+.tmp/

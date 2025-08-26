@@ -3,3 +3,5 @@ misc/
 app/src/
 LibAFL/
 target/
+docker/.tmp
+__pycache__/

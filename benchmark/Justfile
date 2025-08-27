@@ -1,0 +1,18 @@
+PROJECT_PATH := '.'
+APP := 'libpng'
+TIMEOUT := '5'
+
+reorg_project app=APP:
+    cd {{PROJECT_PATH}} && python3 benchmark/reorg_builds.py --project {{APP}} --link-bugs --apply-physical --confirm
+
+validate_bugs input output app=APP:
+    #!/bin/bash
+    if [ -z "{{input}}" ] || [ -z "{{output}}" ]; then
+        echo "Error: input (-i) and output (-o) are required."
+        echo "Usage: just validate_bugs <input> <output> [app=APP]"
+        exit 1
+    fi
+
+    cd {{PROJECT_PATH}} && python3 validate_libpng_bugs.py -i {{input}} -o {{output}} -t {{TIMEOUT}}
+
+    

@@ -71,9 +71,13 @@ pub struct Args {
     )]
     pub continue_on_crash: bool,
 
-    /// 日志文件存储位置
-    #[arg(short = 'l', long = "log", help = "日志文件存储位置")]
-    pub log_file: Option<PathBuf>,
+    /// 日志目录存储位置（将把日志文件写入该目录）
+    #[arg(
+        short = 'l',
+        long = "log",
+        help = "日志目录存储位置（将把日志文件写入该目录）"
+    )]
+    pub log_dir: Option<PathBuf>,
 
     /// 详细输出
     #[arg(short = 'v', long = "verbose", help = "启用详细输出")]

@@ -62,18 +62,24 @@ pub fn main() {
     // 解析命令行参数
     let args = Args::parse();
 
-    // 设置日志
-    if let Some(log_file) = &args.log_file {
-        // 如果指定了日志文件，配置文件日志记录
+    // 设置日志目录
+    if let Some(log_dir) = &args.log_dir {
+        // 创建日志目录（如果不存在）
+        if let Err(e) = fs::create_dir_all(log_dir) {
+            eprintln!("无法创建日志目录 {:?}: {}", log_dir, e);
+            std::process::exit(1);
+        }
+
+        // 打开或创建主日志文件 diffray.log
+        let log_path = log_dir.join("diffray.log");
         let _log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_file)
+            .open(&log_path)
             .expect("无法创建或打开日志文件");
 
-        // 简单的日志设置
         if args.verbose {
-            println!("日志将写入到: {:?}", args.log_file.as_ref().unwrap());
+            println!("日志将写入到目录: {:?} (主日志: {:?})", log_dir, log_path);
         }
     } else if args.verbose {
         println!("启用详细输出模式");
@@ -92,7 +98,7 @@ pub fn main() {
         println!("  最大执行时间: {:?}秒", args.max_time);
         println!("  最大迭代次数: {:?}", args.max_iterations);
         println!("  发现差分时继续: {}", args.continue_on_crash);
-        println!("  日志文件: {:?}", args.log_file);
+        println!("  日志目录: {:?}", args.log_dir);
         println!("  执行超时时间: {}毫秒", args.timeout_ms);
     }
 
@@ -186,10 +192,11 @@ pub fn main() {
 
     // The Monitor trait define how the fuzzer stats are displayed to the user
     let monitors = {
+        // place the fuzzer JSON stats inside the log directory if provided
         let json_log_path = args
-            .log_file
+            .log_dir
             .as_ref()
-            .map(|p| p.with_extension("json"))
+            .map(|d| d.join("fuzzer_stats.json"))
             .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
         let json_mon = OnDiskJsonMonitor::new(json_log_path, |_| true);
         tuple_list!(json_mon)
@@ -469,13 +476,14 @@ pub fn main() {
         println!("  差分输入保存在: {:?}", args.output_dir);
     }
 
-    // 如果指定了日志文件，写入最终统计信息
-    if let Some(log_file) = &args.log_file {
+    // 如果指定了日志目录，写入最终统计信息到 diffray.log
+    if let Some(log_dir) = &args.log_dir {
         use std::io::Write;
+        let log_path = log_dir.join("diffray.log");
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_file)
+            .open(&log_path)
         {
             let _ = writeln!(
                 file,

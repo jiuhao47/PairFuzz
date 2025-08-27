@@ -40,7 +40,8 @@ pre_run app=APP:
 	mkdir -p run/single/log
 
 build_docker:
-	docker build -t diffray-dev -f docker/Dockerfile .
+	./docker/deploy.sh build
+	
 
 clean: clean_build clean_app clean_run
 

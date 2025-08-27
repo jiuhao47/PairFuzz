@@ -11,3 +11,4 @@ misc/
 *.tar
 __pycache__/
 .tmp/
+task/

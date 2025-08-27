@@ -12,3 +12,7 @@ misc/
 __pycache__/
 .tmp/
 task/
+
+LocateFix/
+benchmark/libpng
+benchmark/libspng

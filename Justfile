@@ -42,6 +42,12 @@ pre_run app=APP:
 build_docker:
 	./docker/deploy.sh build
 	
+edocker:
+	docker run --rm -it \
+	  -v "$PWD":/home/dev/workspace \
+	  -w /home/dev/workspace \
+	  diffray:latest
+
 
 clean: clean_build clean_app clean_run
 

@@ -2,10 +2,14 @@
 
 commit_hash=$1
 
+set -e
+
+
 if [ -z "$commit_hash" ]; then
   echo "Usage: $0 <commit_hash>"
   exit 1
 fi
+
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
@@ -30,13 +34,17 @@ CXXFLAGS="-fsanitize=address"
 # cmake build for spng
 mkdir build
 cd build
-cmake .. -D CMAKE_C_COMPILER=$CC -DCMAKE_C_FLAGS="$CFLAGS"
+cmake .. -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_C_FLAGS="$CFLAGS" -DCMAKE_CXX_FLAGS="$CXXFLAGS" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j 16
+
+cp $SPNG_BUILD_PATH/spng_$commit_hash/src/spng.h $SPNG_BUILD_PATH/spng_$commit_hash/spng.h
 
 
 cd $SPNG_INSTALL_PATH && mkdir -p $commit_hash
 cd $SPNG_BUILD_PATH/spng_$commit_hash/build
 make install DESTDIR=$SPNG_INSTALL_PATH/$commit_hash
+cp $SPNG_BUILD_PATH/spng_$commit_hash/build/libspng_static.a $SPNG_INSTALL_PATH/$commit_hash/usr/local/lib/libpng_static.a
+
 rm -rf $SPNG_BUILD_PATH/spng_$commit_hash
 
 cd $SPNG_LIB_PATH

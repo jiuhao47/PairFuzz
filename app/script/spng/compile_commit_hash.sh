@@ -43,7 +43,7 @@ cp $SPNG_BUILD_PATH/spng_$commit_hash/src/spng.h $SPNG_BUILD_PATH/spng_$commit_h
 cd $SPNG_INSTALL_PATH && mkdir -p $commit_hash
 cd $SPNG_BUILD_PATH/spng_$commit_hash/build
 make install DESTDIR=$SPNG_INSTALL_PATH/$commit_hash
-cp $SPNG_BUILD_PATH/spng_$commit_hash/build/libspng_static.a $SPNG_INSTALL_PATH/$commit_hash/usr/local/lib/libpng_static.a
+cp $SPNG_BUILD_PATH/spng_$commit_hash/build/libspng_static.a $SPNG_INSTALL_PATH/$commit_hash/usr/local/lib/libspng_static.a
 
 rm -rf $SPNG_BUILD_PATH/spng_$commit_hash
 

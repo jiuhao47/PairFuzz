@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-validate_libpng_bugs.py
+validate_bugs.py
 
 Usage:
-  python3 validate_libpng_bugs.py -i <file_or_dir> [<file_or_dir> ...] [-m <map.json>] [-o <out.json>] [-t <timeout>]
+  python3 validate_bugs.py -i <file_or_dir> [<file_or_dir> ...] [-m <map.json>] [-o <out.json>] [-t <timeout>]
 
-This script reads `map.json` in the libpng benchmark directory (or a provided map file),
+This script reads `map.json` in a benchmark project directory (or a provided map file),
 then for each bug it locates the two corresponding build/version directories and tries to
 find an executable program under each. It runs each program against each input file with
 the invocation: <program> <input_file> and treats output length > 0 as `reject`, length == 0 as `accept`.
 If for a given input and bug one version accepts and the other rejects, the bug is considered triggered.
 
 The script writes a JSON report with per-bug and per-input results.
+
+This is a renamed and generalized version of the previous validate_libpng_bugs.py
+so it supports validating bugs for multiple benchmark projects (libpng, libspng, ...)
+by using the `-p/--project` argument.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -34,13 +40,11 @@ def collect_input_files(paths: List[str]) -> List[str]:
         if os.path.isfile(p):
             files.append(os.path.abspath(p))
         elif os.path.isdir(p):
-            # walk recursively and collect regular files
             for root, _, filenames in os.walk(p):
                 for fn in filenames:
                     files.append(os.path.abspath(os.path.join(root, fn)))
         else:
             print(f"warning: input path not found: {p}", file=sys.stderr)
-    # deduplicate while preserving order
     seen = set()
     out = []
     for f in files:
@@ -64,7 +68,6 @@ def find_executables_under(path: str) -> List[str]:
     for root, _, files in os.walk(path):
         for fn in files:
             p = os.path.join(root, fn)
-            # skip common non-executable extensions
             if p.endswith(('.so', '.a', '.la', '.h', '.hpp', '.txt', '.md')):
                 continue
             if os.path.isfile(p) and os.access(p, os.X_OK):
@@ -75,10 +78,8 @@ def find_executables_under(path: str) -> List[str]:
 def choose_executable(candidates: List[str]) -> Optional[str]:
     if not candidates:
         return None
-    # prefer files in an "app" directory, then shortest path
     app_candidates = [c for c in candidates if os.path.sep + 'app' + os.path.sep in c]
     use = app_candidates or candidates
-    # choose the first sorted by path length
     use = sorted(use, key=lambda x: (len(x), x))
     return use[0]
 
@@ -131,17 +132,16 @@ def collect_ld_paths_for_exe(exe: str) -> List[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Validate libpng bugs using map.json')
+    parser = argparse.ArgumentParser(description='Validate benchmark bugs using map.json')
     parser.add_argument('-i', '--inputs', nargs='+', required=True,
                         help='One or more input files or directories')
     parser.add_argument('-p', '--project', default='libpng', help='Project under benchmark (libpng or libspng)')
     parser.add_argument('-m', '--map', default=None,
                         help='Path to map.json (default: benchmark/<project>/map.json)')
-    parser.add_argument('-o', '--out', default='validate_libpng_results.json', help='Output JSON file')
+    parser.add_argument('-o', '--out', default='validate_bugs_results.json', help='Output JSON file')
     parser.add_argument('-t', '--timeout', type=int, default=10, help='Timeout (seconds) per run')
     args = parser.parse_args()
 
-    # determine map path: explicit -m wins, otherwise use benchmark/<project>/map.json
     if args.map:
         map_path = args.map
     else:
@@ -173,22 +173,18 @@ def main():
             'note': ''
         }
 
-        # try to locate executables for each version
         exe_paths = [None, None]
         for i, vname in enumerate(version_names):
-            # try to match suffix in bug_dir
             suffix = vname.split('_')[-1]
             candidate_dir = os.path.join(bug_dir, suffix)
             found = []
             if os.path.isdir(candidate_dir):
                 found = find_executables_under(candidate_dir)
             if not found:
-                # try all_builds target
                 target = find_all_build_target(map_json, vname)
                 if target:
                     found = find_executables_under(target)
             if not found:
-                # also try the version directory under the bug (if named exactly vname)
                 alt = os.path.join(bug_dir, vname)
                 if os.path.isdir(alt):
                     found = find_executables_under(alt)
@@ -197,7 +193,6 @@ def main():
 
         bug_entry['exe_paths'] = exe_paths
 
-        # Run tests per input file if both exes present (or even if one/missing we still record)
         for in_file in inputs:
             r = {}
             statuses = []
@@ -217,18 +212,15 @@ def main():
                                 'out_sample': (out_text[:2000] if isinstance(out_text, str) else str(out_text))}
                     statuses.append(status)
 
-            # determine triggered: one accept and one reject
             triggered = False
             if any(s == 'accept' for s in statuses) and any(s == 'reject' for s in statuses):
                 triggered = True
             r['triggered'] = triggered
             bug_entry['results'][in_file] = r
 
-        # overall triggered_any
         bug_entry['triggered_any'] = any(v.get('triggered') for v in bug_entry['results'].values())
         results['bugs'][bug_dir] = bug_entry
 
-    # summary
     triggered_bugs = [b for b, info in results['bugs'].items() if info.get('triggered_any')]
     results['summary'] = {
         'triggered_bugs': triggered_bugs,

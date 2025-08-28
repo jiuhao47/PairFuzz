@@ -53,10 +53,20 @@ except Exception:
     # package-style import when executed from scripts folder
     from experiments.scripts.command_executor import CommandExecutor  # type: ignore
 
+
 try:
+    # attempt local import when running from scripts folder
     from experiments.scripts.cpu_assessor import CPUAssessor  # type: ignore
+    print("Successfully imported CPUAssessor from local module")
 except Exception:
-    CPUAssessor = None
+    try:
+        # try importing as a sibling module when executed from repo root
+        from cpu_assessor import CPUAssessor  # type: ignore
+        print("Successfully imported CPUAssessor from sibling module")
+    except Exception:
+        print("Warning: cpu_assessor not found; CPU affinity features disabled")
+        CPUAssessor = None
+
 
 
 @dataclass
@@ -313,20 +323,71 @@ class TaskExecutor:
 
         cfg = self.load_config(cfg_file)
 
-        # simple allocator for integer `cpus` requests when CPUAssessor is not present.
-        # Ensures mutually exclusive allocation across subtasks in a single task run.
+        # Prepare CPU allocation sources. If CPUAssessor is available, take a
+        # snapshot once per run and allocate from its `allowed_free` pool while
+        # respecting `affinity_allowed` and avoiding CPUs already allocated in
+        # this run (in _allocated_cpus). If not available, fall back to the
+        # legacy in-process allocator.
         total_cpus = os.cpu_count() or 1
         _allocated_cpus: set = set()
         _alloc_lock = threading.Lock()
 
+        assessor_report = None
+        allowed_free_pool: List[int] = []
+        affinity_allowed_set = set()
+        affinity_reserved_set = set()
+        if CPUAssessor is not None:
+            try:
+                assessor = CPUAssessor()
+                assessor_report = assessor.assess()
+                allowed_free_pool = list(assessor_report.get("allowed_free", []))
+                affinity_allowed_set = set(assessor_report.get("affinity_allowed", []))
+                affinity_reserved_set = set(assessor_report.get("affinity_reserved", []))
+            except Exception:
+                assessor_report = None
+
+        # Require CPUAssessor to be available and to produce a report. If we
+        # cannot get an assessor snapshot, we must abort — this script no
+        # longer supports a local fallback allocator.
+        if assessor_report is None:
+            print("Error: CPUAssessor unavailable or failed to produce a report; CPU allocation requires CPUAssessor.")
+            sys.exit(2)
+
         def _allocate_cpus(n: int):
             with _alloc_lock:
-                free = [i for i in range(total_cpus) if i not in _allocated_cpus]
+                if assessor_report is not None:
+                    # pick from allowed_free_pool excluding already allocated
+                    free = [i for i in allowed_free_pool if i not in _allocated_cpus]
+                else:
+                    free = [i for i in range(total_cpus) if i not in _allocated_cpus]
                 if len(free) < n:
                     return None
                 chosen = free[:n]
                 _allocated_cpus.update(chosen)
                 return chosen
+
+        def _parse_cpu_spec(spec: str) -> List[int]:
+            """Parse a taskset-style spec like "0,2-4" into a list of ints.
+            Returns empty list on parse failure.
+            """
+            out: List[int] = []
+            try:
+                for part in str(spec).split(','):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    if '-' in part:
+                        a, b = part.split('-', 1)
+                        a_i = int(a)
+                        b_i = int(b)
+                        if b_i < a_i:
+                            continue
+                        out.extend(list(range(a_i, b_i + 1)))
+                    else:
+                        out.append(int(part))
+            except Exception:
+                return []
+            return out
 
         # helper to execute one subtask (used by both sequential and parallel flows)
         def _exec_subtask(
@@ -382,51 +443,83 @@ class TaskExecutor:
                 affinity_cpus: Optional[List[int]] = None
                 if getattr(s, "cpus", None) is not None:
                     spec = None
-                    # if integer and CPUAssessor available, ask assessor to pick free CPUs
-                    if isinstance(s.cpus, int) and CPUAssessor is not None:
+                    # integer request: prefer assessor snapshot allocation
+                    if isinstance(s.cpus, int):
                         n = int(s.cpus)
-                        assessor = CPUAssessor()
-                        report = assessor.assess()
-                        allowed_free = report.get("allowed_free", [])
-                        if len(allowed_free) < n:
-                            # not enough free CPUs: mark subtask failed with readable message
+                        if assessor_report is not None:
+                            # quick check: are there enough allowed_free in snapshot?
+                            if len(allowed_free_pool) < n:
+                                sub_res["failed"] = True
+                                sub_res["error"] = (
+                                    f"Requested {n} free CPU(s), but only {len(allowed_free_pool)} available."
+                                    f" Assessor reason: {assessor_report.get('reason')}.")
+                                return sub_res
+                            # attempt to allocate from the shared pool for this run
+                            chosen = _allocate_cpus(n)
+                            if chosen is None:
+                                sub_res["failed"] = True
+                                sub_res["error"] = (
+                                    f"Requested {n} CPU(s) but allocation conflict occurred; try with lower concurrency.")
+                                return sub_res
+                            affinity_cpus = [int(x) for x in chosen]
+                            spec = ",".join(str(x) for x in chosen)
+                        else:
+                            # This branch must not be used: CPUAssessor is
+                            # required by policy. Fail the subtask if reached.
                             sub_res["failed"] = True
                             sub_res["error"] = (
-                                f"Requested {n} free CPU(s), but only {len(allowed_free)} available."
-                                f" Assessor reason: {report.get('reason')}."
+                                "CPUAssessor required for CPU allocation but unavailable during allocation step."
                             )
                             return sub_res
-                        chosen = allowed_free[:n]
-                        spec = ",".join(str(x) for x in chosen)
-                        affinity_cpus = [int(x) for x in chosen]
-                    elif isinstance(s.cpus, int):
-                        # fallback: request `n` CPUs from local allocator to avoid overlap
-                        n = int(s.cpus)
-                        chosen = None
-                        # try allocator first
-                        try:
-                            chosen = _allocate_cpus(n)
-                        except Exception:
-                            chosen = None
-
-                        if chosen is None:
-                            # fallback legacy behavior: map integer n -> 0-(n-1)
-                            if n <= 1:
-                                spec = "0"
-                                affinity_cpus = [0]
-                            else:
-                                spec = f"0-{max(0, n-1)}"
-                                try:
-                                    affinity_cpus = list(range(0, max(1, n)))
-                                except Exception:
-                                    affinity_cpus = None
-                        else:
-                            spec = ",".join(str(x) for x in chosen)
-                            affinity_cpus = [int(x) for x in chosen]
                     elif isinstance(s.cpus, (list, tuple)):
-                        spec = ",".join(str(x) for x in s.cpus)
+                        # explicit list: validate against affinity_allowed and existing allocations
+                        requested = [int(x) for x in s.cpus]
+                        # if assessor snapshot exists, ensure all requested CPUs are allowed
+                        if assessor_report is not None:
+                            bad = [c for c in requested if c not in affinity_allowed_set]
+                            if bad:
+                                sub_res["failed"] = True
+                                sub_res["error"] = (
+                                    f"Requested CPUs {requested} include CPUs not allowed by system affinity: {bad}.")
+                                return sub_res
+                            # ensure not already allocated in this run
+                            busy = [c for c in requested if c in _allocated_cpus]
+                            if busy:
+                                sub_res["failed"] = True
+                                sub_res["error"] = (
+                                    f"Requested CPUs {requested} include already allocated CPUs in this run: {busy}.")
+                                return sub_res
+                        # reserve these for this run
+                        with _alloc_lock:
+                            for c in requested:
+                                _allocated_cpus.add(c)
+                        affinity_cpus = requested
+                        spec = ",".join(str(x) for x in requested)
                     else:
-                        spec = str(s.cpus)
+                        # string spec: try to parse, otherwise leave for taskset to handle
+                        parsed = _parse_cpu_spec(str(s.cpus))
+                        if parsed:
+                            # validate parsed list similar to above
+                            if assessor_report is not None:
+                                bad = [c for c in parsed if c not in affinity_allowed_set]
+                                if bad:
+                                    sub_res["failed"] = True
+                                    sub_res["error"] = (
+                                        f"Requested CPUs {parsed} include CPUs not allowed by system affinity: {bad}.")
+                                    return sub_res
+                                busy = [c for c in parsed if c in _allocated_cpus]
+                                if busy:
+                                    sub_res["failed"] = True
+                                    sub_res["error"] = (
+                                        f"Requested CPUs {parsed} include already allocated CPUs in this run: {busy}.")
+                                    return sub_res
+                            with _alloc_lock:
+                                for c in parsed:
+                                    _allocated_cpus.add(c)
+                            affinity_cpus = parsed
+                            spec = ",".join(str(x) for x in parsed)
+                        else:
+                            spec = str(s.cpus)
                     # use taskset and run under bash -lc to ensure children inherit
                     cpu_prefix = f'taskset -c {spec} bash -lc "'
 

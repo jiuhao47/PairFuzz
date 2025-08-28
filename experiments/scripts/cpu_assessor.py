@@ -55,9 +55,42 @@ class CPUAssessor:
             if usage < self.threshold:
                 free_cpus.append(idx)
 
+        # Determine CPUs this process is allowed to use. Then inspect other
+        # processes owned by the same user: if any have a restricted affinity
+        # (i.e. len(aff) < total_cpus), treat CPUs in that restricted set as
+        # reserved and exclude them from our allowed list. This prevents
+        # recommending CPUs that other local processes have explicitly pinned.
         try:
+            total_cpus = len(per_cpu)
+            # base allowed set for this process
             allowed = sorted(os.sched_getaffinity(0))
+            reserved = set()
+            my_pid = os.getpid()
+            my_uid = os.getuid()
+            # scan /proc for numeric PIDs
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                pid = int(entry)
+                if pid == my_pid:
+                    continue
+                try:
+                    st = os.stat(os.path.join("/proc", entry))
+                    # only consider processes owned by the same user
+                    if st.st_uid != my_uid:
+                        continue
+                    aff = os.sched_getaffinity(pid)
+                    # if the process has a restricted affinity (not the full set)
+                    # consider those CPUs reserved
+                    if 0 < len(aff) < total_cpus:
+                        reserved.update(aff)
+                except Exception:
+                    # ignore processes we can't inspect
+                    continue
+            # final allowed excludes reserved CPUs
+            allowed = [c for c in allowed if c not in reserved]
         except AttributeError:
+            # sched_getaffinity not available -> fall back to all CPUs
             allowed = list(range(len(per_cpu)))
 
         allowed_free = [c for c in free_cpus if c in allowed]
@@ -94,6 +127,7 @@ class CPUAssessor:
             "load1": load1,
             "total_cpus": total_cpus,
             "affinity_allowed": allowed,
+            "affinity_reserved": sorted(list(reserved)) if 'reserved' in locals() else [],
         }
         return result
 
@@ -109,7 +143,11 @@ class CPUAssessor:
 
         print()
         print(f"Load (1m): {r['load1']:.2f}  CPUs: {r['total_cpus']}")
-        print(f"Affinity allowed CPUs for this process: {r['affinity_allowed']}")
+        reserved = r.get('affinity_reserved')
+        if reserved:
+            print(f"Affinity allowed CPUs for this process: {r['affinity_allowed']} (reserved by other procs: {reserved})")
+        else:
+            print(f"Affinity allowed CPUs for this process: {r['affinity_allowed']}")
         print(f"Free CPUs below threshold: {r['free_cpus']}")
         print(f"Allowed & free CPUs (recommended for taskset): {r['allowed_free']}")
         print(f"Suitable for taskset (min_free satisfied): {r['suitable']}")

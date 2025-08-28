@@ -5,13 +5,13 @@ PROFILE_DIR := 'release'
 CARGO_TARGET_DIR := env("CARGO_TARGET_DIR", "target")
 FUZZER := CARGO_TARGET_DIR / PROFILE_DIR / FUZZER_NAME
 LIBAFL_CC := CARGO_TARGET_DIR / PROFILE_DIR / "libafl_cc"
-APP := 'png'
+APP := 'libpng'
 
 alias build := fuzzer
 
 load_app app=APP:
 	rm -rf ./libdifferential.a
-	cp "./app/differential_libs/{{app}}/libdifferential_{{app}}.a" ./libdifferential.a
+	cp "./app/differential_libs/libs/libdifferential_{{app}}.a" ./libdifferential.a
 
 cc:
     cargo build --profile={{PROFILE}} --bin libafl_cc

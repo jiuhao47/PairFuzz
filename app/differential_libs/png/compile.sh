@@ -54,6 +54,6 @@ nm libdifferential.a | grep -E "(libpng_parse|libspng_parse)" || echo "Warning: 
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"
 
-mv libdifferential.a libdifferential_$name_suffix.a
+mv libdifferential.a ../libs/libdifferential_$name_suffix.a
 
 echo "Done! libdifferential_$name_suffix.a"

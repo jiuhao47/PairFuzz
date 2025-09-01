@@ -369,6 +369,7 @@ dependencies = [
  "libafl_bolts",
  "libafl_cc",
  "libafl_targets",
+ "libc",
  "log",
  "mimalloc",
  "serde",

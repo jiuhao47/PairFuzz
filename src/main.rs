@@ -2,7 +2,7 @@ use clap::Parser;
 use libafl::monitors::OnDiskJsonMonitor;
 use libafl::{
     corpus::{Corpus, InMemoryOnDiskCorpus},
-    events::SimpleEventManager,
+    events::SimpleRestartingEventManager,
     executors::{inprocess::InProcessExecutor, DiffExecutor},
     feedback_and_fast, feedback_or_fast,
     feedbacks::{DiffExitKindFeedback, MaxMapFeedback},
@@ -16,14 +16,11 @@ use libafl::{
 };
 // Note: we intentionally avoid MinMapFeedback here to keep concrete feedback types
 // identical across branches; we emulate Min via inverted owned map.
+use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 use libafl_bolts::{nonzero, rands::StdRand, tuples::tuple_list};
 use libafl_targets::edges_max_num;
 use mimalloc::MiMalloc;
-use std::{
-    fs,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{fs, path::PathBuf, time::Duration};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -61,6 +58,7 @@ mod harness;
 pub fn main() {
     // 解析命令行参数
     let args = Args::parse();
+    unsafe { std::env::set_var("ASAN_OPTIONS", "abort_on_error=0:detect_leaks=false") }
 
     // 设置日志目录
     if let Some(log_dir) = &args.log_dir {
@@ -102,8 +100,7 @@ pub fn main() {
         println!("  执行超时时间: {}毫秒", args.timeout_ms);
     }
 
-    let start_time = Instant::now();
-    let mut iteration_count = 0u64;
+    // unlimited fuzzing, no time or iteration limits
     let mut harness_impl_a = |input: &BytesInput| crate::harness::first_harness(input);
     let mut harness_impl_b = |input: &BytesInput| crate::harness::second_harness(input);
     let num_edges: usize = edges_max_num(); // upper bound
@@ -111,6 +108,8 @@ pub fn main() {
     // Build observers using helper which handles EDGES allocation
     let (map_observer_a, map_observer_b, objective_observer) =
         observers::coverage_helpers::make_map_observers(num_edges);
+
+    // startup observer initial-value logging removed (not useful)
 
     // create a map swapper from the two map observers (requires the swapper to borrow them)
     let mut map_observer_a = map_observer_a;
@@ -152,25 +151,74 @@ pub fn main() {
     let coverage_fb = feedback_and_fast!(coverage_fb_a, coverage_fb_b);
     let mut feedback = feedback_or_fast!(coverage_fb, rv_wrapper);
 
+    // NOTE: State creation is deferred until after we attempt to launch
+    // a restarting event manager. The restarter may provide an existing
+    // State via shared memory if we are resuming after a crash.
+
+    // (coverage_fb and feedback already composed above)
+
+    // The Monitor trait define how the fuzzer stats are displayed to the user
+    // Use a function pointer for the log predicate so the monitor implements `Debug`.
+    fn always_log(_: &mut libafl::monitors::stats::ClientStatsManager) -> bool {
+        true
+    }
+
+    let monitors = {
+        // place the fuzzer JSON stats inside the log directory if provided
+        let json_log_path = args
+            .log_dir
+            .as_ref()
+            .map(|d| d.join("fuzzer_stats.json"))
+            .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
+        let json_mon = OnDiskJsonMonitor::new(
+            json_log_path,
+            always_log as fn(&mut libafl::monitors::stats::ClientStatsManager) -> bool,
+        );
+        tuple_list!(json_mon)
+    };
+
+    // The event manager handle the various events generated during the fuzzing loop
+    // such as the notification of the addition of a new item to the corpus
+    // In this binary we support restarting: spawn a SimpleRestartingEventManager
+    // which returns an optional State (when restarting) and an EventManager.
+    let mut shmem_provider = StdShMemProvider::new().expect("failed to create shmem provider");
+
+    let (maybe_state, mut mgr) =
+        match SimpleRestartingEventManager::launch(monitors, &mut shmem_provider) {
+            Ok(res) => res,
+            Err(e) => match e {
+                libafl::Error::ShuttingDown => {
+                    // restarter requested shutdown
+                    return;
+                }
+                _ => panic!("Failed to setup the restarter: {}", e),
+            },
+        };
+
+    // If the restarter didn't provide an existing state, create one from scratch
     let rand = StdRand::new();
     let corpus = InMemoryOnDiskCorpus::new(args.corpus_dir.clone()).unwrap();
     let solution = InMemoryOnDiskCorpus::new(args.output_dir.clone()).unwrap();
-    // create a State from scratch
-    let mut state = StdState::new(
-        // RNG
-        rand,
-        // Corpus that will be evolved, use an on-disk-backed in-memory corpus so items are persisted
-        corpus,
-        // Corpus in which we store solutions (diffs in this example),
-        // on disk so the user can get them after stopping the fuzzer
-        solution,
-        // States of the feedbacks.
-        // The feedbacks can report the data that should persist in the State.
-        &mut feedback,
-        // Same for objective feedbacks
-        &mut objective,
-    )
-    .unwrap();
+    let _was_restored = maybe_state.is_some();
+    let mut state = maybe_state.unwrap_or_else(|| {
+        StdState::new(
+            // RNG
+            rand,
+            // Corpus that will be evolved, use an on-disk-backed in-memory corpus so items are persisted
+            corpus,
+            // Corpus in which we store solutions (diffs in this example),
+            // on disk so the user can get them after stopping the fuzzer
+            solution,
+            // States of the feedbacks.
+            // The feedbacks can report the data that should persist in the State.
+            &mut feedback,
+            // Same for objective feedbacks
+            &mut objective,
+        )
+        .unwrap()
+    });
+
+    // restored-state logging removed (hashes and initial-value logs not useful)
 
     // Pre-allocate metadata via the feedback helper (avoids doing manual
     // named-metadata manipulation here). Caller now invokes the helper
@@ -179,32 +227,14 @@ pub fn main() {
     // now that `state` is available. This avoids needing the original
     // `coverage_fb_a`/`coverage_fb_b` values which were moved into the
     // composed feedback earlier.
-    {
-        use crate::feedbacks::two_state_map::TwoStateMapFeedback;
+    // {
+    //     use crate::feedbacks::two_state_map::TwoStateMapFeedback;
 
-        let mut tmp_a = TwoStateMapFeedback::new_with_params(&map_observer_a, 1, 1, true, true);
-        let _ = tmp_a.ensure_initialized_with_observer(&mut state, &map_observer_a);
-        let mut tmp_b = TwoStateMapFeedback::new_with_params(&map_observer_b, 1, 1, true, true);
-        let _ = tmp_b.ensure_initialized_with_observer(&mut state, &map_observer_b);
-    }
-
-    // (coverage_fb and feedback already composed above)
-
-    // The Monitor trait define how the fuzzer stats are displayed to the user
-    let monitors = {
-        // place the fuzzer JSON stats inside the log directory if provided
-        let json_log_path = args
-            .log_dir
-            .as_ref()
-            .map(|d| d.join("fuzzer_stats.json"))
-            .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
-        let json_mon = OnDiskJsonMonitor::new(json_log_path, |_| true);
-        tuple_list!(json_mon)
-    };
-
-    // The event manager handle the various events generated during the fuzzing loop
-    // such as the notification of the addition of a new item to the corpus
-    let mut mgr = SimpleEventManager::new(monitors);
+    //     let mut tmp_a = TwoStateMapFeedback::new_with_params(&map_observer_a, 1, 1, true, true);
+    //     let _ = tmp_a.ensure_initialized_with_observer(&mut state, &map_observer_a);
+    //     let mut tmp_b = TwoStateMapFeedback::new_with_params(&map_observer_b, 1, 1, true, true);
+    //     let _ = tmp_b.ensure_initialized_with_observer(&mut state, &map_observer_b);
+    // }
 
     // A queue policy to get testcases from the corpus
     let scheduler = QueueScheduler::new();
@@ -306,169 +336,27 @@ pub fn main() {
     }
 
     // 根据配置决定使用哪种模糊测试循环
-    if let Some(max_iter) = args.max_iterations {
-        // 使用 fuzz_loop_for 进行固定次数的模糊测试
-        if args.verbose {
-            println!("使用最大执行次数限制: {} 次", max_iter);
-        }
+    // Unlimited fuzz loop: use the standard fuzz_loop (no time/iteration limits)
+    if args.verbose {
+        println!("运行无限制的模糊测试循环");
+    }
 
-        // 将大的迭代次数分成较小的块，以便检查是否发现了差分输入
-        let chunk_size = 1000u64;
-        let mut remaining_iters = max_iter;
-
-        while remaining_iters > 0 {
-            // 检查是否找到差分输入
-            let has_solutions = !state.solutions().is_empty();
-            if has_solutions && !args.continue_on_crash {
-                if args.verbose {
-                    println!("发现差分输入，停止模糊测试");
-                }
-                break;
-            }
-
-            // 计算本次迭代的数量
-            let current_chunk = std::cmp::min(chunk_size, remaining_iters);
-
-            // 执行模糊测试
-            match fuzzer.fuzz_loop_for(
-                &mut stages,
-                &mut differential_executor,
-                &mut state,
-                &mut mgr,
-                current_chunk,
-            ) {
-                Ok(_) => {
-                    iteration_count += current_chunk;
-                    remaining_iters -= current_chunk;
-
-                    if args.verbose {
-                        let elapsed = start_time.elapsed();
-                        println!(
-                            "已完成迭代: {}, 剩余: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
-                            iteration_count,
-                            remaining_iters,
-                            elapsed.as_secs_f64(),
-                            state.corpus().count(),
-                            state.solutions().count()
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("模糊测试循环中出现错误: {}", e);
-                    break;
-                }
-            }
-        }
-    } else if let Some(max_time) = args.max_time {
-        // 使用时间限制的模糊测试
-        if args.verbose {
-            println!("使用时间限制: {} 秒", max_time);
-        }
-
-        // 使用较小的迭代块来定期检查时间和差分输入
-        let chunk_size = 1000u64;
-
-        loop {
-            // 检查时间限制
-            let elapsed = start_time.elapsed();
-            if elapsed.as_secs() >= max_time {
-                if args.verbose {
-                    println!("达到时间限制 {} 秒，停止模糊测试", max_time);
-                }
-                break;
-            }
-
-            // 检查是否找到差分输入
-            let has_solutions = !state.solutions().is_empty();
-            if has_solutions && !args.continue_on_crash {
-                if args.verbose {
-                    println!("发现差分输入，停止模糊测试");
-                }
-                break;
-            }
-
-            // 执行一个较小的迭代块
-            match fuzzer.fuzz_loop_for(
-                &mut stages,
-                &mut differential_executor,
-                &mut state,
-                &mut mgr,
-                chunk_size,
-            ) {
-                Ok(_) => {
-                    iteration_count += chunk_size;
-
-                    if args.verbose && iteration_count % 10000 == 0 {
-                        let elapsed = start_time.elapsed();
-                        println!(
-                            "迭代: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
-                            iteration_count,
-                            elapsed.as_secs_f64(),
-                            state.corpus().count(),
-                            state.solutions().count()
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("模糊测试循环中出现错误: {}", e);
-                    break;
-                }
-            }
-        }
-    } else {
-        // 无限制的模糊测试循环（使用传统的 fuzz_one 方法）
-        if args.verbose {
-            println!("运行无限制的模糊测试循环");
-        }
-
-        loop {
-            // 检查是否找到差分输入
-            let has_solutions = !state.solutions().is_empty();
-            if has_solutions && !args.continue_on_crash {
-                if args.verbose {
-                    println!("发现差分输入，停止模糊测试");
-                }
-                break;
-            }
-
-            // 执行一次模糊测试迭代
-            match fuzzer.fuzz_one(
-                &mut stages,
-                &mut differential_executor,
-                &mut state,
-                &mut mgr,
-            ) {
-                Ok(_) => {
-                    iteration_count += 1;
-
-                    // 定期输出进度信息
-                    if args.verbose && iteration_count % 1000 == 0 {
-                        let elapsed = start_time.elapsed();
-                        println!(
-                            "迭代: {}, 用时: {:.2}s, 语料库大小: {}, 解决方案: {}",
-                            iteration_count,
-                            elapsed.as_secs_f64(),
-                            state.corpus().count(),
-                            state.solutions().count()
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("模糊测试循环中出现错误: {}", e);
-                    break;
-                }
-            }
-        }
+    // This call will run indefinitely (or until the restarter/manager stops it)
+    match fuzzer.fuzz_loop(
+        &mut stages,
+        &mut differential_executor,
+        &mut state,
+        &mut mgr,
+    ) {
+        Ok(_) => {}
+        Err(e) => eprintln!("模糊测试循环中出现错误: {}", e),
     }
 
     // 输出最终统计信息
-    let final_elapsed = start_time.elapsed();
     let solutions_count = state.solutions().count();
     let corpus_count = state.corpus().count();
 
     println!("模糊测试完成:");
-    println!("  总执行时间: {:.2} 秒", final_elapsed.as_secs_f64());
-    println!("  总迭代次数: {}", iteration_count);
     println!("  语料库大小: {}", corpus_count);
     println!("  发现的差分输入数量: {}", solutions_count);
 
@@ -487,13 +375,11 @@ pub fn main() {
         {
             let _ = writeln!(
                 file,
-                "[{}] 模糊测试完成 - 时间: {:.2}s, 迭代: {}, 语料库: {}, 差分输入: {}",
+                "[{}] 模糊测试完成 - 语料库: {}, 差分输入: {}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
-                final_elapsed.as_secs_f64(),
-                iteration_count,
                 corpus_count,
                 solutions_count
             );

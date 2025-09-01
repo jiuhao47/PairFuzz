@@ -22,22 +22,14 @@ fuzzer app=APP: (load_app app) cc cxx
 	cargo build --profile={{PROFILE}}
 
 run app=APP: (fuzzer app) (pre_run app)
-	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ --corpus run/corpus -v -l ./run/log/log.txt --cov-mode none --rv-mode single
+	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ --corpus run/corpus -v -l ./run/log/ --cov-mode none --rv-mode single
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ --corpus run/corpus/ -v -l ./run/log/log.txt --cov-mode max-min --rv-mode none
-
-run_both app=APP: (pre_run app)
-	nohup {{FUZZER}} -t 1200 -c -o run/maxmin/diffs -i run/seeds/ --corpus run/maxmin/corpus/ -v -l ./run/maxmin/log/log.txt --cov-mode max-min --rv-mode none 2>&1 >/dev/null &
-	nohup {{FUZZER}} -t 1200 -c -o run/single/diffs -i run/seeds/ --corpus run/single/corpus/ -v -l ./run/single/log/log.txt --cov-mode single --rv-mode none 2>&1 >/dev/null &
+	{{FUZZER}} -c -o run/diffs -i run/seeds/ --corpus run/corpus/ -v -l ./run/log/ --cov-mode max-min --rv-mode none
 
 pre_run app=APP: 
 	rm -rf ./run/ && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
-	cp ./app/corpus/{{app}}/*.{{app}} run/seeds/
-	mkdir -p run/maxmin/
-	mkdir -p run/single/
-	mkdir -p run/maxmin/log
-	mkdir -p run/single/log
+	cp ./app/corpus/png/* run/seeds/
 
 build_docker:
 	./docker/deploy.sh build

@@ -1,8 +1,8 @@
 # Create a temporary directory for extracting and combining libraries
 TEMP_DIR="temp_differential"
 mkdir -p "$TEMP_DIR"
-libxml2_hash=$1
-expat_hash=$2
+mjson_hash=$1
+cjson_hash=$2
 name_suffix=$3
 
 set -e
@@ -11,34 +11,48 @@ if [ -z "$name_suffix" ]; then
   echo "Error: Name suffix is required"
   exit 1
 fi
-if [ -z "$libxml2_hash" ]; then
-  echo "Error: libxml2 hash is required"
+if [ -z "$mjson_hash" ]; then
+  echo "Error: mjson hash is required"
   exit 1
 fi
-if [ -z "$expat_hash" ]; then
-  echo "Error: expat hash is required"
+if [ -z "$cjson_hash" ]; then
+  echo "Error: cjson hash is required"
   exit 1
 fi
 
-# Step 1: Compile mjson.c to object file
-echo "Compiling mjson.c..."
-"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "mjson.c" \
-    -o "$TEMP_DIR/mjson.o"
+# Step 1: Compile harness files to object files
+echo "Compiling mjson harness..."
 
-# Step 2: Create the static library
-echo "Creating static library libmjson.a..."
-ar rcs libmjson.a "$TEMP_DIR"/*.o
+"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_mjson_libs/mjson_harness.c" \
+    -I "../../build/mjson/$mjson_hash/" \
+    -o "$TEMP_DIR/mjson_harness.o"
 
-# Step 3: Verify the library contains main functions
+echo "Compiling cjson harness..."
+"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_cjson_libs/cjson_harness.c" \
+    -I "../../build/cjson/$cjson_hash/" \
+    -o "$TEMP_DIR/cjson_harness.o"
+
+# Step 2: Extract existing static libraries
+echo "Extracting libmjson.a..."
+cd "$TEMP_DIR"
+ar x "../../../build/mjson/$mjson_hash/libmjson.a"
+
+echo "Extracting libcjson.a..."
+ar x "../../../build/cjson/$cjson_hash/libcjson.a"
+cd ..
+
+# Step 3: Create the combined static library
+echo "Creating combined static library libdifferential.a..."
+ar rcs libdifferential.a "$TEMP_DIR"/*.o
+
+# Step 4: Verify the library contains our functions
 echo "Verifying library contents..."
-nm libmjson.a | grep -E "(mjson_parse|mjson_print)" || echo "Warning: Expected mjson functions not found"
+nm libdifferential.a | grep -E "(cjson_parse|mjson_parse)" || echo "Warning: Expected functions not found"
 
-# Step 4: Clean up
+# Step 5: Clean up
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"
 
-# Move and rename the library
-mv libmjson.a ../libs/libmjson_$name_suffix.a
+mv libdifferential.a ../libs/libdifferential_$name_suffix.a
 
-echo "Done! libmjson_$name_suffix.a created in ../libs directory"
-    
+echo "Done! libdifferential_$name_suffix.a"

@@ -2,7 +2,6 @@
 app/src/
 app/build
 app/corpus
-app/script
 target/
 libs/
 run/

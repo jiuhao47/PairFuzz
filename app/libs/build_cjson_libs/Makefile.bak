@@ -1,0 +1,34 @@
+CC := clang
+CXX := clang++
+
+OLD_BASE_PATH := /home/fdl/diff-fuzz/examples/builds/libs/cjson_oldest
+NEW_BASE_PATH := /home/fdl/diff-fuzz/examples/builds/libs/cjson_newest
+
+OLD_INC_PATH := -I$(OLD_BASE_PATH)/include
+OLD_LIB_PATH := -L$(OLD_BASE_PATH)/lib
+OLD_DYN_LIBS := -Wl,-rpath,$(OLD_BASE_PATH)/lib
+
+NEW_INC_PATH := -I$(NEW_BASE_PATH)/include
+NEW_LIB_PATH := -L$(NEW_BASE_PATH)/lib
+NEW_DYN_LIBS := -Wl,-rpath,$(NEW_BASE_PATH)/lib
+
+FLAGS := -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls  
+LD_FLAGS := -rdynamic -shared 
+LIBS := -lcjson
+
+all: genlib test
+
+genlib: cjson_parse.c
+	$(CC) $(NEW_INC_PATH) $(FLAGS) -fpic -c cjson_parse.c -o cjson_parse.o
+	$(CC) $(FLAGS) $(LD_FLAGS) cjson_parse.o -o libcjson_newest.so $(NEW_DYN_LIBS)  $(NEW_LIB_PATH) $(LIBS)
+
+	$(CC) $(OLD_INC_PATH) $(FLAGS) -fpic -c cjson_parse.c -o cjson_parse_old.o
+	$(CC) $(FLAGS) $(LD_FLAGS) cjson_parse_old.o -o libcjson_oldest.so $(OLD_DYN_LIBS)  $(OLD_LIB_PATH) $(LIBS)
+
+test: test.cpp
+	$(CXX) -fsanitize=address,fuzzer-no-link -o test test.cpp
+
+clean:
+	rm -f test
+	rm -f *.o
+	rm -f *.so

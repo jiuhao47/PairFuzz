@@ -1,0 +1,2 @@
+这里用compile.sh
+很神奇哦，源码的位置在libs/build_7zxz_libs

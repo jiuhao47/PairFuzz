@@ -4,6 +4,9 @@ app/build
 app/corpus
 target/
 libs/
+!app/libs/**/*.c
+!app/libs/**/*.cpp
+!app/libs/**/*.cc
 run/
 misc/
 *.a

@@ -1,7 +1,7 @@
 FUZZER_NAME := 'diffray'
 PROJECT_DIR := absolute_path(".")
-PROFILE := 'release'
-PROFILE_DIR := 'release'
+PROFILE := 'dev'
+PROFILE_DIR := 'debug'
 CARGO_TARGET_DIR := env("CARGO_TARGET_DIR", "target")
 FUZZER := CARGO_TARGET_DIR / PROFILE_DIR / FUZZER_NAME
 LIBAFL_CC := CARGO_TARGET_DIR / PROFILE_DIR / "libafl_cc"

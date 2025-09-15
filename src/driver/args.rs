@@ -29,24 +29,7 @@ pub struct Args {
     #[arg(short = 'i', long = "input", help = "初始种子输入文件夹路径")]
     pub input_dir: Option<PathBuf>,
 
-    /// 最长模糊测试时间（秒）
-    #[arg(
-        short = 't',
-        long = "max_time",
-        help = "最长模糊测试时间（秒）",
-        conflicts_with = "max_iterations"
-    )]
-    pub max_time: Option<u64>,
-
-    /// 最大执行次数
-    #[arg(
-        short = 'n',
-        long = "max-iterations",
-        help = "最大执行次数",
-        conflicts_with = "max_time"
-    )]
-    pub max_iterations: Option<u64>,
-
+    // (已移除) 最大运行时间和最大迭代次数参数已删除 -- 不再由 driver 使用
     /// 输出差分输入的文件夹
     #[arg(
         short = 'o',
@@ -63,14 +46,7 @@ pub struct Args {
     )]
     pub corpus_dir: PathBuf,
 
-    /// 发现差分输入时不停止模糊测试器
-    #[arg(
-        short = 'c',
-        long = "continue",
-        help = "发现差分输入时不停止模糊测试器"
-    )]
-    pub continue_on_crash: bool,
-
+    // (已移除) continue_on_crash 参数已删除 -- 若需保留该行为，请重新添加并实现逻辑
     /// 日志目录存储位置（将把日志文件写入该目录）
     #[arg(
         short = 'l',
@@ -79,9 +55,9 @@ pub struct Args {
     )]
     pub log_dir: Option<PathBuf>,
 
-    /// 详细输出
-    #[arg(short = 'v', long = "verbose", help = "启用详细输出")]
-    pub verbose: bool,
+    /// 详细输出，重复使用 `-v` 可增加详细级别（-v, -vv, -vvv）
+    #[arg(short = 'v', long = "verbose", help = "启用详细输出，重复使用增加详细级别", action = clap::ArgAction::Count)]
+    pub verbose: u8,
 
     /// 单次执行超时时间（毫秒）
     #[arg(
@@ -91,9 +67,9 @@ pub struct Args {
     )]
     pub timeout_ms: u64,
     /// coverage 模式: none|single|combo
-    #[arg(long = "cov-mode", help = "coverage 模式: none|single|combo", default_value_t = ModeOption::Combo)]
+    #[arg(long = "cov-mode", help = "coverage 模式: none|single|combo", default_value_t = ModeOption::Single)]
     pub cov_mode: ModeOption,
     /// return-value 模式: none|single|combo
-    #[arg(long = "rv-mode", help = "return-value 模式: none|single|combo", default_value_t = ModeOption::Combo)]
+    #[arg(long = "rv-mode", help = "return-value 模式: none|single|combo", default_value_t = ModeOption::None)]
     pub rv_mode: ModeOption,
 }

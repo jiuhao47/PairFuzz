@@ -13,6 +13,10 @@ track_hit_feedbacks = ["libafl/track_hit_feedbacks"]
 
 [profile.dev]
 panic = "abort"
+lto = true
+codegen-units = 1
+opt-level = 3
+debug = true
 
 [profile.release]
 panic = "abort"
@@ -45,6 +49,8 @@ libafl_cc = { path = "./LibAFL/crates/libafl_cc" }
 
 # used to dup/dup2 fds to silence target stdout/stderr during harness execution
 libc = "0.2"
+env = "1.0.1"
+env_logger = "0.11.8"
 
 [[bin]]
 name = "diffray"

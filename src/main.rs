@@ -110,11 +110,10 @@ pub fn main() {
     let (map_observer_a, map_observer_b, objective_observer) =
         observers::coverage_helpers::make_map_observers(num_edges);
 
-    // startup observer initial-value logging removed (not useful)
-
     // create a map swapper from the two map observers (requires the swapper to borrow them)
     let mut map_observer_a = map_observer_a;
     let mut map_observer_b = map_observer_b;
+    let mut objective_observer = objective_observer;
     let map_swapper =
         crate::feedbacks::coverage::make_map_swapper(&mut map_observer_a, &mut map_observer_b);
 
@@ -166,8 +165,12 @@ pub fn main() {
         "zero_nonzero",
         &[&rv_exec_observer_a, &rv_exec_observer_b],
     );
-    // include a small coverage feedback for rv objective as befores
-    let mut objective = diffray_obj; // use the combined single objective
+    // include a MaxMapFeedback-based objective so we only record metadata when
+    // the map observer sees new/high values for the objective observer.
+    // Use with_name to avoid colliding with other MaxMapFeedback histories.
+    let map_obj_fb =
+        libafl::feedbacks::MaxMapFeedback::with_name("map_objective", &mut objective_observer);
+    let mut objective = feedback_and_fast!(diffray_obj, map_obj_fb);
 
     // NOTE: State creation is deferred until after we attempt to launch
     // a restarting event manager. The restarter may provide an existing
@@ -265,11 +268,7 @@ pub fn main() {
     let executor_a = InProcessExecutor::with_timeout(
         &mut harness_impl_a,
         // include objective_observer so the objective feedback can read it
-        tuple_list!(
-            map_observer_a,
-            rv_exec_observer_a,
-            objective_observer.clone()
-        ),
+        tuple_list!(map_observer_a, rv_exec_observer_a),
         &mut fuzzer,
         &mut state,
         &mut mgr,
@@ -279,11 +278,7 @@ pub fn main() {
 
     let executor_b = InProcessExecutor::with_timeout(
         &mut harness_impl_b,
-        tuple_list!(
-            map_observer_b,
-            rv_exec_observer_b,
-            objective_observer.clone()
-        ),
+        tuple_list!(map_observer_b, rv_exec_observer_b),
         &mut fuzzer,
         &mut state,
         &mut mgr,
@@ -291,7 +286,7 @@ pub fn main() {
     )
     .expect("Failed to create executor B");
 
-    let diff_observers_list = tuple_list!(map_swapper, objective_observer,);
+    let diff_observers_list = tuple_list!(map_swapper, objective_observer);
     let mut differential_executor = DiffExecutor::new(executor_a, executor_b, diff_observers_list);
 
     // Generator of printable bytearrays of max size 32

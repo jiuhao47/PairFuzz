@@ -46,14 +46,22 @@ pub fn init_from_verbose(verbose: u8, level_override: Option<&str>) {
         if let Some(lvl) = level_override {
             std::env::set_var("RUST_LOG", lvl);
         } else {
+            // Map verbose count to default RUST_LOG level:
+            // - 0 or 1 => info
+            // - 2 => debug
+            // - 3 or more => trace
             let level = match verbose {
-                0 => "info",
-                1 => "debug",
+                0 | 1 => "info",
+                2 => "debug",
                 _ => "trace",
             };
             std::env::set_var("RUST_LOG", level);
         }
     }
-    // initialize env_logger (idempotent if already initialized)
-    let _ = env_logger::try_init();
+    // Only initialize env_logger when verbose level is at least 1.
+    // This avoids initializing the global logger when the user hasn't requested
+    // additional verbosity. Respect any pre-existing RUST_LOG value above.
+    if verbose > 1 {
+        let _ = env_logger::try_init();
+    }
 }

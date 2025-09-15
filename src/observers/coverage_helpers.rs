@@ -1,6 +1,5 @@
 use libafl::observers::{HitcountsMapObserver, StdMapObserver};
 use std::alloc::{alloc_zeroed, Layout};
-
 /// Construct non-multimap observers and optionally a ComboCoverageBuilder when combo is requested.
 pub fn make_map_observers(
     num_edges: usize,
@@ -24,7 +23,7 @@ pub fn make_map_observers(
             edges_ptr.add(num_edges),
             num_edges,
         ));
-
+        // let map_swapper = DifferentialAFLMapSwapObserver::new(&mut first_obs, &mut second_obs);
         // objective observer uses the full 2*num_edges backing
         let objective = HitcountsMapObserver::new(StdMapObserver::differential_from_mut_ptr(
             "objective-edges",

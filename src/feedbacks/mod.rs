@@ -4,4 +4,6 @@ pub mod noop;
 pub mod return_value;
 pub use return_value::ReturnValueFeedback;
 
+pub mod objectives;
 pub mod two_state_map;
+pub use objectives::DiffRayObjective;

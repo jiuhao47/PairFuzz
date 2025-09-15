@@ -257,75 +257,160 @@ where
         let history_map = map_meta_opt.map(|m| m.history_map.as_slice());
 
         // iterate and decide
+        // track whether any interesting index was found (for non-novelties branch)
+        let mut found_count: usize = 0;
+        // cache slices/lengths to avoid repeated metadata lookups inside the hot loop
+        let max_seen = &stats.max_seen;
+        let min_seen = &stats.min_seen;
+        let seen_first_bits = &stats.seen_first_bits;
+        let max_len = max_seen.len();
+        let min_len = min_seen.len();
+        let bits_len = seen_first_bits.len();
+        // debug enabled flag (we only emit a very short summary when interesting)
+        // helper: closure to decide whether an index with current value `cur` that is equal
+        // to `initial_u8` should still be treated as a breach based on historical data
+        // or seen_first bits. This removes duplication between the two loop branches.
+        let initial_breach = |i: usize| -> bool {
+            // Only consider initial->non-initial transitions as noteworthy when
+            // we've previously recorded that this index was seen (seen_first).
+            // The user requested that initial_breach only reflect this low-drop case.
+            let first_flag = if (i >> 6) < bits_len {
+                (seen_first_bits[i >> 6] >> (i & 63)) & 1
+            } else {
+                0
+            };
+            let prev_seen_first_bool = first_flag == 1;
+            prev_seen_first_bool && self.check_low
+        };
         if let Some(nov_vec) = self.novelties.as_mut() {
             nov_vec.clear();
+            // collect matches so we can return true if any found, but don't return early
             for (i, item_ref) in observer.as_iter().enumerate() {
                 let item = *item_ref;
                 let cur: u8 = item.into();
-                // When historical max/min are missing, use extreme defaults so
-                // that high/low breach logic works correctly (max starts at u8::MIN,
-                // min starts at u8::MAX).
-                let max = stats.max_seen.get(i).copied().unwrap_or(u8::MIN);
-                let min = stats.min_seen.get(i).copied().unwrap_or(u8::MAX);
-                let first_flag =
-                    (stats.seen_first_bits.get(i >> 3).copied().unwrap_or(0) >> (i & 7)) & 1;
-                // first-time discovery: persisted history_map was initial and now non-initial
+                // cache bit-word index/mask and persisted history/seen_first flag once
+                let word_idx = i >> 6;
+                let bit_mask = 1u64 << (i & 63);
                 let prev_hist = history_map
                     .and_then(|h| h.get(i))
                     .copied()
                     .unwrap_or(initial_u8);
-                if prev_hist == initial_u8 && cur != initial_u8 && first_flag == 0 {
-                    #[cfg(feature = "track_hit_feedbacks")]
-                    {
-                        self.last = true;
+                let prev_seen_first_bool =
+                    (seen_first_bits.get(word_idx).copied().unwrap_or(0) & bit_mask) != 0;
+
+                // fast-path: if current value is the initial sentinel, consider a
+                // potential breach only when historical data suggests prior observation.
+                if cur == initial_u8 {
+                    if initial_breach(i) {
+                        #[cfg(feature = "track_hit_feedbacks")]
+                        {
+                            self.last = true;
+                        }
+                        nov_vec.push(i);
+                        continue;
                     }
-                    nov_vec.push(i);
-                    return Ok(true);
+                    continue;
                 }
+
+                // When historical max/min are missing, use extreme defaults so
+                // that high/low breach logic works correctly (max starts at u8::MIN,
+                // min starts at u8::MAX).
+                let max = if i < max_len { max_seen[i] } else { u8::MIN };
+                let min = if i < min_len { min_seen[i] } else { u8::MAX };
+
+                // first-time discovery: persisted history_map was initial and now non-initial
+                if prev_hist == initial_u8 && !prev_seen_first_bool {
+                    // continue scanning to collect other interesting indices
+                    continue;
+                }
+
+                // decide whether this index was newly seen in this execution
+                let newly_seen = prev_hist == initial_u8; // cur != initial already ensured
+
                 // breach historical bounds with deltas and flags
-                if (self.check_high && cur.saturating_sub(max) >= self.high_delta)
-                    || (self.check_low && cur < min && min.saturating_sub(cur) >= self.low_delta)
+                // Only consider breaches if we have a recorded first-seen (prev_seen_first_bool)
+                // or this execution just discovered the index (newly_seen).
+                if (prev_seen_first_bool || newly_seen)
+                    && ((self.check_high && cur.saturating_sub(max) >= self.high_delta)
+                        || (self.check_low
+                            && cur < min
+                            && min.saturating_sub(cur) >= self.low_delta))
                 {
                     #[cfg(feature = "track_hit_feedbacks")]
                     {
                         self.last = true;
                     }
                     nov_vec.push(i);
-                    return Ok(true);
+                    // collect nothing here to avoid noisy logs; we'll emit a short summary later
+                    // continue scanning to collect other interesting indices
+                    continue;
                 }
+            }
+            // after scanning, if nov_vec has any entries, report interesting
+            if !nov_vec.is_empty() {
+                return Ok(true);
             }
         } else {
             for (i, item_ref) in observer.as_iter().enumerate() {
                 let item = *item_ref;
                 let cur: u8 = item.into();
+                // fast-path: skip initial sentinel values; still check for initial
+                // breach when historical/seen_first indicate prior observations.
+                if cur == initial_u8 {
+                    if initial_breach(i) {
+                        #[cfg(feature = "track_hit_feedbacks")]
+                        {
+                            self.last = true;
+                        }
+                        found_count += 1;
+                        continue;
+                    }
+                    continue;
+                }
                 // When historical max/min are missing, use extreme defaults so
                 // that high/low breach logic works correctly (max starts at u8::MIN,
                 // min starts at u8::MAX).
-                let max = stats.max_seen.get(i).copied().unwrap_or(u8::MIN);
-                let min = stats.min_seen.get(i).copied().unwrap_or(u8::MAX);
-                let first_flag =
-                    (stats.seen_first_bits.get(i >> 3).copied().unwrap_or(0) >> (i & 7)) & 1;
+                let max = if i < max_len { max_seen[i] } else { u8::MIN };
+                let min = if i < min_len { min_seen[i] } else { u8::MAX };
+                // seen_first_bits stores 64-bit words; use word index i>>6 and bit i&63
+                let first_flag = if (i >> 6) < bits_len {
+                    (seen_first_bits[i >> 6] >> (i & 63)) & 1
+                } else {
+                    0
+                };
                 let prev_hist = history_map
                     .and_then(|h| h.get(i))
                     .copied()
                     .unwrap_or(initial_u8);
                 // first-time discovery: persisted history_map was initial and now non-initial
-                if prev_hist == initial_u8 && cur != initial_u8 && first_flag == 0 {
+                if prev_hist == initial_u8 && first_flag == 0 {
                     #[cfg(feature = "track_hit_feedbacks")]
                     {
                         self.last = true;
                     }
-                    return Ok(true);
+                    // record that we found at least one interesting index, but continue to collect others
+                    found_count += 1;
+                    continue;
                 }
+                // decide whether this index was newly seen in this execution
+                let newly_seen = prev_hist == initial_u8; // cur != initial ensured
+                let prev_seen_first_bool = first_flag == 1;
                 // breach historical bounds with deltas and flags
-                if (self.check_high && cur.saturating_sub(max) >= self.high_delta)
-                    || (self.check_low && cur < min && min.saturating_sub(cur) >= self.low_delta)
+                // Only consider breaches if we have a recorded first-seen (prev_seen_first_bool)
+                // or this execution just discovered the index (newly_seen).
+                if (prev_seen_first_bool || newly_seen)
+                    && ((self.check_high && cur.saturating_sub(max) >= self.high_delta)
+                        || (self.check_low
+                            && cur < min
+                            && min.saturating_sub(cur) >= self.low_delta))
                 {
                     #[cfg(feature = "track_hit_feedbacks")]
                     {
                         self.last = true;
                     }
-                    return Ok(true);
+                    // record that we found at least one interesting index, but continue to collect others
+                    found_count += 1;
+                    continue;
                 }
             }
         }
@@ -334,7 +419,7 @@ where
         {
             self.last = false;
         }
-        Ok(false)
+        Ok(found_count > 0)
     }
 
     fn append_metadata(
@@ -420,7 +505,8 @@ where
         }
         // Only allocate the changes vector when debug is enabled to avoid work in hot path
         let mut changes_opt: Option<Vec<IndexChange>> = if debug_enabled {
-            Some(Vec::new())
+            // pre-allocate a small buffer to avoid the first reallocation in common cases
+            Some(Vec::with_capacity(16))
         } else {
             None
         };
@@ -441,18 +527,19 @@ where
             // Keep previous values so we can detect "first seen" correctly
             let prev_max = max_seen[i];
             let prev_min = min_seen[i];
+            // read prev_seen_first before we potentially modify seen_first
+            let prev_seen_first =
+                ((seen_first.get(i >> 6).copied().unwrap_or(0) >> (i & 63)) & 1) == 1;
             if cur > max_seen[i] {
                 max_seen[i] = cur;
             }
-            // Only update min when we actually observe a non-initial value.
-            // This prevents undiscovered indices (still initial) from forcing
-            // the historical min down to the initial value (e.g. 0).
-            if cur != initial_u8 && cur < min_seen[i] {
+            // Update min only when cur is non-initial OR when we've already recorded seen_first.
+            // This prevents undiscovered indices (still initial) from forcing the
+            // historical min down to the initial value, but allows lowering min to the
+            // initial sentinel when we already know the index was seen before.
+            if cur < min_seen[i] && (cur != initial_u8 || prev_seen_first) {
                 min_seen[i] = cur;
             }
-            // If previously both were initial and now non-initial, mark seen_first
-            let prev_seen_first =
-                ((seen_first.get(i >> 6).copied().unwrap_or(0) >> (i & 63)) & 1) == 1;
 
             // Determine and record reasons only when debugging is enabled. We still
             // perform the necessary seen_first bit update regardless of debug mode
@@ -460,6 +547,9 @@ where
             let mut reason_first = false;
             let mut reason_high = false;
             let mut reason_low = false;
+
+            // whether this index was newly seen in this execution
+            let newly_seen = prev_history == initial_u8 && cur != initial_u8;
 
             if prev_history == initial_u8 && cur != initial_u8 && !prev_seen_first {
                 // first seen according to persisted history -> set seen_first bit
@@ -473,12 +563,18 @@ where
                     reason_first = true;
                 }
             }
-
             if debug_enabled {
-                if self.check_high && cur.saturating_sub(prev_max) >= self.high_delta {
+                // Only mark high/low reasons if we have a recorded first-seen or the index
+                // was newly discovered in this execution. This matches is_interesting logic.
+                let prev_seen_first_bool = prev_seen_first;
+                if (prev_seen_first_bool || newly_seen)
+                    && self.check_high
+                    && cur.saturating_sub(prev_max) >= self.high_delta
+                {
                     reason_high = true;
                 }
-                if self.check_low
+                if (prev_seen_first_bool || newly_seen)
+                    && self.check_low
                     && cur < prev_min
                     && prev_min.saturating_sub(cur) >= self.low_delta
                 {
@@ -538,49 +634,53 @@ where
                     .map(|c| c.idx)
                     .collect();
                 if !increased.is_empty() {
+                    // Emit concise covered delta summary (user asked to see covered changes)
                     let delta = covered_ever_after as isize - covered_ever_before as isize;
-                    // Summary line: how many indices changed value and persisted delta
                     twomap_debug_log(
-                    "two_state_map",
-                    &format!(
-                        "append_metadata: observer '{}' had {} indices transition initial->non-initial; persisted ever-seen covered delta = {} ({} -> {})",
-                        self.name,
-                        increased.len(),
-                        delta,
-                        covered_ever_before,
-                        covered_ever_after,
-                    ),
-                );
+                        "two_state_map",
+                        &format!(
+                            "append_metadata: covered delta for '{}' = {:+} ({} -> {})",
+                            self.name, delta, covered_ever_before, covered_ever_after
+                        ),
+                    );
 
                     // Collect noteworthy changes: first-seen (persisted change), high-breach, low-breach
+                    // Also collect "reason-based" entries among all changes (including already-covered entries)
                     let mut noteworthy: Vec<String> = Vec::new();
                     let mut covered_only_examples: Vec<usize> = Vec::new();
-                    for c in changes.iter().filter(|c| c.became_covered) {
-                        if c.reason_first || c.reason_high || c.reason_low {
-                            // Build a descriptive reasons list including original values
-                            let mut rs = Vec::new();
-                            if c.reason_first {
-                                rs.push("first-seen".to_string());
-                            }
-                            if c.reason_high {
-                                rs.push(format!("high-breach(prev_max={})", c.prev_max));
-                            }
-                            if c.reason_low {
-                                rs.push(format!("low-breach(prev_min={})", c.prev_min));
-                            }
+                    for c in changes.iter() {
+                        // Build descriptive reasons list
+                        let mut rs = Vec::new();
+                        if c.reason_first {
+                            rs.push("first-seen".to_string());
+                        }
+                        if c.reason_high {
+                            rs.push(format!("high-breach(prev_max={})", c.prev_max));
+                        }
+                        if c.reason_low {
+                            rs.push(format!("low-breach(prev_min={})", c.prev_min));
+                        }
+                        // If there are reasons, treat as noteworthy regardless of became_covered
+                        if !rs.is_empty() {
+                            // was this newly seen in this execution?
+                            let newly_seen = c.prev_history == initial_u8 && c.cur != initial_u8;
                             noteworthy.push(format!(
-                                "idx {} cur={} reasons=[{}] prev_history={} prev_seen_first={}",
+                                "idx {} cur={} reasons=[{}] prev_history={} prev_seen_first={} newly_seen={}",
                                 c.idx,
                                 c.cur,
                                 rs.join(", "),
                                 c.prev_history,
-                                c.prev_seen_first
+                                c.prev_seen_first,
+                                newly_seen
                             ));
-                        } else {
+                        } else if c.became_covered {
                             // covered-only; only keep a small sample for context
                             if covered_only_examples.len() < 10 {
                                 covered_only_examples.push(c.idx);
                             }
+                        }
+                        if !rs.is_empty() {
+                            // now handled via noteworthy; do not collect reason_based
                         }
                     }
 
@@ -598,18 +698,9 @@ where
                         twomap_debug_log("two_state_map", &out);
                     }
 
-                    let covered_only_count = increased.len().saturating_sub(noteworthy.len());
-                    if covered_only_count > 0 {
-                        let mut out = format!(
-                            "append_metadata: {} covered-only indices for '{}' (not interesting):",
-                            covered_only_count, self.name
-                        );
-                        for idx in covered_only_examples.iter() {
-                            out.push_str("\n  - idx ");
-                            out.push_str(&idx.to_string());
-                        }
-                        twomap_debug_log("two_state_map", &out);
-                    }
+                    // reason-based output removed by configuration: noteworthy covers the items of interest
+
+                    let _covered_only_count = increased.len().saturating_sub(noteworthy.len());
                 }
             }
         }
@@ -630,6 +721,8 @@ where
 
         if C::INDICES {
             let mut indices = Vec::new();
+            // reserve a small fraction of the map size to avoid repeated growth
+            indices.reserve(len / 8 + 1);
             for (i, _) in observer
                 .as_iter()
                 .map(|x| *x)

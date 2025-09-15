@@ -2,9 +2,12 @@
 app/src/
 app/build
 app/corpus
-app/script
 target/
 libs/
+!app/libs/
+!app/libs/**/*.c
+!app/libs/**/*.cpp
+!app/libs/**/*.cc
 run/
 misc/
 *.a
@@ -16,3 +19,4 @@ task/
 LocateFix/
 benchmark/libpng
 benchmark/libspng
+

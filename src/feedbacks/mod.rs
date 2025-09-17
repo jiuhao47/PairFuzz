@@ -6,4 +6,4 @@ pub use return_value::ReturnValueFeedback;
 
 pub mod objectives;
 pub mod two_state_map;
-pub use objectives::DiffRayObjective;
+pub use objectives::{CrashObjective, DiffObjective};

@@ -46,6 +46,7 @@ mod utils;
 use observers::ReturnValueObserver;
 // debug_log is provided by utils if needed
 use crate::driver::args::Args;
+use crate::utils::logging::{error, info, init_from_verbose, set_log_dir, warn};
 // ...existing imports...
 
 mod slicemap {
@@ -61,44 +62,44 @@ pub fn main() {
     let args = Args::parse();
 
     // 初始化日志（集中到 utils::logging）
-    crate::utils::logging::init_from_verbose(args.verbose, None);
+    init_from_verbose(args.verbose, None);
     unsafe { std::env::set_var("ASAN_OPTIONS", "abort_on_error=1:detect_leaks=false") }
 
     // 设置日志目录
     if let Some(log_dir) = &args.log_dir {
         // 创建日志目录（如果不存在）
         if let Err(e) = fs::create_dir_all(log_dir) {
-            eprintln!("无法创建日志目录 {:?}: {}", log_dir, e);
+            error("main", &format!("无法创建日志目录 {:?}: {}", log_dir, e));
             std::process::exit(1);
         }
 
-        // 打开或创建主日志文件 diffray.log
-        let log_path = log_dir.join("diffray.log");
-        let _log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .expect("无法创建或打开日志文件");
-
+        // Configure logger to write into the provided log directory
+        set_log_dir(Some(log_dir.clone()));
         if args.verbose > 0 {
-            println!("日志将写入到目录: {:?} (主日志: {:?})", log_dir, log_path);
+            info(
+                "main",
+                &format!("日志将写入到目录: {:?} (主日志: diffray.log)", log_dir),
+            );
         }
     } else if args.verbose > 0 {
-        println!("启用详细输出模式");
+        info("main", "启用详细输出模式");
     }
 
     // 创建输出目录
     if let Err(e) = fs::create_dir_all(&args.output_dir) {
-        eprintln!("无法创建输出目录 {:?}: {}", args.output_dir, e);
+        error(
+            "main",
+            &format!("无法创建输出目录 {:?}: {}", args.output_dir, e),
+        );
         std::process::exit(1);
     }
 
     if args.verbose > 0 {
-        println!("配置参数:");
-        println!("  输入目录: {:?}", args.input_dir);
-        println!("  输出目录: {:?}", args.output_dir);
-        println!("  日志目录: {:?}", args.log_dir);
-        println!("  执行超时时间: {}毫秒", args.timeout_ms);
+        info("main", "配置参数:");
+        info("main", &format!("  输入目录: {:?}", args.input_dir));
+        info("main", &format!("  输出目录: {:?}", args.output_dir));
+        info("main", &format!("  日志目录: {:?}", args.log_dir));
+        info("main", &format!("  执行超时时间: {}毫秒", args.timeout_ms));
     }
 
     // unlimited fuzzing, no time or iteration limits
@@ -161,16 +162,33 @@ pub fn main() {
     // (if no new coverage was detected) and thus skip append_metadata.
     // Single combined objective: prefer crash detection (short-circuit), otherwise
     // fall back to return-value diffs. Use executor-attached observers for rv checks.
-    let diffray_obj = crate::feedbacks::DiffRayObjective::new(
+    // Build objective: prefer crash detection, otherwise fall back to return-value diffs.
+    // Compose using the new smaller objectives: CrashObjective and DiffObjective.
+    // Build Diff objective (return-value-based) using the executor-attached observers
+    let diff_obj = crate::feedbacks::DiffObjective::new(
         "zero_nonzero",
         &[&rv_exec_observer_a, &rv_exec_observer_b],
     );
     // include a MaxMapFeedback-based objective so we only record metadata when
     // the map observer sees new/high values for the objective observer.
     // Use with_name to avoid colliding with other MaxMapFeedback histories.
-    let map_obj_fb =
-        libafl::feedbacks::MaxMapFeedback::with_name("map_objective", &mut objective_observer);
-    let mut objective = feedback_and_fast!(diffray_obj, map_obj_fb);
+    // Use the project's TwoStateMapFeedback as a Max-like map objective to avoid
+    // depending on LibAFL's MapFeedback implementation. This replaces the
+    // MaxMapFeedback used previously.
+    // Construct a TwoStateMapFeedback using parameterized constructor.
+    // Parameters: high_delta, low_delta, check_high, check_low
+    let map_obj_fb = crate::feedbacks::two_state_map::TwoStateMapFeedback::new_with_params(
+        &mut objective_observer,
+        1u8,
+        1u8,
+        true,
+        false,
+    );
+    // Compose as: Crash OR (Diff AND Map)
+    let mut objective = feedback_or_fast!(
+        crate::feedbacks::CrashObjective::new(),
+        feedback_and_fast!(diff_obj, map_obj_fb)
+    );
 
     // NOTE: State creation is deferred until after we attempt to launch
     // a restarting event manager. The restarter may provide an existing
@@ -296,7 +314,7 @@ pub fn main() {
     if let Some(input_dir) = &args.input_dir {
         if input_dir.exists() && input_dir.is_dir() {
             if args.verbose > 0 {
-                println!("从目录加载初始种子: {:?}", input_dir);
+                info("main", &format!("从目录加载初始种子: {:?}", input_dir));
             }
 
             // 使用 load_initial_inputs 方法加载种子
@@ -308,10 +326,13 @@ pub fn main() {
                     &[input_dir.clone()],
                 )
                 .unwrap_or_else(|err| {
-                    eprintln!("无法加载初始种子从 {:?}: {}", input_dir, err);
+                    error(
+                        "main",
+                        &format!("无法加载初始种子从 {:?}: {}", input_dir, err),
+                    );
 
                     if args.verbose > 0 {
-                        println!("种子加载失败，生成随机初始输入");
+                        warn("main", "种子加载失败，生成随机初始输入");
                     }
 
                     // 如果加载失败，生成随机初始输入
@@ -327,15 +348,21 @@ pub fn main() {
                 });
 
             if args.verbose > 0 {
-                println!("成功导入 {} 个输入文件", state.corpus().count());
+                info(
+                    "main",
+                    &format!("成功导入 {} 个输入文件", state.corpus().count()),
+                );
             }
         } else {
-            eprintln!("错误: 指定的种子目录不存在或不是目录: {:?}", input_dir);
+            error(
+                "main",
+                &format!("错误: 指定的种子目录不存在或不是目录: {:?}", input_dir),
+            );
             std::process::exit(1);
         }
     } else {
         if args.verbose > 0 {
-            println!("未指定种子目录，生成随机初始输入");
+            info("main", "未指定种子目录，生成随机初始输入");
         }
         // Generate 8 initial inputs
         state
@@ -354,13 +381,13 @@ pub fn main() {
     let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
     if args.verbose > 0 {
-        println!("开始模糊测试...");
+        info("main", "开始模糊测试...");
     }
 
     // 根据配置决定使用哪种模糊测试循环
     // Unlimited fuzz loop: use the standard fuzz_loop (no time/iteration limits)
     if args.verbose > 0 {
-        println!("运行无限制的模糊测试循环");
+        info("main", "运行无限制的模糊测试循环");
     }
 
     // This call will run indefinitely (or until the restarter/manager stops it)
@@ -371,6 +398,6 @@ pub fn main() {
         &mut mgr,
     ) {
         Ok(_) => {}
-        Err(e) => eprintln!("模糊测试循环中出现错误: {}", e),
+        Err(e) => error("main", &format!("模糊测试循环中出现错误: {}", e)),
     }
 }

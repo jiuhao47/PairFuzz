@@ -7,8 +7,6 @@ use libafl::{
     Error,
 };
 use libafl_bolts::Named;
-
-use crate::utils::logging::debug_log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A differential helper that builds a combined coverage buffer from the two per-executor
@@ -188,7 +186,7 @@ impl<OTA, OTB, I, S> DifferentialObserver<OTA, OTB, I, S> for ComboCoverageBuild
                         "combo_perf: num={} k1={} k2={} hash_elapsed={:.8}s",
                         num, k1, k2, dur
                     );
-                    let _ = debug_log("coverage_combiner", &msg);
+                    crate::utils::logging::debug("coverage_combiner", &msg);
                 }
             }
 
@@ -215,7 +213,7 @@ impl<OTA, OTB, I, S> DifferentialObserver<OTA, OTB, I, S> for ComboCoverageBuild
                             "combo_perf: write_elapsed={:.8}s idx={} combined_len={}",
                             dur_w, idx, self.combined_len
                         );
-                        let _ = debug_log("coverage_combiner", &msg);
+                        crate::utils::logging::debug("coverage_combiner", &msg);
                     }
                 }
 
@@ -224,7 +222,7 @@ impl<OTA, OTB, I, S> DifferentialObserver<OTA, OTB, I, S> for ComboCoverageBuild
                         "ComboCoverageBuilder: post_observe_second combined hash {:x} -> index {}",
                         combined_hash, idx
                     );
-                    let _ = debug_log("coverage_combiner", &debug_msg);
+                    crate::utils::logging::debug("coverage_combiner", &debug_msg);
                 }
             }
 
@@ -235,7 +233,7 @@ impl<OTA, OTB, I, S> DifferentialObserver<OTA, OTB, I, S> for ComboCoverageBuild
                         "combo_perf: total_elapsed={:.8}s combined_len={} num_edges={}",
                         tot, self.combined_len, self.num_edges
                     );
-                    let _ = debug_log("coverage_combiner", &msg);
+                    crate::utils::logging::debug("coverage_combiner", &msg);
                 }
             }
         }

@@ -152,7 +152,7 @@ fn create_stats_name(name: &Cow<'static, str>) -> Cow<'static, str> {
 // Enable via environment variable DIFFRAY_TWOSTATE_DEBUG=1 or DIFFRAY_TWOSTATE_DEBUG=true
 fn twomap_debug_log(tag: &str, msg: &str) {
     if twomap_debug_enabled() {
-        let _ = crate::utils::logging::debug_log(tag, msg);
+        crate::utils::logging::debug(tag, msg);
     }
 }
 
@@ -240,10 +240,15 @@ where
         observers: &OT,
         _exit_kind: &libafl::executors::ExitKind,
     ) -> Result<bool, Error> {
-        let observer = observers
-            .get(&self.map_ref)
-            .ok_or_else(|| Error::illegal_argument("TwoStateMapFeedback: observer not found"))?
-            .as_ref();
+        let observer = match observers.get(&self.map_ref) {
+            Some(h) => h.as_ref(),
+            None => {
+                // Observer not present in this execution (e.g., crash path or different observer set).
+                // Treat as non-interesting instead of erroring to avoid panics when combined
+                // feedbacks call append_metadata unconditionally.
+                return Ok(false);
+            }
+        };
         let initial = observer.initial();
         let initial_u8: u8 = initial.into();
         let named = state.named_metadata_map();
@@ -430,10 +435,20 @@ where
         testcase: &mut Testcase<I>,
     ) -> Result<(), Error> {
         // Phase 1: snapshot observer
-        let observer = observers
-            .get(&self.map_ref)
-            .ok_or_else(|| Error::illegal_argument("TwoStateMapFeedback: observer not found"))?
-            .as_ref();
+        let observer = match observers.get(&self.map_ref) {
+            Some(h) => h.as_ref(),
+            None => {
+                // Observer not present; nothing to append. Emit a warning so users
+                // know append_metadata was called without the expected observer
+                // (for example, crash handling with a reduced observer set).
+                crate::utils::logging::warn(
+                    "two_state_map",
+                    "append_metadata called but observer is not present; skipping metadata append",
+                );
+                // Remain tolerant and return Ok(()) to avoid panics in mixed-observer contexts.
+                return Ok(());
+            }
+        };
         let initial = observer.initial();
         let initial_u8: u8 = initial.into();
 

@@ -1,5 +1,5 @@
 use crate::observers::ReturnValueObserver;
-use crate::utils::logging::debug_log;
+use crate::utils::logging::debug;
 use libafl::executors::ExitKind;
 use libafl::feedbacks::{Feedback, StateInitializer};
 use libafl::Error;
@@ -69,10 +69,10 @@ where
         {
             self.last = inserted;
         }
-        if inserted {
-            let _ = debug_log("return_value_feedback", &log_msg);
-            Ok(true)
-        } else {
+            if inserted {
+                debug("return_value_feedback", &log_msg);
+                Ok(true)
+            } else {
             Ok(false)
         }
     }
@@ -218,7 +218,7 @@ where
                 self.last = inserted;
             }
             if inserted {
-                let _ = debug_log("return_value_feedback", &log_msg);
+                debug("return_value_feedback", &log_msg);
                 return Ok(true);
             }
         }

@@ -37,7 +37,7 @@ cd build
 cmake .. -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_C_FLAGS="$CFLAGS" -DCMAKE_CXX_FLAGS="$CXXFLAGS" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j 16
 
-cp $SPNG_BUILD_PATH/spng_$commit_hash/src/spng.h $SPNG_BUILD_PATH/spng_$commit_hash/spng.h
+cp $SPNG_BUILD_PATH/spng_$commit_hash/src/spng.h $SPNG_BUILD_PATH/spng_$commit_hash/spng.h || cp $SPNG_BUILD_PATH/spng_$commit_hash/spng/spng.h $SPNG_BUILD_PATH/spng_$commit_hash/spng.h
 
 
 cd $SPNG_INSTALL_PATH && mkdir -p $commit_hash

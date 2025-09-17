@@ -46,6 +46,47 @@ import signal
 import time
 import subprocess
 
+
+def parse_duration(s: Optional[str]) -> Optional[float]:
+    """Parse human-friendly duration strings like "24h", "90m", "1h30m10s" into seconds.
+    Returns None when s is None.
+    """
+    if s is None:
+        return None
+    s = str(s).strip()
+    total = 0.0
+    num = ""
+    unit = ""
+    for ch in s:
+        if ch.isdigit():
+            if unit:
+                # flush previous
+                if unit in ("h", "hr", "hrs"):
+                    total += float(num) * 3600
+                elif unit in ("m", "min", "mins"):
+                    total += float(num) * 60
+                elif unit in ("s", "sec", "secs"):
+                    total += float(num)
+                else:
+                    total += float(num)
+                num = ch
+                unit = ""
+            else:
+                num += ch
+        else:
+            unit += ch.lower()
+    if num:
+        if unit in ("h", "hr", "hrs"):
+            total += float(num) * 3600
+        elif unit in ("m", "min", "mins"):
+            total += float(num) * 60
+        elif unit in ("s", "sec", "secs", ""):
+            total += float(num)
+        else:
+            total += float(num)
+    return total
+
+
 try:
     # when run from repo root
     from command_executor import CommandExecutor
@@ -57,16 +98,17 @@ except Exception:
 try:
     # attempt local import when running from scripts folder
     from experiments.scripts.cpu_assessor import CPUAssessor  # type: ignore
+
     print("Successfully imported CPUAssessor from local module")
 except Exception:
     try:
         # try importing as a sibling module when executed from repo root
         from cpu_assessor import CPUAssessor  # type: ignore
+
         print("Successfully imported CPUAssessor from sibling module")
     except Exception:
         print("Warning: cpu_assessor not found; CPU affinity features disabled")
         CPUAssessor = None
-
 
 
 @dataclass
@@ -108,6 +150,19 @@ class TaskExecutor:
                 jobs = json.loads(p.read_text())
             except Exception:
                 jobs = []
+        # attempt to enrich entry with pgid when possible so external watchers
+        # can terminate entire process groups (more reliable cleanup)
+        try:
+            pid = entry.get("pid")
+            if pid is not None:
+                try:
+                    pgid = os.getpgid(int(pid))
+                    entry.setdefault("pgid", pgid)
+                except Exception:
+                    # ignore if pgid cannot be determined
+                    pass
+        except Exception:
+            pass
         jobs.append(entry)
         p.write_text(json.dumps(jobs, indent=2))
 
@@ -131,42 +186,183 @@ class TaskExecutor:
         else:
             targets = [j for j in jobs if j.get("job_id") in job_ids]
 
-        results: Dict[str, Any] = {"terminated": [], "failed": []}
+        results: Dict[str, Any] = {"terminated": [], "failed": [], "details": []}
+        term_log = task_root / "terminate.log"
+
+        def _log_line(line: str) -> None:
+            try:
+                term_log.write_text(
+                    (term_log.read_text() if term_log.exists() else "") + line + "\n"
+                )
+            except Exception:
+                pass
+
         for j in targets:
             jid = j.get("job_id")
             pid = j.get("pid")
+            attempt_info: Dict[str, Any] = {"job_id": jid, "pid": pid, "attempts": []}
             ok = False
+
             # try using in-memory CommandExecutor if available
             try:
                 if jid and hasattr(self.ce, "is_running") and self.ce.is_running(jid):
-                    self.ce.terminate(jid)
-                    # small wait
-                    time.sleep(0.1)
-                    if self.ce.is_running(jid):
-                        self.ce.kill(jid)
-                    ok = True
-            except Exception:
+                    attempt_info["attempts"].append("ce.terminate")
+                    try:
+                        self.ce.terminate(jid)
+                        time.sleep(0.1)
+                        if self.ce.is_running(jid):
+                            attempt_info["attempts"].append("ce.kill")
+                            self.ce.kill(jid)
+                        ok = True
+                    except Exception as e:
+                        attempt_info["attempts"].append(f"ce.error:{e}")
+                        ok = False
+            except Exception as e:
+                attempt_info["attempts"].append(f"ce.lookup_error:{e}")
                 ok = False
 
-            # fallback to killing by pid
+            # fallback to killing by pid / process group
             if not ok and pid:
                 try:
-                    os.kill(int(pid), signal.SIGTERM)
-                    time.sleep(0.1)
-                    # if still exists, SIGKILL
+                    p_int = int(pid)
+                    # attempt to get process group id and kill group (best-effort)
                     try:
-                        os.kill(int(pid), 0)
-                        os.kill(int(pid), signal.SIGKILL)
-                    except Exception:
-                        pass
-                    ok = True
-                except Exception:
+                        pgid = os.getpgid(p_int)
+                        attempt_info["attempts"].append(f"killpg:{pgid}")
+                        try:
+                            os.killpg(pgid, signal.SIGTERM)
+                        except Exception as e:
+                            attempt_info["attempts"].append(f"killpg_term_err:{e}")
+                        time.sleep(0.1)
+                        # check if process still exists
+                        try:
+                            os.kill(p_int, 0)
+                            # still exists, escalate
+                            try:
+                                os.killpg(pgid, signal.SIGKILL)
+                                attempt_info["attempts"].append(f"killpg_kill:{pgid}")
+                            except Exception as e:
+                                attempt_info["attempts"].append(f"killpg_kill_err:{e}")
+                        except Exception:
+                            # process not found
+                            pass
+                        ok = True
+                    except Exception as e:
+                        # couldn't get pgid, try kill pid directly
+                        attempt_info["attempts"].append(f"killpid:{p_int}")
+                        try:
+                            os.kill(p_int, signal.SIGTERM)
+                            time.sleep(0.1)
+                            try:
+                                os.kill(p_int, 0)
+                                os.kill(p_int, signal.SIGKILL)
+                                attempt_info["attempts"].append("killpid_kill")
+                            except Exception:
+                                pass
+                            ok = True
+                        except Exception as e2:
+                            attempt_info["attempts"].append(f"killpid_err:{e2}")
+                            ok = False
+                except Exception as e:
+                    attempt_info["attempts"].append(f"pid_parse_err:{e}")
                     ok = False
+
+                # If kill attempts didn't work, try to kill descendant processes found via /proc (Linux)
+                if not ok and pid:
+                    try:
+                        p_int = int(pid)
+                        descendants = []
+                        proc_base = Path("/proc")
+                        if proc_base.exists():
+                            # gather all processes where ancestor chain includes p_int
+                            for entry in proc_base.iterdir():
+                                if not entry.name.isdigit():
+                                    continue
+                                try:
+                                    status = entry / "status"
+                                    if not status.exists():
+                                        continue
+                                    txt = status.read_text()
+                                    # quick parse PPid line
+                                    for line in txt.splitlines():
+                                        if line.startswith("PPid:"):
+                                            parts = line.split()
+                                            if len(parts) >= 2 and parts[1].isdigit():
+                                                ppid = int(parts[1])
+                                            else:
+                                                ppid = 0
+                                            break
+                                    else:
+                                        ppid = 0
+                                    # walk up to see if ancestor chain reaches p_int
+                                    cur = ppid
+                                    seen = set()
+                                    chain_ok = False
+                                    while cur and cur not in seen:
+                                        seen.add(cur)
+                                        if cur == p_int:
+                                            chain_ok = True
+                                            break
+                                        # read parent's status
+                                        par_status = Path(f"/proc/{cur}/status")
+                                        if not par_status.exists():
+                                            break
+                                        par_txt = par_status.read_text()
+                                        new_pp = 0
+                                        for l in par_txt.splitlines():
+                                            if l.startswith("PPid:"):
+                                                parts = l.split()
+                                                if (
+                                                    len(parts) >= 2
+                                                    and parts[1].isdigit()
+                                                ):
+                                                    new_pp = int(parts[1])
+                                                break
+                                        cur = new_pp
+                                    if chain_ok:
+                                        descendants.append(int(entry.name))
+                                except Exception:
+                                    continue
+                        if descendants:
+                            attempt_info["attempts"].append(
+                                f"descendants:{descendants}"
+                            )
+                            for dpid in descendants:
+                                try:
+                                    os.kill(dpid, signal.SIGTERM)
+                                except Exception:
+                                    pass
+                            time.sleep(0.1)
+                            for dpid in descendants:
+                                try:
+                                    os.kill(dpid, 0)
+                                    try:
+                                        os.kill(dpid, signal.SIGKILL)
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    # no longer exists
+                                    pass
+                            ok = True
+                    except Exception as e:
+                        attempt_info["attempts"].append(f"descendants_err:{e}")
+                        # leave ok as-is
 
             if ok:
                 results["terminated"].append(jid or pid)
             else:
                 results["failed"].append(jid or pid)
+
+            attempt_info["ok"] = ok
+            results["details"].append(attempt_info)
+
+            # append detail to terminate.log for post-mortem inspection
+            try:
+                _log_line(
+                    f"[{datetime.now(timezone.utc).isoformat()}] terminate attempt: {json.dumps(attempt_info)}"
+                )
+            except Exception:
+                pass
 
             # mark terminated in file (best-effort)
             try:
@@ -300,6 +496,7 @@ class TaskExecutor:
         capture_output: bool = True,
         stop_on_fail: bool = True,
         concurrency: int = 1,
+        total_duration: Optional[float] = None,  # seconds, None means no limit
     ) -> Dict[str, Any]:
         """Run all subtasks found under a task_root. Returns a result dict.
 
@@ -342,7 +539,9 @@ class TaskExecutor:
                 assessor_report = assessor.assess()
                 allowed_free_pool = list(assessor_report.get("allowed_free", []))
                 affinity_allowed_set = set(assessor_report.get("affinity_allowed", []))
-                affinity_reserved_set = set(assessor_report.get("affinity_reserved", []))
+                affinity_reserved_set = set(
+                    assessor_report.get("affinity_reserved", [])
+                )
             except Exception:
                 assessor_report = None
 
@@ -350,7 +549,9 @@ class TaskExecutor:
         # cannot get an assessor snapshot, we must abort — this script no
         # longer supports a local fallback allocator.
         if assessor_report is None:
-            print("Error: CPUAssessor unavailable or failed to produce a report; CPU allocation requires CPUAssessor.")
+            print(
+                "Error: CPUAssessor unavailable or failed to produce a report; CPU allocation requires CPUAssessor."
+            )
             sys.exit(2)
 
         def _allocate_cpus(n: int):
@@ -372,12 +573,12 @@ class TaskExecutor:
             """
             out: List[int] = []
             try:
-                for part in str(spec).split(','):
+                for part in str(spec).split(","):
                     part = part.strip()
                     if not part:
                         continue
-                    if '-' in part:
-                        a, b = part.split('-', 1)
+                    if "-" in part:
+                        a, b = part.split("-", 1)
                         a_i = int(a)
                         b_i = int(b)
                         if b_i < a_i:
@@ -452,14 +653,16 @@ class TaskExecutor:
                                 sub_res["failed"] = True
                                 sub_res["error"] = (
                                     f"Requested {n} free CPU(s), but only {len(allowed_free_pool)} available."
-                                    f" Assessor reason: {assessor_report.get('reason')}.")
+                                    f" Assessor reason: {assessor_report.get('reason')}."
+                                )
                                 return sub_res
                             # attempt to allocate from the shared pool for this run
                             chosen = _allocate_cpus(n)
                             if chosen is None:
                                 sub_res["failed"] = True
                                 sub_res["error"] = (
-                                    f"Requested {n} CPU(s) but allocation conflict occurred; try with lower concurrency.")
+                                    f"Requested {n} CPU(s) but allocation conflict occurred; try with lower concurrency."
+                                )
                                 return sub_res
                             affinity_cpus = [int(x) for x in chosen]
                             spec = ",".join(str(x) for x in chosen)
@@ -476,18 +679,22 @@ class TaskExecutor:
                         requested = [int(x) for x in s.cpus]
                         # if assessor snapshot exists, ensure all requested CPUs are allowed
                         if assessor_report is not None:
-                            bad = [c for c in requested if c not in affinity_allowed_set]
+                            bad = [
+                                c for c in requested if c not in affinity_allowed_set
+                            ]
                             if bad:
                                 sub_res["failed"] = True
                                 sub_res["error"] = (
-                                    f"Requested CPUs {requested} include CPUs not allowed by system affinity: {bad}.")
+                                    f"Requested CPUs {requested} include CPUs not allowed by system affinity: {bad}."
+                                )
                                 return sub_res
                             # ensure not already allocated in this run
                             busy = [c for c in requested if c in _allocated_cpus]
                             if busy:
                                 sub_res["failed"] = True
                                 sub_res["error"] = (
-                                    f"Requested CPUs {requested} include already allocated CPUs in this run: {busy}.")
+                                    f"Requested CPUs {requested} include already allocated CPUs in this run: {busy}."
+                                )
                                 return sub_res
                         # reserve these for this run
                         with _alloc_lock:
@@ -501,17 +708,21 @@ class TaskExecutor:
                         if parsed:
                             # validate parsed list similar to above
                             if assessor_report is not None:
-                                bad = [c for c in parsed if c not in affinity_allowed_set]
+                                bad = [
+                                    c for c in parsed if c not in affinity_allowed_set
+                                ]
                                 if bad:
                                     sub_res["failed"] = True
                                     sub_res["error"] = (
-                                        f"Requested CPUs {parsed} include CPUs not allowed by system affinity: {bad}.")
+                                        f"Requested CPUs {parsed} include CPUs not allowed by system affinity: {bad}."
+                                    )
                                     return sub_res
                                 busy = [c for c in parsed if c in _allocated_cpus]
                                 if busy:
                                     sub_res["failed"] = True
                                     sub_res["error"] = (
-                                        f"Requested CPUs {parsed} include already allocated CPUs in this run: {busy}.")
+                                        f"Requested CPUs {parsed} include already allocated CPUs in this run: {busy}."
+                                    )
                                     return sub_res
                             with _alloc_lock:
                                 for c in parsed:
@@ -870,10 +1081,85 @@ class TaskExecutor:
 
             return sub_res
 
+        # create a stop event and a watcher thread if total_duration is provided
+        stop_event = threading.Event()
+        timer_thread: Optional[threading.Thread] = None
+        timed_out = False
+        # If caller didn't pass total_duration explicitly, attempt to read
+        # a "duration" field from the task config JSON in the task root.
+        if total_duration is None:
+            try:
+                raw_cfg = json.loads(cfg_file.read_text())
+                cfg_dur = raw_cfg.get("duration") or raw_cfg.get("total_duration")
+                parsed = parse_duration(cfg_dur)
+                if parsed is not None:
+                    total_duration = parsed
+                    print(
+                        f"[TASK_MONITOR] duration read from config: {cfg_dur} -> {total_duration}s"
+                    )
+            except Exception:
+                # ignore parse errors and proceed without a limit
+                pass
+
+        if total_duration is not None:
+
+            def _watcher():
+                nonlocal timed_out
+                # setup end time and logging cadence
+                end = time.time() + float(total_duration)
+                start_ts = datetime.now(timezone.utc).isoformat()
+                print(
+                    f"[TASK_MONITOR] watcher started at {start_ts}, total_duration={total_duration}s, will end at {datetime.fromtimestamp(end, timezone.utc).isoformat()}"
+                )
+                # choose a log interval: every 60s for long runs, otherwise every 5s
+                log_interval = 60 if total_duration > 120 else 5
+                next_log = time.time() + min(log_interval, max(1, total_duration / 10))
+                try:
+                    while time.time() < end and not stop_event.is_set():
+                        now = time.time()
+                        if now >= next_log:
+                            remaining = max(0, int(end - now))
+                            print(f"[TASK_MONITOR] time remaining: {remaining}s")
+                            next_log = now + log_interval
+                        time.sleep(0.5)
+                except Exception as e:
+                    print(f"[TASK_MONITOR] watcher encountered error: {e}")
+                if not stop_event.is_set():
+                    # time exceeded
+                    timed_out = True
+                    print(
+                        f"[TASK_MONITOR] total duration exceeded ({total_duration}s). Initiating shutdown and terminating bg jobs..."
+                    )
+                    stop_event.set()
+                    try:
+                        term_res = self._terminate_bg_jobs(task_root, None)
+                        print(f"[TASK_MONITOR] terminate_bg_jobs result: {term_res}")
+                    except Exception as e:
+                        print(f"[TASK_MONITOR] terminate_bg_jobs failed: {e}")
+
+            # make watcher non-daemon so it can finish termination work even if
+            # the main thread would otherwise exit; we'll join it before
+            # returning from run_task to ensure bg processes are cleaned up.
+            timer_thread = threading.Thread(target=_watcher)
+            timer_thread.start()
+
         # sequential (default) path
         if concurrency <= 1:
             for idx, s in enumerate(cfg.subtasks, start=1):
-                sub_res = _exec_subtask(idx, s)
+                if stop_event.is_set():
+                    results["status"] = "timeout" if timed_out else "stopped"
+                    # signal watcher to exit early and wait for it to finish cleanup
+                    try:
+                        stop_event.set()
+                        if timer_thread is not None:
+                            print(
+                                "[TASK_MONITOR] main waiting for watcher to finish cleanup..."
+                            )
+                            timer_thread.join(timeout=5)
+                    except Exception:
+                        pass
+                    return results
+                sub_res = _exec_subtask(idx, s, stop_event)
                 results["subtasks"].append(sub_res)
                 if sub_res.get("failed") and stop_on_fail:
                     # attempt to terminate any background jobs for this task
@@ -882,17 +1168,37 @@ class TaskExecutor:
                     except Exception:
                         pass
                     results["status"] = "failed"
+                    # ensure watcher exits
+                    try:
+                        stop_event.set()
+                        if timer_thread is not None:
+                            timer_thread.join(timeout=5)
+                    except Exception:
+                        pass
                     return results
 
-            results["status"] = "ok"
+            results["status"] = "timeout" if timed_out else "ok"
+            # normal completion: signal watcher to exit early and wait briefly
+            try:
+                stop_event.set()
+                if timer_thread is not None:
+                    print(
+                        "[TASK_MONITOR] main waiting for watcher to exit after normal completion..."
+                    )
+                    timer_thread.join(timeout=5)
+            except Exception:
+                pass
             return results
 
-        # parallel path
-        stop_event = threading.Event()
+        # parallel path (reuse the stop_event created above so the watcher
+        # thread can signal timeout for both sequential and parallel flows)
         futures: List[tuple[int, str, concurrent.futures.Future]] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
             for idx, s in enumerate(cfg.subtasks, start=1):
-                if stop_on_fail and stop_event.is_set():
+                # stop scheduling new work if a global stop_event was triggered
+                # (e.g. due to total_duration timeout) or if we've been asked to
+                # stop on failure and a failure already signalled the stop_event.
+                if stop_event.is_set():
                     break
                 fut = ex.submit(_exec_subtask, idx, s, stop_event)
                 futures.append((idx, s.id, fut))
@@ -915,11 +1221,24 @@ class TaskExecutor:
                         except Exception:
                             pass
 
-            # determine final status
-            if any(s.get("failed") for s in results["subtasks"]):
+            # determine final status (prefer timeout over other states)
+            if timed_out:
+                results["status"] = "timeout"
+            elif any(s.get("failed") for s in results["subtasks"]):
                 results["status"] = "failed"
             else:
                 results["status"] = "ok"
+
+            # signal watcher to exit and wait for its cleanup (bg jobs termination)
+            try:
+                stop_event.set()
+                if timer_thread is not None:
+                    print(
+                        "[TASK_MONITOR] main waiting for watcher to finish cleanup (parallel)..."
+                    )
+                    timer_thread.join(timeout=5)
+            except Exception:
+                pass
 
         return results
 
@@ -1012,6 +1331,16 @@ def _parse_args():
         type=Path,
         help="Path to an existing task root (used with --bg-action)",
     )
+    p.add_argument(
+        "--duration",
+        type=str,
+        help="Total duration to run the task (e.g. 24h, 3600s, 1h30m). When reached, stops executing new work and attempts graceful shutdown",
+    )
+    p.add_argument(
+        "--detach-monitor",
+        action="store_true",
+        help="Detach a separate monitor process that will enforce the task duration and terminate background jobs after timeout; the main program will exit after creating the task.",
+    )
     return p.parse_args()
 
 
@@ -1063,6 +1392,147 @@ def main():
     task_root = te.create_task(cfg_path, tasks_root)
     print(f"Created task at: {task_root}")
 
+    # If user requested a detached monitor, write a small monitor.py into the
+    # task root and spawn it as a separate process group so the main program
+    # can exit while the monitor enforces duration and cleans up bg jobs.
+    if getattr(args, "detach_monitor", False):
+        monitor_path = task_root / "monitor.py"
+        monitor_code = """#!/usr/bin/env python3
+import json
+import os
+import time
+import signal
+from pathlib import Path
+from datetime import datetime, timezone
+
+def parse_duration(s):
+    if s is None:
+        return None
+    s = str(s).strip()
+    total = 0.0
+    num = ""
+    unit = ""
+    for ch in s:
+        if ch.isdigit():
+            if unit:
+                if unit in ("h","hr","hrs"):
+                    total += float(num) * 3600
+                elif unit in ("m","min","mins"):
+                    total += float(num) * 60
+                elif unit in ("s","sec","secs"):
+                    total += float(num)
+                else:
+                    total += float(num)
+                num = ch
+                unit = ""
+            else:
+                num += ch
+        else:
+            unit += ch.lower()
+    if num:
+        if unit in ("h","hr","hrs"):
+            total += float(num) * 3600
+        elif unit in ("m","min","mins"):
+            total += float(num) * 60
+        else:
+            total += float(num)
+    return total
+
+def terminate_jobs(task_root: Path):
+    p = task_root / 'bg_jobs.json'
+    out = []
+    if not p.exists():
+        print(f"[DETACHED_MONITOR] no bg_jobs.json at {p}")
+        return
+    try:
+        jobs = json.loads(p.read_text())
+    except Exception as e:
+        print(f"[DETACHED_MONITOR] failed to parse bg_jobs.json: {e}")
+        return
+
+    for j in jobs:
+        pid = j.get('pid')
+        pgid = j.get('pgid')
+        jid = j.get('job_id')
+        try:
+            if pgid:
+                print(f"[DETACHED_MONITOR] killing pgid {pgid} for job {jid}")
+                try:
+                    os.killpg(int(pgid), signal.SIGTERM)
+                except Exception:
+                    os.killpg(int(pgid), signal.SIGKILL)
+            elif pid:
+                print(f"[DETACHED_MONITOR] killing pid {pid} for job {jid}")
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                except Exception:
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[DETACHED_MONITOR] failed to kill job {jid}: {e}")
+
+def main():
+    task_root = Path(__file__).parent
+    # find config
+    cfg_file = None
+    for p in task_root.iterdir():
+        if p.suffix == '.json':
+            cfg_file = p
+            break
+    dur = None
+    if cfg_file is not None:
+        try:
+            raw = json.loads(cfg_file.read_text())
+            cfg_dur = raw.get('duration') or raw.get('total_duration')
+            parsed = parse_duration(cfg_dur)
+            if parsed is not None:
+                dur = parsed
+                print(f"[DETACHED_MONITOR] duration read from config: {cfg_dur} -> {dur}s")
+        except Exception as e:
+            print(f"[DETACHED_MONITOR] failed to read config duration: {e}")
+
+    if dur is None:
+        print("[DETACHED_MONITOR] no duration found; exiting")
+        return
+
+    end = time.time() + float(dur)
+    print(f"[DETACHED_MONITOR] started at {datetime.now(timezone.utc).isoformat()}, will end at {datetime.fromtimestamp(end, timezone.utc).isoformat()}")
+    try:
+        while time.time() < end:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+
+    print(f"[DETACHED_MONITOR] duration reached; terminating bg jobs in {task_root}")
+    terminate_jobs(task_root)
+
+if __name__ == '__main__':
+    main()
+"""
+        try:
+            monitor_path.write_text(monitor_code)
+            monitor_path.chmod(0o755)
+        except Exception as e:
+            print(f"Failed to write monitor script: {e}")
+        # spawn detached monitor in its own process group; redirect output to monitor.log
+        try:
+            logf = open(task_root / "monitor.log", "a")
+            subprocess.Popen(
+                [sys.executable, str(monitor_path)],
+                cwd=str(task_root),
+                stdout=logf,
+                stderr=logf,
+                preexec_fn=os.setpgrp,
+            )
+            print(
+                f"Detached monitor started at {monitor_path}; main process will exit now."
+            )
+        except Exception as e:
+            print(f"Failed to start detached monitor: {e}")
+            # fall through and continue running normally
+
     # handle background job actions if requested
     if getattr(args, "bg_action", None):
         if not getattr(args, "task_dir", None):
@@ -1094,10 +1564,52 @@ def main():
         print("Dry-run: prepared files and folders, not executing commands")
         return
 
+    def _parse_duration(s: Optional[str]) -> Optional[float]:
+        if s is None:
+            return None
+        s = s.strip()
+        # support forms like "24h", "90m", "3600s", "1h30m", "1h30m10s"
+        total = 0.0
+        num = ""
+        unit = ""
+        for ch in s:
+            if ch.isdigit():
+                if unit:
+                    # flush previous
+                    if unit in ("h", "hr", "hrs"):
+                        total += float(num) * 3600
+                    elif unit in ("m", "min", "mins"):
+                        total += float(num) * 60
+                    elif unit in ("s", "sec", "secs"):
+                        total += float(num)
+                    else:
+                        # unknown unit, try seconds
+                        total += float(num)
+                    num = ch
+                    unit = ""
+                else:
+                    num += ch
+            else:
+                unit += ch.lower()
+        if num:
+            # flush trailing number
+            if unit in ("h", "hr", "hrs"):
+                total += float(num) * 3600
+            elif unit in ("m", "min", "mins"):
+                total += float(num) * 60
+            elif unit in ("s", "sec", "secs", ""):
+                total += float(num)
+            else:
+                total += float(num)
+        return total
+
+    dur = _parse_duration(getattr(args, "duration", None))
+
     res = te.run_task(
         task_root,
         capture_output=args.capture,
         concurrency=getattr(args, "concurrency", 1),
+        total_duration=dur,
     )
     print("Result:", res)
 

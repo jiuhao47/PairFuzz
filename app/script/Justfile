@@ -1,0 +1,4 @@
+png:
+	cd ./png && ./compile_commit_hash.sh 134ab615 && ./compile_commit_hash.sh 5905484c7
+	cd ./spng && ./compile_commit_hash.sh 7295a4b5a && ./compile_commit_hash.sh adc94393
+

@@ -443,7 +443,10 @@ where
                 // (for example, crash handling with a reduced observer set).
                 crate::utils::logging::warn(
                     "two_state_map",
-                    "append_metadata called but observer is not present; skipping metadata append",
+                    &format!(
+                        "append_metadata: observer '{}' not present; skipping metadata append. This can occur for crash inputs or when the observer set for this execution does not include the expected observer.",
+                        self.name
+                    ),
                 );
                 // Remain tolerant and return Ok(()) to avoid panics in mixed-observer contexts.
                 return Ok(());

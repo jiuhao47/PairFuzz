@@ -24,21 +24,32 @@ Notes:
 from __future__ import annotations
 
 import argparse
-import getpass
 import os
 import shlex
 import subprocess
 import sys
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
-def run_cmd(cmd: List[str], capture_output=False, check=False) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, stdout=subprocess.PIPE if capture_output else None,
-                          stderr=subprocess.STDOUT if capture_output else None,
-                          text=True, check=check)
+def run_cmd(
+    cmd: List[str], capture_output=False, check=False
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.STDOUT if capture_output else None,
+        text=True,
+        check=check,
+    )
 
 
-def ssh_run(user: str, host: str, remote_cmd: str, port: int = None, ssh_key: str = None) -> Tuple[int, str]:
+def ssh_run(
+    user: Optional[str],
+    host: str,
+    remote_cmd: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> Tuple[int, str]:
     ssh_parts = ["ssh"]
     if ssh_key:
         ssh_parts += ["-i", ssh_key]
@@ -57,7 +68,14 @@ def ssh_run(user: str, host: str, remote_cmd: str, port: int = None, ssh_key: st
         return 255, str(e)
 
 
-def scp_get(user: str, host: str, remote_path: str, local_path: str, port: int = None, ssh_key: str = None) -> Tuple[int, str]:
+def scp_get(
+    user: Optional[str],
+    host: str,
+    remote_path: str,
+    local_path: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> Tuple[int, str]:
     scp_parts = ["scp", "-q"]
     if ssh_key:
         scp_parts += ["-i", ssh_key]
@@ -75,16 +93,19 @@ def scp_get(user: str, host: str, remote_path: str, local_path: str, port: int =
         return 255, str(e)
 
 
-def list_remote_tasks(user: str, host: str, remote_base: str, port: int = None, ssh_key: str = None) -> List[str]:
+def list_remote_tasks(
+    user: Optional[str],
+    host: str,
+    remote_base: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> List[str]:
     # A portable way to list immediate subdirectories remotely.
     # It prints one directory name per line.
-    remote_cmd = (
-        "bash -lc " +
-        shlex.quote(
-            f"if [ -d {shlex.quote(remote_base)} ]; then "
-            f"for d in {shlex.quote(remote_base)}/*; do [ -d \"$d\" ] && basename \"$d\"; done; "
-            "else echo; fi"
-        )
+    remote_cmd = "bash -lc " + shlex.quote(
+        f"if [ -d {shlex.quote(remote_base)} ]; then "
+        f'for d in {shlex.quote(remote_base)}/*; do [ -d "$d" ] && basename "$d"; done; '
+        "else echo; fi"
     )
     rc, out = ssh_run(user, host, remote_cmd, port=port, ssh_key=ssh_key)
     # If ssh printed directory names, accept them even if remote exit code was non-zero
@@ -107,15 +128,31 @@ def filter_uncopied(tasks: List[str], local_dest: str) -> List[str]:
     return uncopied
 
 
-def delete_stderr_on_remote(user: str, host: str, remote_base: str, task: str, port: int = None, ssh_key: str = None) -> Tuple[bool, str]:
+def delete_stderr_on_remote(
+    user: Optional[str],
+    host: str,
+    remote_base: str,
+    task: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> Tuple[bool, str]:
     remote_dir = os.path.join(remote_base, task)
     # find and delete stderr.log files
-    cmd = f"bash -lc {shlex.quote(f'find {remote_dir} -type f -name stderr.log -delete')}"
+    cmd = (
+        f"bash -lc {shlex.quote(f'find {remote_dir} -type f -name stderr.log -delete')}"
+    )
     rc, out = ssh_run(user, host, cmd, port=port, ssh_key=ssh_key)
     return rc == 0, out
 
 
-def create_remote_tar(user: str, host: str, remote_base: str, task: str, port: int = None, ssh_key: str = None) -> Tuple[bool, str, str]:
+def create_remote_tar(
+    user: Optional[str],
+    host: str,
+    remote_base: str,
+    task: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> Tuple[bool, str, str]:
     remote_parent = remote_base.rstrip("/")
     tar_name = f"{task}_mirror.tar.gz"
     remote_tar_path = os.path.join(remote_parent, tar_name)
@@ -125,7 +162,13 @@ def create_remote_tar(user: str, host: str, remote_base: str, task: str, port: i
     return rc == 0, out, remote_tar_path
 
 
-def remove_remote_file(user: str, host: str, remote_path: str, port: int = None, ssh_key: str = None) -> Tuple[bool, str]:
+def remove_remote_file(
+    user: Optional[str],
+    host: str,
+    remote_path: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> Tuple[bool, str]:
     cmd = f"bash -lc {shlex.quote(f'rm -f {remote_path}')}"
     rc, out = ssh_run(user, host, cmd, port=port, ssh_key=ssh_key)
     return rc == 0, out
@@ -177,18 +220,46 @@ def ensure_local_dir(path: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Copy back remote task directories as tar.gz mirror archives.")
-    parser.add_argument("--host", "-H", required=True, help="Remote SSH host (can be an entry from ~/.ssh/config)")
-    parser.add_argument("--user", "-u", default=None, help="SSH user (optional). If omitted, ssh will use ~/.ssh/config or the default user)")
-    parser.add_argument("--remote-base", "-r", required=True, help="Remote base directory containing task subdirs")
-    parser.add_argument("--local-dest", "-l", required=True, help="Local directory to save downloaded archives")
+    parser = argparse.ArgumentParser(
+        description="Copy back remote task directories as tar.gz mirror archives."
+    )
+    parser.add_argument(
+        "--host",
+        "-H",
+        required=True,
+        help="Remote SSH host (can be an entry from ~/.ssh/config)",
+    )
+    parser.add_argument(
+        "--user",
+        "-u",
+        default=None,
+        help="SSH user (optional). If omitted, ssh will use ~/.ssh/config or the default user)",
+    )
+    parser.add_argument(
+        "--remote-base",
+        "-r",
+        required=True,
+        help="Remote base directory containing task subdirs",
+    )
+    parser.add_argument(
+        "--local-dest",
+        "-l",
+        required=True,
+        help="Local directory to save downloaded archives",
+    )
     parser.add_argument("--ssh-key", help="Path to SSH private key (optional)")
     parser.add_argument("--port", "-p", type=int, help="SSH port (optional)")
-    parser.add_argument("--remove-remote", action="store_true", help="Remove remote tar after successful download")
+    parser.add_argument(
+        "--remove-remote",
+        action="store_true",
+        help="Remove remote tar after successful download",
+    )
     args = parser.parse_args()
 
     try:
-        tasks = list_remote_tasks(args.user, args.host, args.remote_base, port=args.port, ssh_key=args.ssh_key)
+        tasks = list_remote_tasks(
+            args.user, args.host, args.remote_base, port=args.port, ssh_key=args.ssh_key
+        )
     except Exception as e:
         print(f"无法列出远端任务: {e}", file=sys.stderr)
         sys.exit(2)
@@ -215,27 +286,52 @@ def main():
 
     for task in chosen:
         print(f"\n处理任务: {task}")
-        ok, out = delete_stderr_on_remote(args.user, args.host, args.remote_base, task, port=args.port, ssh_key=args.ssh_key)
+        ok, out = delete_stderr_on_remote(
+            args.user,
+            args.host,
+            args.remote_base,
+            task,
+            port=args.port,
+            ssh_key=args.ssh_key,
+        )
         if ok:
             print("  已删除远端 stderr.log（如果存在）")
         else:
             print(f"  删除 stderr.log 失败: {out.strip()}", file=sys.stderr)
 
-        ok, out, remote_tar = create_remote_tar(args.user, args.host, args.remote_base, task, port=args.port, ssh_key=args.ssh_key)
+        ok, out, remote_tar = create_remote_tar(
+            args.user,
+            args.host,
+            args.remote_base,
+            task,
+            port=args.port,
+            ssh_key=args.ssh_key,
+        )
         if not ok:
             print(f"  远端打包失败: {out.strip()}", file=sys.stderr)
             continue
         print(f"  远端已创建镜像归档: {remote_tar}")
 
         # Download via scp
-        rc, scp_out = scp_get(args.user, args.host, remote_tar, args.local_dest, port=args.port, ssh_key=args.ssh_key)
+        rc, scp_out = scp_get(
+            args.user,
+            args.host,
+            remote_tar,
+            args.local_dest,
+            port=args.port,
+            ssh_key=args.ssh_key,
+        )
         if rc != 0:
             print(f"  scp 下载失败: {scp_out.strip()}", file=sys.stderr)
             continue
-        print(f"  已下载到本地: {os.path.join(args.local_dest, os.path.basename(remote_tar))}")
+        print(
+            f"  已下载到本地: {os.path.join(args.local_dest, os.path.basename(remote_tar))}"
+        )
 
         if args.remove_remote:
-            ok, rem_out = remove_remote_file(args.user, args.host, remote_tar, port=args.port, ssh_key=args.ssh_key)
+            ok, rem_out = remove_remote_file(
+                args.user, args.host, remote_tar, port=args.port, ssh_key=args.ssh_key
+            )
             if ok:
                 print("  已删除远端打包文件")
             else:

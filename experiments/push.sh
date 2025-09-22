@@ -1,0 +1,1 @@
+scp -r ./scripts diffray_container:/root/diffray-task/scripts

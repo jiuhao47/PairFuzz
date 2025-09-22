@@ -60,11 +60,13 @@ class CPUAssessor:
         # (i.e. len(aff) < total_cpus), treat CPUs in that restricted set as
         # reserved and exclude them from our allowed list. This prevents
         # recommending CPUs that other local processes have explicitly pinned.
+        # initialize reserved so it's always defined even if sched_getaffinity
+        # isn't available or other errors occur while inspecting procs.
+        reserved = set()
         try:
             total_cpus = len(per_cpu)
             # base allowed set for this process
             allowed = sorted(os.sched_getaffinity(0))
-            reserved = set()
             my_pid = os.getpid()
             my_uid = os.getuid()
             # scan /proc for numeric PIDs
@@ -127,7 +129,7 @@ class CPUAssessor:
             "load1": load1,
             "total_cpus": total_cpus,
             "affinity_allowed": allowed,
-            "affinity_reserved": sorted(list(reserved)) if 'reserved' in locals() else [],
+            "affinity_reserved": sorted(list(reserved)),
         }
         return result
 
@@ -143,9 +145,11 @@ class CPUAssessor:
 
         print()
         print(f"Load (1m): {r['load1']:.2f}  CPUs: {r['total_cpus']}")
-        reserved = r.get('affinity_reserved')
+        reserved = r.get("affinity_reserved")
         if reserved:
-            print(f"Affinity allowed CPUs for this process: {r['affinity_allowed']} (reserved by other procs: {reserved})")
+            print(
+                f"Affinity allowed CPUs for this process: {r['affinity_allowed']} (reserved by other procs: {reserved})"
+            )
         else:
             print(f"Affinity allowed CPUs for this process: {r['affinity_allowed']}")
         print(f"Free CPUs below threshold: {r['free_cpus']}")

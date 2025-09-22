@@ -98,7 +98,8 @@ class CommandExecutor:
             except Exception:
                 pass
             finally:
-                p.stdout and p.stdout.close()
+                if p.stdout:
+                    p.stdout.close()
 
         t = threading.Thread(
             target=_stream_output, args=(proc, job_id, lock), daemon=True
@@ -130,6 +131,11 @@ class CommandExecutor:
         )
         job_id = str(uuid.uuid4())
         self._procs[job_id] = proc
+        # close the file descriptor in the parent; the child process keeps its copy
+        try:
+            devnull.close()
+        except Exception:
+            pass
         # no lock needed because no streaming
         return {"job_id": job_id, "pid": proc.pid}
 

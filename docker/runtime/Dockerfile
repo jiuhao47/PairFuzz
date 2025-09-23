@@ -61,7 +61,7 @@ ENV SSH_PORT=2222
 # default user as non-root (dev) for building, but when running the container in
 # SSH mode the deploy script runs the container as root so the sshd process can bind.
 RUN mkdir -p /var/run/sshd /etc/ssh && ssh-keygen -A || true
-COPY docker/sshd-start.sh /usr/sbin/sshd-start.sh
+COPY docker/common/sshd-start.sh /usr/sbin/sshd-start.sh
 RUN chmod +x /usr/sbin/sshd-start.sh
 
 ## Run as root (no non-root user). Files created by root map to host root unless adjusted.
@@ -95,7 +95,7 @@ WORKDIR /workspace
 
 # Copy the container start helper and make it executable. The script will run any
 # provided command (default bash) after optionally adjusting permissions.
-COPY docker/container-start.sh /usr/sbin/container-start.sh
+COPY docker/common/container-start.sh /usr/sbin/container-start.sh
 RUN chmod +x /usr/sbin/container-start.sh
 
 # If a developer public key was provided at build time, install it for root

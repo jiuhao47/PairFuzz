@@ -1,7 +1,7 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # libtar :6d0ab4c 只用这一个commit hash
 
-
+set -e
 
 # https://repo.or.cz/libtar.git
 # 不是git库，而是安装包，自己挑版本的那种……
@@ -19,7 +19,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 APP_PATH="${SCRIPT_DIR}/../.."
 libtar_BUILD_PATH=$APP_PATH/build/libtar
-libtar_SRC_PATH=$APP_PATH/src/libtar_$commit_hash
+libtar_SRC_PATH=$APP_PATH/src/libtar
 libtar_INSTALL_PATH=$APP_PATH/build/libtar
 libtar_LIB_PATH=$APP_PATH/libs/build_libtar_libs/
 

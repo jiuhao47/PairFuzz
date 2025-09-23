@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -e
 # FFmpeg new:c88614662c
 # FFmpeg old:4521700
 

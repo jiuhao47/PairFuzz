@@ -34,7 +34,7 @@ CFLAGS="-fsanitize=address"
 CXXFLAGS="-fsanitize=address"
 
 # ../configure --disable-ifunc --disable-sandbox CC=$CC CXX=$CXX CFLAGS="-g -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls -fPIC" CXXFLAGS="-g -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls -fPIC"
-cmake .. -D CMAKE_C_COMPILER=$CC -D CMAKE_CXX_COMPILER=$CXX -DCMAKE_C_FLAGS="-O0 -fsanitize=address " -DCMAKE_CXX_FLAGS=" -O0 -fsanitize=address" -DBUILD_SHARED_LIBS=OFF
+cmake .. -D CMAKE_C_COMPILER=$CC -D CMAKE_CXX_COMPILER=$CXX -DCMAKE_C_FLAGS=$CFLAGS -DCMAKE_CXX_FLAGS=$CXXFLAGS -DBUILD_SHARED_LIBS=OFF
 make -j8
 cd $ZLIB_INSTALL_PATH && mkdir -p $commit_hash
 cd $ZLIB_INSTALL_PATH/zlib_$commit_hash/build

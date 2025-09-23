@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -e
 # archive new: f8a34abf
 # archive old: 614110e
 

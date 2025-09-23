@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # oldest: 14303
 # newest: 17300
 commit_hash=$1

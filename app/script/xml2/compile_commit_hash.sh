@@ -1,7 +1,7 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # xml2 new:73514f2d
 # xml2 old:f8a8c1f
-
+set -e
 commit_hash=$1
 
 if [ -z "$commit_hash" ]; then
@@ -36,10 +36,13 @@ cd $XML2_BUILD_PATH/xml2_$commit_hash
 make -j16
 cd $XML2_INSTALL_PATH && mkdir -p $commit_hash
 cd $XML2_INSTALL_PATH/xml2_$commit_hash
-cp $XML2_BUILD_PATH/xml2_$commit_hash $XML2_INSTALL_PATH/$commit_hash
+# cp $XML2_BUILD_PATH/xml2_$commit_hash $XML2_INSTALL_PATH/$commit_hash
 make install DESTDIR=$XML2_INSTALL_PATH/$commit_hash
 
-cp -r $XML2_BUILD_PATH/xml2_$commit_hash/* $XML2_INSTALL_PATH/$commit_hash/usr/local
+# cp -r $XML2_BUILD_PATH/xml2_$commit_hash/* $XML2_INSTALL_PATH/$commit_hash/usr/local
+cp $XML2_BUILD_PATH/xml2_$commit_hash/libxml.h $XML2_INSTALL_PATH/$commit_hash/usr/local/include/libxml.h
+cp $XML2_BUILD_PATH/xml2_$commit_hash/config.h $XML2_INSTALL_PATH/$commit_hash/usr/local/include/libxml.h
+
 rm -rf $XML2_BUILD_PATH/xml2_$commit_hash
 
 # cd $XML2_LIB_PATH

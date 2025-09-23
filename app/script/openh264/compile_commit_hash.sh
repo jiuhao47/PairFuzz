@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -e
 # openh264 new: 042473ea
 # openh264 old: 2610ab1
 

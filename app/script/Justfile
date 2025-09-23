@@ -1,4 +1,92 @@
-png:
-	cd ./png && ./compile_commit_hash.sh 134ab615 && ./compile_commit_hash.sh 5905484c7
-	cd ./spng && ./compile_commit_hash.sh 7295a4b5a && ./compile_commit_hash.sh adc94393
+PROJECT_ROOT := "/home/dev/workspace"
 
+png: libpng libspng
+
+libpng:
+	cd ./libpng && \
+	./compile_commit_hash.sh 134ab615 && \
+	./compile_commit_hash.sh 5905484c7
+
+libspng:
+	cd ./libspng && \
+	./compile_commit_hash.sh 7295a4b5a && \
+	./compile_commit_hash.sh adc94393
+
+bmp: GM IM
+
+GM:
+	cd ./GM && \
+	./compile_commit_hash.sh 14303 && \
+	./compile_commit_hash.sh 17300
+
+IM:
+	cd ./IM && \
+	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
+	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
+	./compile_commit_hash.sh 0729cc470 && \
+	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.69/install/bin:$PATH \
+	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.69/install/bin/autoconf \
+	./compile_commit_hash.sh 4c717b784
+
+
+json: cjson mjson
+
+cjson:
+	cd ./cjson && \
+	./compile_commit_hash.sh 174c629 && \
+	./compile_commit_hash.sh 12c4bf1
+
+mjson:
+	cd ./mjson && \
+	./compile_commit_hash.sh b766f34 && \
+	./compile_commit_hash.sh 6b0367
+
+xml: xml2 expat
+
+xml2:
+	#!/usr/bin/env bash
+	cd ./xml2 && \
+	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
+	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
+	./compile_commit_hash.sh 73514f2d && ./compile_commit_hash.sh f8a8c1f
+	# cd ./expat && ./compile_commit_hash.sh ac2b235 && ./compile_commit_hash.sh 07108642
+
+expat:
+	cd ./expat && \
+	./compile_commit_hash.sh ac2b235 && \
+	./compile_commit_hash.sh 07108642 
+
+zlib: libzlib deflate
+
+libzlib:
+	cd ./zlib && \
+	./compile_commit_hash.sh 7751bd4 && \
+	./compile_commit_hash.sh 09155ea
+
+tar: libtar archive
+
+deflate:
+	cd ./deflate && \
+	./compile_commit_hash.sh a11c44317 && \
+	./compile_commit_hash.sh efc217633
+
+archive:
+	cd archive && \
+	./compile_commit_hash.sh f8a34abf && \
+	./compile_commit_hash.sh 614110e
+
+libtar:
+	cd libtar && \
+	./compile_commit_hash.sh 6d0ab4c
+
+h264: FFmpeg
+
+FFmpeg:
+	cd ./FFmpeg && \
+	./compile_commit_hash.sh c88614662c && \
+	./compile_commit_hash.sh 4521700
+
+openh264:
+	cd ./openh264 && \
+	./compile_commit_hash.sh 2610ab1 && \
+	./compile_commit_hash.sh 042473ea

@@ -6,3 +6,6 @@ cc:
     cargo build --profile={{PROFILE}} --bin libafl_cc
 cxx:
     cargo build --profile={{PROFILE}} --bin libafl_cxx
+
+clean:
+    cargo clean

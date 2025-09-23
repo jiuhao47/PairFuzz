@@ -24,21 +24,31 @@ fi
 echo "Compiling mjson harness..."
 
 "../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_mjson_libs/mjson_harness.c" \
-    -I "../../build/mjson/$mjson_hash/" \
+    -I "../../build/mjson/$mjson_hash/usr/local/include/" \
     -o "$TEMP_DIR/mjson_harness.o"
 
 echo "Compiling cjson harness..."
 "../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_cjson_libs/cjson_harness.c" \
-    -I "../../build/cjson/$cjson_hash/" \
+    -I "../../build/cjson/$cjson_hash/usr/local/include/" -I "../../build/cjson/$cjson_hash/usr/local/include/cjson" \
     -o "$TEMP_DIR/cjson_harness.o"
 
 # Step 2: Extract existing static libraries
 echo "Extracting libmjson.a..."
 cd "$TEMP_DIR"
-ar x "../../../build/mjson/$mjson_hash/libmjson.a"
+MJSON_LIB_PATH="../../../build/mjson/$mjson_hash/usr/local/lib/libmjson.a"
+if [ -f "$MJSON_LIB_PATH" ]; then
+  ar x "$MJSON_LIB_PATH"
+else
+  echo "Warning: $MJSON_LIB_PATH not found — skipping libmjson.a extraction"
+fi
 
 echo "Extracting libcjson.a..."
-ar x "../../../build/cjson/$cjson_hash/libcjson.a"
+CJSON_LIB_PATH="../../../build/cjson/$cjson_hash/usr/local/lib/libcjson.a"
+if [ -f "$CJSON_LIB_PATH" ]; then
+  ar x "$CJSON_LIB_PATH"
+else
+  echo "Warning: $CJSON_LIB_PATH not found — skipping libcjson.a extraction"
+fi
 cd ..
 
 # Step 3: Create the combined static library

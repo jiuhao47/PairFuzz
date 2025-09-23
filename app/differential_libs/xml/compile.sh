@@ -24,12 +24,12 @@ fi
 echo "Compiling libxml2 harness..."
 
 "../../compiler/target/release/libafl_cxx" -fPIC -fsanitize=address -c "../../libs/build_xml2_libs/libxml2_harness.cc" \
-    -I "../../build/xml2/$libxml2_hash/usr/local/include/" \
+    -I "../../build/xml2/$libxml2_hash/usr/local/include/libxml2/" \
     -o "$TEMP_DIR/libxml2_harness.o"
 
 echo "Compiling libexpat harness..."
 "../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_expat_libs/libexpat_harness.cc" \
-    -I "../../build/expat/$expat_hash/usr/local/include" \
+    -I "../../build/expat/$expat_hash/usr/local/include/libxml2/" \
     -o "$TEMP_DIR/libexpat_harness.o"
 
 # Step 2: Extract existing static libraries

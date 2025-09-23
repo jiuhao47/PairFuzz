@@ -23,15 +23,28 @@ fi
 # Step 1: Compile harness files to object files
 echo "Compiling zlib harness..."
 
-"../../compiler/target/release/libafl_cxx" -fPIC -fsanitize=address -c "../../libs/build_zlib_libs/zlib_harness.c" \
+"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_zlib_libs/zlib_harness.c" \
   -I "../../build/zlib/$zlib_hash/usr/local/include/" \
   -o "$TEMP_DIR/zlib_harness.o"
 
 echo "Compiling libdeflate harness..."
 echo "../../build/deflate/$libdeflate_hash/usr/local/include"
-"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_deflate_libs/libdeflate_harness.cpp" \
+# Try to compile the new harness; if it fails, try the old harness file as a fallback.
+if "../../compiler/target/release/libafl_cxx" -fPIC -fsanitize=address -c "../../libs/build_deflate_libs/libdeflate_harness.cpp" \
   -I "../../build/deflate/$libdeflate_hash/usr/local/include" \
-  -o "$TEMP_DIR/libdeflate_harness.o"
+  -I "../../libs/build_deflate_libs/" \
+  -o "$TEMP_DIR/libdeflate_harness.o"; then
+  echo "Compiled libdeflate_harness.cpp -> $TEMP_DIR/libdeflate_harness.o"
+elif [ -f "../../libs/build_deflate_libs/libdeflate_harness_old.cpp" ] && \
+  "../../compiler/target/release/libafl_cxx" -fPIC -fsanitize=address -c "../../libs/build_deflate_libs/libdeflate_harness_old.cpp" \
+  -I "../../build/deflate/$libdeflate_hash/usr/local/include" \
+  -I "../../libs/build_deflate_libs/" \
+  -o "$TEMP_DIR/libdeflate_harness.o"; then
+  echo "Compiled libdeflate_harness_old.cpp -> $TEMP_DIR/libdeflate_harness.o"
+else
+  echo "Error: failed to compile libdeflate harness (tried libdeflate_harness.cpp and libdeflate_harness_old.cpp)" >&2
+  exit 1
+fi
 
 # Step 2: Extract existing static libraries
 echo "Extracting libz.a..."

@@ -8,8 +8,8 @@ LD_FLAGS := -rdynamic -shared
 all:
 	mkdir -p output/
 	find ./ -name "*.c" -exec $(CC) $(CFLAGS) -Wimplicit-function-declaration -c {} -o output/{}.o \;
-	ar rcs output/lib7zxz_$(COMMIT_HASH).a output/*.o
-	cp output/lib7zxz_$(COMMIT_HASH).a ./
+	ar rcs output/libxz7z_$(COMMIT_HASH).a output/*.o
+	cp output/libxz7z_$(COMMIT_HASH).a ./
 
 7z_parse:
 	rm -f output/7z_parse.c.o

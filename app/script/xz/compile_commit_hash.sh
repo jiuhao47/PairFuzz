@@ -1,5 +1,6 @@
-#!/bin/sh
-#   - libxz_newest.so:15cf3f04
+#!/usr/bin/env bash
+set -e
+#   - libxz_newest.so: 15cf3f04
 #   - libxz_oldest.so: 98f3cac1a
 commit_hash=$1
 
@@ -11,7 +12,6 @@ fi
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 APP_PATH="${SCRIPT_DIR}/../.."
-XZON_ROOT_PATH=/home/xjy/fuzz/else/fuzz_project
 XZ_BUILD_PATH=$APP_PATH/build/xz
 XZ_SRC_PATH=$APP_PATH/src/xz
 XZ_INSTALL_PATH=$APP_PATH/build/xz
@@ -23,7 +23,7 @@ cp -r $XZ_SRC_PATH $XZ_BUILD_PATH/xz_$commit_hash
 cd $XZ_BUILD_PATH/xz_$commit_hash
 git reset --hard $commit_hash
 
-python3 $XZON_ROOT_PATH/script/xz/patch_checksum.py $XZ_BUILD_PATH/xz_$commit_hash
+python3 $APP_PATH/script/xz/patch_checksum.py $XZ_BUILD_PATH/xz_$commit_hash
 ./autogen.sh
 mkdir -p build
 cd build

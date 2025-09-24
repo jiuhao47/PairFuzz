@@ -22,19 +22,19 @@ echo "Compiling xz harness..."
   -I "../../build/xz/$xz_hash/usr/local/include/" \
   -o "$TEMP_DIR/xz_harness.o"
 
-echo "Compiling 7zxz harness..."
-echo "../../build/7zxz/install"
-"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_7zxz_libs/7z_harness.c" \
-  -I "../../build/7zxz/include" \
-  -o "$TEMP_DIR/7zxz_harness.o"
+echo "Compiling xz7z harness..."
+echo "../../build/xz7z/install"
+"../../compiler/target/release/libafl_cc" -fPIC -fsanitize=address -c "../../libs/build_xz7z_libs/7z_harness.c" \
+  -I "../../build/xz7z/include" \
+  -o "$TEMP_DIR/xz7z_harness.o"
 
 # Step 2: Extract existing static libraries
 echo "Extracting liblzma.a..."
 cd "$TEMP_DIR"
 ar x "../../../build/xz/$xz_hash/usr/local/lib/liblzma.a"
 
-echo "Extracting lib7zxz.a..."
-ar x "../../../build/7zxz/install/lib7zxz.a"
+echo "Extracting libxz7z.a..."
+ar x "../../../build/xz7z/install/libxz7z.a"
 cd ..
 
 # Step 3: Create the combined static library

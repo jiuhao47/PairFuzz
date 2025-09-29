@@ -1,11 +1,20 @@
 PROFILE := 'release'
 
-build: cc cxx
+build: cc cxx cc_forkserver cxx_forkserver
+
+lib:
+    cargo build --profile={{PROFILE}} --lib
 
 cc:
     cargo build --profile={{PROFILE}} --bin libafl_cc
 cxx:
     cargo build --profile={{PROFILE}} --bin libafl_cxx
+
+cc_forkserver:
+    cargo build --profile={{PROFILE}} --bin libafl_forkserver_cc
+
+cxx_forkserver:
+    cargo build --profile={{PROFILE}} --bin libafl_forkserver_cxx
 
 clean:
     cargo clean

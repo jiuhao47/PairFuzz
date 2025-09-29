@@ -5,7 +5,12 @@ edition = "2021"
 
 [dependencies]
 libafl_cc = { path = "../../LibAFL/crates/libafl_cc" }
-
+libafl_bolts = { path = "../../LibAFL/crates/libafl_bolts" }
+libafl_targets = { path = "../../LibAFL/crates/libafl_targets", features = [
+    "sancov_pcguard_hitcounts",
+    "libfuzzer",
+    "pointer_maps",
+] }
 [[bin]]
 name = "libafl_cc"
 path = "src/bin/libafl_cc.rs"
@@ -13,3 +18,15 @@ path = "src/bin/libafl_cc.rs"
 [[bin]]
 name = "libafl_cxx"
 path = "src/bin/libafl_cxx.rs"
+
+[[bin]]
+name = "libafl_forkserver_cc"
+path = "src/bin/libafl_forkserver_cc.rs"
+
+[[bin]]
+path = "src/bin/libafl_forkserver_cxx.rs"
+name = "libafl_forkserver_cxx"
+
+[lib]
+name = "libforkserver_libafl_cc"
+crate-type = ["staticlib"]

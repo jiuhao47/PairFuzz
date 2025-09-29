@@ -17,6 +17,15 @@ pub fn main() {
         dir.pop();
 
         let mut cc = ClangWrapper::new();
+        // Create a macro definition for __AFL_FUZZ_INIT that is C++-aware.
+        let fuzz_init_def = if is_cpp {
+            // For C++ targets, declare libafl_start_forkserver with extern "C"
+            // so it matches the Rust-exported C linkage symbol.
+            "-D__AFL_FUZZ_INIT()=int __afl_sharedmem_fuzzing = 1;extern unsigned int *__afl_fuzz_len;extern unsigned char *__afl_fuzz_ptr;unsigned char __afl_fuzz_alt[1048576];unsigned char *__afl_fuzz_alt_ptr = __afl_fuzz_alt;extern \"C\" void libafl_start_forkserver(void)"
+        } else {
+            "-D__AFL_FUZZ_INIT()=int __afl_sharedmem_fuzzing = 1;extern unsigned int *__afl_fuzz_len;extern unsigned char *__afl_fuzz_ptr;unsigned char __afl_fuzz_alt[1048576];unsigned char *__afl_fuzz_alt_ptr = __afl_fuzz_alt;void libafl_start_forkserver(void)"
+        };
+
         if let Some(code) = cc
             .cpp(is_cpp)
             // silence the compiler wrapper output, needed for some configure scripts.
@@ -24,9 +33,10 @@ pub fn main() {
             .parse_args(&args)
             .expect("Failed to parse the command line")
             // Enable libafl's coverage instrumentation
+            .add_arg("-fsanitize=address")
             .add_arg("-fsanitize-coverage=trace-pc-guard")
-            // Imitate afl-cc's compile definitions 
-            .add_arg("-D__AFL_FUZZ_INIT()=int __afl_sharedmem_fuzzing = 1;extern unsigned int *__afl_fuzz_len;extern unsigned char *__afl_fuzz_ptr;unsigned char __afl_fuzz_alt[1048576];unsigned char *__afl_fuzz_alt_ptr = __afl_fuzz_alt;void libafl_start_forkserver(void)")
+            // Imitate afl-cc's compile definitions
+            .add_arg(fuzz_init_def)
             .add_arg("-D__AFL_FUZZ_TESTCASE_BUF=(__afl_fuzz_ptr ? __afl_fuzz_ptr : __afl_fuzz_alt_ptr)")
             .add_arg("-D__AFL_FUZZ_TESTCASE_LEN=(__afl_fuzz_ptr ? *__afl_fuzz_len : (*__afl_fuzz_len = read(0, __afl_fuzz_alt_ptr, 1048576)) == 0xffffffff ? 0 : *__afl_fuzz_len)")
             .add_arg("-D__AFL_INIT()=libafl_start_forkserver()")

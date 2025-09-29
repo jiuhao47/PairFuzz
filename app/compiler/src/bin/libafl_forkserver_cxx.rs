@@ -1,5 +1,5 @@
-pub mod libafl_cc;
+pub mod libafl_forkserver_cc;
 
 fn main() {
-    libafl_cc::main();
+    libafl_forkserver_cc::main();
 }

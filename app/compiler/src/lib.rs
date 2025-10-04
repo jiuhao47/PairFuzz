@@ -3,6 +3,8 @@ use libafl_targets::{
     map_input_shared_memory, map_shared_memory, start_forkserver, MaybePersistentForkserverParent,
 };
 
+mod rv_shm;
+
 #[no_mangle]
 pub extern "C" fn libafl_start_forkserver() {
     let mut shm_provider = match StdShMemProvider::new() {

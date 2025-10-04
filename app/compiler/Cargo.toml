@@ -11,6 +11,7 @@ libafl_targets = { path = "../../LibAFL/crates/libafl_targets", features = [
     "libfuzzer",
     "pointer_maps",
 ] }
+libc = "0.2"
 [[bin]]
 name = "libafl_cc"
 path = "src/bin/libafl_cc.rs"

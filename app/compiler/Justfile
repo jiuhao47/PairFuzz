@@ -1,6 +1,6 @@
 PROFILE := 'release'
 
-build: cc cxx cc_forkserver cxx_forkserver
+build: cc cxx cc_forkserver cxx_forkserver lib
 
 lib:
     cargo build --profile={{PROFILE}} --lib

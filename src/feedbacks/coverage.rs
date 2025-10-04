@@ -10,6 +10,7 @@ use libafl_targets::DifferentialAFLMapSwapObserver;
 
 /// Build a DifferentialAFLMapSwapObserver from two StdMapObserver mutable references.
 /// The function is generic over the differential flags used by StdMapObserver.
+#[allow(dead_code)]
 pub fn make_map_swapper<'a, 'b, const D1: bool, const D2: bool>(
     first: &mut StdMapObserver<'a, u8, D1>,
     second: &mut StdMapObserver<'b, u8, D2>,

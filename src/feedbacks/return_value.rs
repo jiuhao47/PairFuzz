@@ -84,6 +84,21 @@ impl ReturnValueComboFeedback {
     }
 }
 
+impl libafl::feedbacks::HasObserverHandle for ReturnValueComboFeedback {
+    type Observer = ReturnValueObserver;
+
+    fn observer_handle(&self) -> &Handle<Self::Observer> {
+        // Return the first handle. The feedback is constructed from a non-empty
+        // observer slice in practice (see callers in main.rs). If this ever
+        // happens to be empty, that's a bug in the caller, so panic to make
+        // the problem obvious during development.
+        &self
+            .observer_handles
+            .get(0)
+            .expect("ReturnValueComboFeedback has no observer handles")
+    }
+}
+
 // Module-level gated debug logger for ReturnValueFeedback
 // Enable via environment variable DIFFRAY_RETURN_VALUE_DEBUG=1 or DIFFRAY_RETURN_VALUE_DEBUG=true
 fn return_value_debug_log(tag: &str, msg: &str) {
@@ -331,6 +346,31 @@ impl ReturnValueSingleFeedback {
             seen: HashSet::new(),
             name,
             last: false,
+        }
+    }
+}
+
+impl libafl::feedbacks::HasObserverHandle for ReturnValueSingleFeedback {
+    type Observer = ReturnValueObserver;
+
+    fn observer_handle(&self) -> &Handle<Self::Observer> {
+        &self
+            .observer_handles
+            .get(0)
+            .expect("ReturnValueSingleFeedback has no observer handles")
+    }
+}
+
+impl libafl::feedbacks::HasObserverHandle for ReturnValueFeedback {
+    type Observer = ReturnValueObserver;
+
+    fn observer_handle(&self) -> &Handle<Self::Observer> {
+        match self {
+            ReturnValueFeedback::None(_) => {
+                panic!("ReturnValueFeedback::None has no observer handle")
+            }
+            ReturnValueFeedback::Single(s) => s.observer_handle(),
+            ReturnValueFeedback::Combo(c) => c.observer_handle(),
         }
     }
 }

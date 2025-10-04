@@ -131,6 +131,7 @@ pub fn info(module: &str, msg: &str) {
 pub fn debug(module: &str, msg: &str) {
     log(LogLevel::Debug, module, msg)
 }
+#[allow(dead_code)]
 pub fn trace(module: &str, msg: &str) {
     log(LogLevel::Trace, module, msg)
 }

@@ -86,6 +86,136 @@ impl Named for ComboCoverageBuilder {
     }
 }
 
+/// A lightweight updater that copies two per-executor shared-memory coverage
+/// buffers into a single combined objective backing. The combined backing layout
+/// matches the previous convention: first `num_edges` bytes are program A, next
+/// `num_edges` bytes are program B (total length = 2*num_edges).
+#[derive(Debug)]
+pub struct ShmemComboUpdater {
+    name: Cow<'static, str>,
+    num_edges: usize,
+    combined_ptr: *mut u8,
+    combined_len: usize,
+    shmem_a: Option<libafl_bolts::shmem::StdShMem>,
+    shmem_b: Option<libafl_bolts::shmem::StdShMem>,
+}
+
+impl ShmemComboUpdater {
+    /// Create an updater that will copy shmem_a / shmem_b into combined_ptr.
+    /// Note: caller must ensure the StdShMem objects live at least as long as
+    /// this updater (they are moved into the struct to keep them alive).
+    pub fn new(
+        name: &'static str,
+        num_edges: usize,
+        combined_ptr: *mut u8,
+        shmem_a: Option<libafl_bolts::shmem::StdShMem>,
+        shmem_b: Option<libafl_bolts::shmem::StdShMem>,
+    ) -> Self {
+        let combined_len = num_edges.checked_mul(2).unwrap_or(num_edges);
+        Self {
+            name: Cow::from(name),
+            num_edges,
+            combined_ptr,
+            combined_len,
+            shmem_a,
+            shmem_b,
+        }
+    }
+}
+
+impl Named for ShmemComboUpdater {
+    fn name(&self) -> &Cow<'static, str> {
+        &self.name
+    }
+}
+
+// Custom serialization: serialize only the name and num_edges. On deserialize
+// re-create the updater with a fresh combined buffer and no attached shmems.
+impl Serialize for ShmemComboUpdater {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        (&self.name.as_ref(), &self.num_edges).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ShmemComboUpdater {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (name, num_edges): (String, usize) = <(String, usize)>::deserialize(deserializer)?;
+        // leak the name to obtain a 'static str for the updater
+        let boxed: Box<str> = name.into_boxed_str();
+        let static_str: &'static str = Box::leak(boxed);
+
+        // allocate combined backing (2 * num_edges) and leak it
+        let combined_len = num_edges.checked_mul(2).unwrap_or(num_edges);
+        let boxed_slice = vec![0u8; combined_len].into_boxed_slice();
+        let combined_ptr = Box::into_raw(boxed_slice) as *mut u8;
+
+        Ok(ShmemComboUpdater {
+            name: Cow::from(static_str),
+            num_edges,
+            combined_ptr,
+            combined_len,
+            shmem_a: None,
+            shmem_b: None,
+        })
+    }
+}
+
+impl<OTA, OTB, I, S> libafl::observers::DifferentialObserver<OTA, OTB, I, S>
+    for ShmemComboUpdater
+where
+    S: libafl::state::HasExecutions,
+{
+    fn post_observe_second(&mut self, _observers: &mut OTB) -> Result<(), libafl::Error> {
+        unsafe {
+            if self.combined_len == 0 || self.num_edges == 0 {
+                return Ok(());
+            }
+            let combined = core::slice::from_raw_parts_mut(self.combined_ptr, self.combined_len);
+
+            // Zero the combined buffer first
+            for b in combined.iter_mut() {
+                *b = 0;
+            }
+
+            // Copy A into first half
+            if let Some(a) = &self.shmem_a {
+                let a_len = usize::min(a.len(), self.num_edges);
+                let a_slice = &a[..a_len];
+                combined[..a_len].copy_from_slice(a_slice);
+            }
+
+            // Copy B into second half
+            if let Some(b) = &self.shmem_b {
+                let b_len = usize::min(b.len(), self.num_edges);
+                let b_slice = &b[..b_len];
+                combined[self.num_edges..self.num_edges + b_len].copy_from_slice(b_slice);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<_I, _S> Observer<_I, _S> for ShmemComboUpdater {
+    fn pre_exec(&mut self, _state: &mut _S, _input: &_I) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn post_exec(
+        &mut self,
+        _state: &mut _S,
+        _input: &_I,
+        _exit_kind: &libafl::executors::ExitKind,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
 impl<_I, _S> Observer<_I, _S> for ComboCoverageBuilder {
     fn pre_exec(&mut self, _state: &mut _S, _input: &_I) -> Result<(), Error> {
         // let debug_msg = format!(

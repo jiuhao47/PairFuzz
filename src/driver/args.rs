@@ -66,10 +66,29 @@ pub struct Args {
         default_value = "5000"
     )]
     pub timeout_ms: u64,
+    /// 第一实现的可执行文件路径（forkserver 模式使用）
+    #[arg(
+        long = "prog-a",
+        help = "第一实现的可执行文件路径，forkserver 模式使用"
+    )]
+    pub prog_a: Option<PathBuf>,
+    /// 第二实现的可执行文件路径（forkserver 模式使用）
+    #[arg(
+        long = "prog-b",
+        help = "第二实现的可执行文件路径，forkserver 模式使用"
+    )]
+    pub prog_b: Option<PathBuf>,
     /// coverage 模式: none|single|combo
     #[arg(long = "cov-mode", help = "coverage 模式: none|single|combo", default_value_t = ModeOption::Single)]
     pub cov_mode: ModeOption,
     /// return-value 模式: none|single|combo
     #[arg(long = "rv-mode", help = "return-value 模式: none|single|combo", default_value_t = ModeOption::None)]
     pub rv_mode: ModeOption,
+    /// 是否启用 persistent 模式（默认开启）。如果二进制不支持 persistent，builder 会自动回退。
+    #[arg(
+        long = "persistent",
+        help = "启用/禁用 forkserver 的 persistent 模式（默认: 开启）",
+        default_value_t = true
+    )]
+    pub persistent: bool,
 }

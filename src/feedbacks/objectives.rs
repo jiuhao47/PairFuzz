@@ -41,7 +41,7 @@ libafl_bolts::impl_serdeany!(ExitInfo);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrashObjective {
     name: Cow<'static, str>,
-    last_crash: Option<String>,
+    last_crash: Option<CrashInfo>,
     crash_pending: bool,
 }
 
@@ -82,7 +82,21 @@ where
             _ => false,
         };
         if is_crash {
-            self.last_crash = Some(format!("{:?}", exit_kind));
+            // Build a structured CrashInfo so metadata stores concise primary/secondary
+            let label = format!("{:?}", exit_kind);
+            let crash_info = match exit_kind {
+                ExitKind::Diff { primary, secondary } => CrashInfo {
+                    label: label.clone(),
+                    primary: Some(format!("{:?}", primary)),
+                    secondary: Some(format!("{:?}", secondary)),
+                },
+                _ => CrashInfo {
+                    label: label.clone(),
+                    primary: Some(label.clone()),
+                    secondary: None,
+                },
+            };
+            self.last_crash = Some(crash_info);
             self.crash_pending = true;
             debug(
                 "CrashObjective",
@@ -106,23 +120,8 @@ where
         if !self.crash_pending {
             return Ok(());
         }
-        let crash_info = self.last_crash.as_ref().map(|raw| {
-            let primary = if raw.contains("primary") {
-                Some(raw.clone())
-            } else {
-                None
-            };
-            let secondary = if raw.contains("secondary") {
-                Some(raw.clone())
-            } else {
-                None
-            };
-            CrashInfo {
-                label: raw.clone(),
-                primary,
-                secondary,
-            }
-        });
+        // Use the structured CrashInfo we stored earlier
+        let crash_info = self.last_crash.clone();
         let info = ExitInfo {
             note: String::from("crash_any"),
             rv_a: None,
@@ -130,17 +129,34 @@ where
             crash: crash_info,
         };
         debug("CrashObjective", "attempting to insert crash_any metadata");
-        match testcase.metadata_map_mut().try_insert_boxed(Box::new(info)) {
-            Ok(_) => {
-                self.crash_pending = false;
-                self.last_crash = None;
-                debug("CrashObjective", "wrote crash_any metadata");
+        // If an ExitInfo already exists, merge the crash info into it instead
+        let md_map = testcase.metadata_map_mut();
+        if let Some(existing) = md_map.get_mut::<ExitInfo>() {
+            // preserve any existing rv values; overwrite/insert crash info
+            existing.crash = info.crash;
+            // prefer an existing note if present; otherwise set to crash_any
+            if existing.note.is_empty() {
+                existing.note = String::from("crash_any");
             }
-            Err(e) => {
-                debug(
-                    "CrashObjective",
-                    &format!("crash_any metadata insert failed/skipped: {:?}", e),
-                );
+            self.crash_pending = false;
+            self.last_crash = None;
+            debug(
+                "CrashObjective",
+                "merged crash_any metadata into existing ExitInfo",
+            );
+        } else {
+            match md_map.try_insert_boxed(Box::new(info)) {
+                Ok(_) => {
+                    self.crash_pending = false;
+                    self.last_crash = None;
+                    debug("CrashObjective", "wrote crash_any metadata");
+                }
+                Err(e) => {
+                    debug(
+                        "CrashObjective",
+                        &format!("crash_any metadata insert failed/skipped: {:?}", e),
+                    );
+                }
             }
         }
         Ok(())
@@ -281,21 +297,59 @@ where
             crash: None,
         };
         debug("DiffObjective", "attempting to insert rv metadata");
-        match testcase.metadata_map_mut().try_insert_boxed(Box::new(info)) {
-            Ok(_) => {
-                self.rv_pending = false;
-                self.last_rv_a = None;
-                self.last_rv_b = None;
-                debug(
-                    "DiffObjective",
-                    &format!("wrote rv metadata: rv_{}", self.mode),
-                );
+        // Merge into existing ExitInfo if present to avoid "key exists" errors
+        let md_map = testcase.metadata_map_mut();
+        if let Some(existing) = md_map.get_mut::<ExitInfo>() {
+            // Merge return-value fields. If existing values are None, fill them.
+            if existing.rv_a.is_none() {
+                existing.rv_a = self.last_rv_a;
+            } else if self.last_rv_a.is_some() {
+                existing.rv_a = self.last_rv_a; // prefer latest rv if present
             }
-            Err(e) => {
-                debug(
-                    "DiffObjective",
-                    &format!("rv metadata insert failed/skipped: {:?}", e),
-                );
+            if existing.rv_b.is_none() {
+                existing.rv_b = self.last_rv_b;
+            } else if self.last_rv_b.is_some() {
+                existing.rv_b = self.last_rv_b;
+            }
+            // Merge note: if existing note already describes a crash, append rv note;
+            // otherwise prefer the rv note.
+            let rv_note = format!("rv_{}", self.mode);
+            if existing.note.is_empty() {
+                existing.note = rv_note;
+            } else if !existing.note.starts_with("rv_") {
+                if existing.note != rv_note {
+                    existing.note = format!("{}+{}", existing.note, rv_note);
+                }
+            } else {
+                existing.note = rv_note;
+            }
+            self.rv_pending = false;
+            self.last_rv_a = None;
+            self.last_rv_b = None;
+            debug(
+                "DiffObjective",
+                &format!(
+                    "merged rv metadata into existing ExitInfo: rv_{}",
+                    self.mode
+                ),
+            );
+        } else {
+            match md_map.try_insert_boxed(Box::new(info)) {
+                Ok(_) => {
+                    self.rv_pending = false;
+                    self.last_rv_a = None;
+                    self.last_rv_b = None;
+                    debug(
+                        "DiffObjective",
+                        &format!("wrote rv metadata: rv_{}", self.mode),
+                    );
+                }
+                Err(e) => {
+                    debug(
+                        "DiffObjective",
+                        &format!("rv metadata insert failed/skipped: {:?}", e),
+                    );
+                }
             }
         }
         Ok(())

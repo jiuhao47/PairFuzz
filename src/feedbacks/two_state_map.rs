@@ -60,6 +60,10 @@ where
 {
     #[allow(dead_code)]
     pub fn new(map_observer: &C) -> Self {
+        twomap_debug_log(
+            "two_state_map",
+            &format!("enter new() for '{}'", map_observer.name()),
+        );
         Self {
             novelties: if C::NOVELTIES { Some(vec![]) } else { None },
             name: map_observer.name().clone(),
@@ -91,6 +95,17 @@ where
         check_high: bool,
         check_low: bool,
     ) -> Self {
+        twomap_debug_log(
+            "two_state_map",
+            &format!(
+                "enter new_with_params() for '{}' high_delta={} low_delta={} check_high={} check_low={}",
+                map_observer.name(),
+                high_delta,
+                low_delta,
+                check_high,
+                check_low
+            ),
+        );
         Self {
             novelties: if C::NOVELTIES { Some(vec![]) } else { None },
             name: map_observer.name().clone(),
@@ -117,6 +132,10 @@ where
     #[allow(dead_code)]
     pub fn with_name(name: &'static str, map_observer: &C) -> Self {
         let name = Cow::from(name);
+        twomap_debug_log(
+            "two_state_map",
+            &format!("enter with_name() for '{}'", name),
+        );
         Self {
             novelties: if C::NOVELTIES { Some(vec![]) } else { None },
             name,
@@ -190,6 +209,10 @@ where
     S: HasNamedMetadata,
 {
     fn init_state(&mut self, state: &mut S) -> Result<(), Error> {
+        twomap_debug_log(
+            "two_state_map",
+            &format!("enter init_state() for '{}'", self.name),
+        );
         // Preallocate metadata vectors. Allow overriding capacity with env var
         // `DIFFRAY_TWOSTATE_CAPACITY`. If not provided, default to 65536.
         let cap: usize = std::env::var("DIFFRAY_TWOSTATE_CAPACITY")
@@ -211,6 +234,14 @@ where
             &self.name,
             libafl::feedbacks::MapFeedbackMetadata::<u8>::default(),
         )?;
+        // Log creation of TwoStateStats for diagnostics / auditing
+        crate::utils::logging::debug(
+            "two_state_map",
+            &format!(
+                "Initialized TwoStateStats metadata '{}' with capacity {}",
+                self.name, cap
+            ),
+        );
         Ok(())
     }
 }
@@ -240,20 +271,80 @@ where
         observers: &OT,
         _exit_kind: &libafl::executors::ExitKind,
     ) -> Result<bool, Error> {
+        twomap_debug_log(
+            "two_state_map",
+            &format!("enter is_interesting() for '{}'", self.name),
+        );
         let observer = match observers.get(&self.map_ref) {
             Some(h) => h.as_ref(),
             None => {
                 // Observer not present in this execution (e.g., crash path or different observer set).
                 // Treat as non-interesting instead of erroring to avoid panics when combined
                 // feedbacks call append_metadata unconditionally.
+                twomap_debug_log(
+                    "two_state_map",
+                    &format!(
+                        "final is_interesting for '{}' -> false (observer missing)",
+                        self.name
+                    ),
+                );
                 return Ok(false);
             }
         };
         let initial = observer.initial();
         let initial_u8: u8 = initial.into();
+        // If debug enabled, emit a concise snapshot of observer data for this execution.
+        if twomap_debug_enabled() {
+            // collect a small sample of non-initial entries and a top-5 by value
+            let mut samples: Vec<(usize, u8)> = Vec::with_capacity(32);
+            let mut top_candidates: Vec<(usize, u8)> = Vec::new();
+            let mut non_initial_count: usize = 0;
+            let len = observer.len();
+            for (i, item_ref) in observer.as_iter().enumerate() {
+                let cur: u8 = (*item_ref).into();
+                if cur != initial_u8 {
+                    non_initial_count += 1;
+                    if samples.len() < 32 {
+                        samples.push((i, cur));
+                    }
+                    top_candidates.push((i, cur));
+                }
+            }
+            // sort top candidates by value desc and take top 5
+            top_candidates.sort_by(|a, b| b.1.cmp(&a.1));
+            let top5: Vec<String> = top_candidates
+                .iter()
+                .take(5)
+                .map(|(i, v)| format!("{}={}", i, v))
+                .collect();
+            let samples_s = samples
+                .iter()
+                .map(|(i, v)| format!("{}={}", i, v))
+                .collect::<Vec<_>>()
+                .join(", ");
+            twomap_debug_log(
+                "two_state_map",
+                &format!(
+                    "observer snapshot for '{}' len={} initial={} non_initial_count={} samples=[{}] top=[{}]",
+                    self.name,
+                    len,
+                    initial_u8,
+                    non_initial_count,
+                    samples_s,
+                    top5.join(", ")
+                ),
+            );
+        }
         let named = state.named_metadata_map();
         let stats_opt = named.get::<TwoStateStats>(&self.name);
         if stats_opt.is_none() {
+            twomap_debug_log(
+                "two_state_map",
+                &format!(
+                    "final is_interesting for '{}' -> false (stats missing)",
+                    self.name
+                ),
+            );
             return Ok(false);
         }
         let stats = stats_opt.unwrap();
@@ -353,6 +444,14 @@ where
             }
             // after scanning, if nov_vec has any entries, report interesting
             if !nov_vec.is_empty() {
+                twomap_debug_log(
+                    "two_state_map",
+                    &format!(
+                        "final is_interesting for '{}' -> true (novelties={})",
+                        self.name,
+                        nov_vec.len()
+                    ),
+                );
                 return Ok(true);
             }
         } else {
@@ -424,7 +523,15 @@ where
         {
             self.last = false;
         }
-        Ok(found_count > 0)
+        let final_result = found_count > 0;
+        twomap_debug_log(
+            "two_state_map",
+            &format!(
+                "final is_interesting for '{}' -> {} (found_count={})",
+                self.name, final_result, found_count
+            ),
+        );
+        Ok(final_result)
     }
 
     fn append_metadata(
@@ -434,6 +541,10 @@ where
         observers: &OT,
         testcase: &mut Testcase<I>,
     ) -> Result<(), Error> {
+        twomap_debug_log(
+            "two_state_map",
+            &format!("enter append_metadata() for '{}'", self.name),
+        );
         // Phase 1: snapshot observer
         let observer = match observers.get(&self.map_ref) {
             Some(h) => h.as_ref(),
@@ -777,6 +888,10 @@ where
     }
 
     fn last_result(&self) -> Result<bool, Error> {
+        twomap_debug_log(
+            "two_state_map",
+            &format!("enter last_result() for '{}'", self.name),
+        );
         #[cfg(feature = "track_hit_feedbacks")]
         {
             Ok(self.last)

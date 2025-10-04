@@ -34,6 +34,10 @@ RUN apt-get update \
     python3-dev \
     libpython3.11-dev \
     nasm \
+    gettext \
+    autopoint \
+    po4a \
+    doxygen \
     && rm -rf /var/lib/apt/lists/*
 
 ## Install LLVM 18 (clang-18, lld-18, libc++ etc.) from apt.llvm.org

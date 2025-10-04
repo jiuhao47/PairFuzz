@@ -7,10 +7,11 @@ Features:
 - Detect which tasks are already copied locally (by presence of local tar.gz).
 - Allow interactive selection of tasks to copy back.
 - For each selected task:
-  - remove stderr.log files on remote task dir
-  - create a tar.gz mirror on the remote host
-  - scp the tarball to local destination
-  - optionally remove the remote tarball after successful copy
+    - remove stderr.log files on remote task dir
+    - remove the local/remote diffray binary (if present) to avoid copying large executable
+    - create a tar.gz mirror on the remote host
+    - scp the tarball to local destination
+    - optionally remove the remote tarball after successful copy
 
 Usage (examples):
   python3 copy_back.py --host remote.example.com --user alice --remote-base /data/tasks --local-dest ~/backups
@@ -162,6 +163,25 @@ def create_remote_tar(
     return rc == 0, out, remote_tar_path
 
 
+def remove_diffray_on_remote(
+    user: Optional[str],
+    host: str,
+    remote_base: str,
+    task: str,
+    port: Optional[int] = None,
+    ssh_key: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Remove diffray binary (unix and windows variant) from the remote task dir.
+
+    This helps avoid copying large binaries back. Returns (success, output).
+    """
+    remote_dir = os.path.join(remote_base, task)
+    # Remove both 'diffray' and 'diffray.exe' if present. Use -f to ignore missing.
+    cmd = f"bash -lc {shlex.quote(f'rm -f {remote_dir}/diffray {remote_dir}/diffray.exe')}"
+    rc, out = ssh_run(user, host, cmd, port=port, ssh_key=ssh_key)
+    return rc == 0, out
+
+
 def remove_remote_file(
     user: Optional[str],
     host: str,
@@ -298,6 +318,21 @@ def main():
             print("  已删除远端 stderr.log（如果存在）")
         else:
             print(f"  删除 stderr.log 失败: {out.strip()}", file=sys.stderr)
+
+        # Remove diffray binary from the remote task directory to avoid copying it
+        ok, out = remove_diffray_on_remote(
+            args.user,
+            args.host,
+            args.remote_base,
+            task,
+            port=args.port,
+            ssh_key=args.ssh_key,
+        )
+        if ok:
+            print("  已删除远端 diffray 二进制（如果存在）")
+        else:
+            # Not a fatal error; continue but report output for debugging
+            print(f"  删除远端 diffray 失败或无权限: {out.strip()}", file=sys.stderr)
 
         ok, out, remote_tar = create_remote_tar(
             args.user,

@@ -18,17 +18,17 @@ cc:
 cxx:
     cargo build --profile={{PROFILE}} --bin libafl_cxx
 
-fuzzer app=APP: (load_app app) cc cxx
+fuzzer app=APP: cc cxx
 	cargo build --profile={{PROFILE}}
 
 run app=APP: (fuzzer app) (pre_run app)
-	{{FUZZER}} -t 60 -c -o run/diffs -i run/seeds/ --corpus run/corpus -v -l ./run/log/ --cov-mode none --rv-mode single
+	{{FUZZER}} -vvv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng"
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -vv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single
+	{{FUZZER}} -vv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode single --rv-mode none --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng"
 
 pre_run app=APP: 
-	rm -rf ./run/ && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
+	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
 	cp ./app/corpus/png/* run/seeds/
 
 build_docker:
@@ -40,6 +40,9 @@ edocker:
 	  -w /home/dev/workspace \
 	  diffray:latest
 
+profile: clean
+	RUSTFLAGS="-C debuginfo=2" cargo build --profile=release
+	cargo flamegraph --release --bin {{FUZZER_NAME}} -- -v -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng"
 
 clean: clean_build clean_app clean_run
 
@@ -51,3 +54,4 @@ clean_app:
 
 clean_run:
 	rm -rf ./run/
+	rm -rf ./.cur_input_*

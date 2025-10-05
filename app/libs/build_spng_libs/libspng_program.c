@@ -1,11 +1,11 @@
 #include <inttypes.h>
 #include <spng.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
-// The following line is needed for shared memory testcase fuzzing
-#include <unistd.h>
-__AFL_FUZZ_INIT();
+DIFFRAY_INIT();
 
 int FDL_DEBUG_TMP = 0;
 // extern int LIBSPNG_ERROR_CODE_DIFF_FUZZ;
@@ -119,13 +119,9 @@ error:
   return ret;
 }
 
-int main(int argc, char **argv) {
-  // Start the forkserver at this point (i.e., forks will happen here)
-  __AFL_INIT();
+/* select_rv_shm_env is provided by app/libs/rv_shm/rv_shm.c */
 
-  // The following line is also needed for shared memory testcase fuzzing
-  uint8_t *buf = __AFL_FUZZ_TESTCASE_BUF; // must be after __AFL_INIT
-  size_t len = __AFL_FUZZ_TESTCASE_LEN;
-  int result = libspng_parse(buf, len);
+int main(int argc, char **argv) {
+  DIFFRAY_RUN(libspng_parse);
   return 0;
 }

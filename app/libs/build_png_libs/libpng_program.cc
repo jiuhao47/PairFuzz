@@ -17,15 +17,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// needed for read() used by AFL's testcase macros when compiling as C/C++
 
+// C++ headers
 #include <vector>
-
-// The following line is needed for shared memory testcase fuzzing
-#include <unistd.h>
-
-__AFL_FUZZ_INIT();
-
+DIFFRAY_INIT();
+// libpng
 #define PNG_INTERNAL
 #include "png.h"
 
@@ -230,12 +226,8 @@ int libpng_parse(const uint8_t *data, size_t size) {
 }
 
 int main(int argc, char **argv) {
-  // Start the forkserver at this point (i.e., forks will happen here)
-  __AFL_INIT();
-
-  // The following line is also needed for shared memory testcase fuzzing
-  uint8_t *buf = __AFL_FUZZ_TESTCASE_BUF; // must be after __AFL_INIT
-  size_t len = __AFL_FUZZ_TESTCASE_LEN;
-  int result = libpng_parse(buf, len);
+  // Use DIFFRAY_RUN to perform init, call the parser with the testcase
+  // buffer/len, write the return value into the rv shm and return it.
+  DIFFRAY_RUN(libpng_parse);
   return 0;
 }

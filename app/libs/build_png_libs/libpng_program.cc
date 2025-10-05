@@ -14,9 +14,7 @@
 // 5. adding calls to png_set_*() transforms commonly used by browsers.
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 // Program wrapper: include lightweight harness and run via DIFFRAY macros.
 #include <stddef.h>

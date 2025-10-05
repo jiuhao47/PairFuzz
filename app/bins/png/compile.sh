@@ -44,15 +44,17 @@ $CC_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_spng_libs/libspng_program.c"
   -o "$TEMP_DIR/libspng_program.o"
 
 # Step 2: link static libraries to object files to generate executables
-LINK_LIBS="-lz -lm"
+LINK_LIBS="-lm"
 echo "Linking libpng executable..."
 $CXX_WRAPPER $COMMON_LINK_FLAGS "$TEMP_DIR/libpng_program.o" \
   "../../build/png/$libpng_hash/usr/local/lib/libpng.a" \
+  "../../build/zlib/dep/usr/local/lib/libz.a" \
   -o "$TEMP_DIR/libpng_executable" $LINK_LIBS
 
 echo "Linking libspng executable..."
 $CC_WRAPPER $COMMON_LINK_FLAGS "$TEMP_DIR/libspng_program.o" \
   "../../build/spng/$libspng_hash/usr/local/lib/libspng_static.a" \
+  "../../build/zlib/dep/usr/local/lib/libz.a" \
   -o "$TEMP_DIR/libspng_executable" $LINK_LIBS
 
 # Step 3: Move executables to bins/.bins

@@ -39,7 +39,11 @@ ar x "../../../build/xml2/$libxml2_hash/usr/local/lib/libxml2.a"
 
 echo "Extracting libexpat.a..."
 ar x "../../../build/expat/$expat_hash/usr/local/lib/libexpat.a"
+
+echo "Extracting liblzma.a..."
+ar x "../../../build/xz/dep/usr/local/lib/liblzma.a"
 cd ..
+
 
 # Step 3: Create the combined static library
 echo "Creating combined static library libdifferential.a..."

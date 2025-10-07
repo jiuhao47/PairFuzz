@@ -25,11 +25,13 @@ run app=APP: (fuzzer app) (pre_run app)
 	{{FUZZER}} -vvv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng"
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -vv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode single --rv-mode none --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng"
+	export DIFFRAY_WOLFSSL_CERTDIR="/home/user/workspace/workshop/diffray/app/corpus/certs" 
+	export DIFFRAY_OPENSSL_CERTDIR="/home/user/workspace/workshop/diffray/app/corpus/certs" 
+	DIFFRAY_WOLFSSL_CERTDIR="/home/user/workspace/workshop/diffray/app/corpus/certs" DIFFRAY_OPENSSL_CERTDIR="/home/user/workspace/workshop/diffray/app/corpus/certs" {{FUZZER}} -vv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode single --rv-mode none --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/im/IM" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/im/GM"
 
 pre_run app=APP: 
 	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
-	cp ./app/corpus/png/* run/seeds/
+	cp ./app/corpus/bmp/* run/seeds/
 
 build_docker:
 	./docker/deploy.sh build

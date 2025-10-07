@@ -1,14 +1,11 @@
-#include "7zTypes.h"
-#include "Alloc.h"
-#include "Xz.h"
-#include "XzCrc64.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+// Thin wrapper harness for libdeflate core implementation.
+#include <stddef.h>
+#include <stdint.h>
 
+// Include the core implementation so this harness exports the expected C
+// entrypoint used by diffRay.
+#include "7z_core.c"
 
-extern int cli_scanxz( const unsigned char *data, unsigned int size );
 extern int diffRayTestOneInput_2(const uint8_t *data, size_t size) {
-
-  return cli_scanxz(data,size);
+  return cli_scanxz(data, size);
 }

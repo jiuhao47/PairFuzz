@@ -8,13 +8,10 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
-#}
+}
 
 #include <assert.h>
-#include <ctype.h>
 #include <dirent.h>
-#include <fstream>
-#include <iostream>
 #include <limits.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -22,9 +19,7 @@ extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <string>
 #include <unistd.h>
-#include <vector>
 
 #define IMG_WIDTH 1920
 #define IMG_HEIGHT 1200
@@ -53,41 +48,7 @@ int decode_internal(AVCodecContext *av_codec_ctx, AVFrame *av_frm,
     fflush(stdout);
     return 0;
   }
-}
-
-// Exported wrapper that captures stderr and calls the core parser
-// h264_parse_init.
-extern "C" int ffmpeg_h264_parse(const uint8_t *data, size_t size) {
-  FILE *tempFile = tmpfile();
-  if (tempFile == NULL) {
-    perror("tmpfile");
-    return 1;
-  }
-
-  int oldStderrFd = dup(fileno(stderr));
-  if (oldStderrFd == -1) {
-    perror("dup");
-    fclose(tempFile);
-    return 1;
-  }
-
-  if (dup2(fileno(tempFile), fileno(stderr)) == -1) {
-    perror("dup2");
-    close(oldStderrFd);
-    fclose(tempFile);
-    return 1;
-  }
-
-  int ret = (h264_parse_init(data, size) == 0) ? 0 : 1;
-
-  if (dup2(oldStderrFd, fileno(stderr)) == -1) {
-    perror("dup2");
-    close(oldStderrFd);
-    fclose(tempFile);
-    return 1;
-  }
-  close(oldStderrFd);
-  return ret;
+  return 0;
 }
 
 extern "C" int h264_parse_init(const uint8_t *input_data, size_t input_size) {
@@ -222,4 +183,39 @@ extern "C" int h264_parse_init(const uint8_t *input_data, size_t input_size) {
   av_packet_free(&av_pkt);
   free(inbuf);
   return 0;
+}
+
+// Exported wrapper that captures stderr and calls the core parser
+// h264_parse_init.
+extern "C" int ffmpeg_h264_parse(const uint8_t *data, size_t size) {
+  FILE *tempFile = tmpfile();
+  if (tempFile == NULL) {
+    perror("tmpfile");
+    return 1;
+  }
+
+  int oldStderrFd = dup(fileno(stderr));
+  if (oldStderrFd == -1) {
+    perror("dup");
+    fclose(tempFile);
+    return 1;
+  }
+
+  if (dup2(fileno(tempFile), fileno(stderr)) == -1) {
+    perror("dup2");
+    close(oldStderrFd);
+    fclose(tempFile);
+    return 1;
+  }
+
+  int ret = (h264_parse_init(data, size) == 0) ? 0 : 1;
+
+  if (dup2(oldStderrFd, fileno(stderr)) == -1) {
+    perror("dup2");
+    close(oldStderrFd);
+    fclose(tempFile);
+    return 1;
+  }
+  close(oldStderrFd);
+  return ret;
 }

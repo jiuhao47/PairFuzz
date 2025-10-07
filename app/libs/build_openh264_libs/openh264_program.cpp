@@ -10,7 +10,7 @@ DIFFRAY_INIT();
 
 // Include the harness implementation directly so the DIFFRAY macros
 // can be used to adapt its compilation, mirroring libpng_program.cc.
-#include "openh264_harness.cpp"
+#include "openh264_core.cpp"
 
 int main(int argc, char **argv) {
   // Use the harness parsing entry as the target for DIFFRAY_RUN.

@@ -33,7 +33,7 @@ CXXFLAGS="-fsanitize=address"
 # the environment variables first, then invoke ./Configure with CC/CXX
 export CC CXX CFLAGS CXXFLAGS
 ./autogen.sh
-./configure --enable-opensslextra CXX="$CXX" CC="$CC" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
+./configure --enable-opensslextra --enable-static CXX="$CXX" CC="$CC" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
 
 make -j 16
 

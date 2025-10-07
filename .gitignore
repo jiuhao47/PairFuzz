@@ -20,10 +20,5 @@ LocateFix/
 benchmark/libpng
 benchmark/libspng
 
-app/libs/build_wolfssl_libs/
-app/libs/build_openssl_libs/
-app/script/openssl/
-app/script/wolfssl/
-
 .vscode/
 .cur_input_*

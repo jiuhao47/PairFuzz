@@ -21,7 +21,11 @@ mkdir -p $XML2_BUILD_PATH/
 rm -rf $XML2_BUILD_PATH/xml2_$commit_hash && rm -rf $XML2_INSTALL_PATH/$commit_hash
 cp -r $XML2_SRC_PATH $XML2_BUILD_PATH/xml2_$commit_hash
 cd $XML2_BUILD_PATH/xml2_$commit_hash
-git reset --hard $commit_hash
+if [ "$commit_hash" = "dep" ]; then
+  echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
+else
+  git reset --hard $commit_hash
+fi
 
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"

@@ -1,6 +1,8 @@
 PROJECT_ROOT := "/home/dev/workspace"
 
 png: libpng libspng
+	cd ./zlib && \
+	./compile_commit_hash.sh dep
 
 libpng:
 	cd ./libpng && \
@@ -13,6 +15,7 @@ libspng:
 	./compile_commit_hash.sh adc94393
 
 bmp: GM IM
+	cd ./xml && ./compile_commit_hash.sh dep
 
 GM:
 	cd ./GM && \
@@ -42,6 +45,10 @@ mjson:
 	./compile_commit_hash.sh 6b0367
 
 xml: xml2 expat
+	cd ./xz && \
+	./compile_commit_hash.sh dep
+	cd ./zlib && \
+	./compile_commit_hash.sh dep
 
 xml2:
 	#!/usr/bin/env bash
@@ -49,9 +56,8 @@ xml2:
 	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
 	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
 	./compile_commit_hash.sh 73514f2d && \ 
-	./compile_commit_hash.sh f8a8c1f && \
-	cd ../xz && \
-	./compile_commit_hash.sh dep
+	./compile_commit_hash.sh f8a8c1f 
+
 expat:
 	cd ./expat && \
 	./compile_commit_hash.sh ac2b235 && \
@@ -81,6 +87,12 @@ libtar:
 	./compile_commit_hash.sh 6d0ab4c
 
 h264: FFmpeg openh264
+	cd ./xz && \
+	./compile_commit_hash.sh dep
+	cd ./zlib && \
+	./compile_commit_hash.sh dep
+	cd ./bzip2 && \
+	./compile_commit_hash.sh dep
 
 FFmpeg:
 	cd ./FFmpeg && \
@@ -107,6 +119,8 @@ xz7z:
 	cd ./xz7z && ./compile.sh
 
 ssl: openssl wolfssl
+	cd ./zlib && \
+	./compile_commit_hash.sh dep
 
 openssl:
 	cd ./openssl && \

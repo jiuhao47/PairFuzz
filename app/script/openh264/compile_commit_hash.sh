@@ -26,8 +26,8 @@ git reset --hard $commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -msse2"
+CXXFLAGS="-fsanitize=address -msse2"
 
 cd $OPENH264_BUILD_PATH/openh264_$commit_hash
 CXX=$CXX CC=$CC CFLAGS=$CFLAGS CXXFLAGS=$CXXFLAGS LDFLAGS=$CXXFLAGS make OS=linux ARCH=x86_64 -j16

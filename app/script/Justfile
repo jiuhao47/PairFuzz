@@ -48,9 +48,10 @@ xml2:
 	cd ./xml2 && \
 	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
 	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
-	./compile_commit_hash.sh 73514f2d && ./compile_commit_hash.sh f8a8c1f
-	# cd ./expat && ./compile_commit_hash.sh ac2b235 && ./compile_commit_hash.sh 07108642
-
+	./compile_commit_hash.sh 73514f2d && \ 
+	./compile_commit_hash.sh f8a8c1f && \
+	cd ../xz && \
+	./compile_commit_hash.sh dep
 expat:
 	cd ./expat && \
 	./compile_commit_hash.sh ac2b235 && \
@@ -104,3 +105,15 @@ xzxz:
 
 xz7z:
 	cd ./xz7z && ./compile.sh
+
+ssl: openssl wolfssl
+
+openssl:
+	cd ./openssl && \
+	./compile_commit_hash.sh 78d252889b && \
+	./compile_commit_hash.sh 89cd17a
+
+wolfssl:
+	cd ./wolfssl && \
+	./compile_commit_hash.sh 8f131ff3d && \
+	./compile_commit_hash.sh 7e01af0 

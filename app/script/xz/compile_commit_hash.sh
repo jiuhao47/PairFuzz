@@ -21,7 +21,11 @@ mkdir -p $XZ_BUILD_PATH/
 rm -rf $XZ_BUILD_PATH/xz_$commit_hash  rm -rf $XZ_INSTALL_PATH/$commit_hash
 cp -r $XZ_SRC_PATH $XZ_BUILD_PATH/xz_$commit_hash
 cd $XZ_BUILD_PATH/xz_$commit_hash
-git reset --hard $commit_hash
+if [ "$commit_hash" = "dep" ]; then
+  echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
+else
+  git reset --hard $commit_hash
+fi
 
 python3 $APP_PATH/script/xz/patch_checksum.py $XZ_BUILD_PATH/xz_$commit_hash
 ./autogen.sh

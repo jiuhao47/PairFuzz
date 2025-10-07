@@ -22,7 +22,8 @@ rm -rf $XML2_BUILD_PATH/xml2_$commit_hash && rm -rf $XML2_INSTALL_PATH/$commit_h
 cp -r $XML2_SRC_PATH $XML2_BUILD_PATH/xml2_$commit_hash
 cd $XML2_BUILD_PATH/xml2_$commit_hash
 if [ "$commit_hash" = "dep" ]; then
-  echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
+  git reset --hard cdd2575
+  # echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
 else
   git reset --hard $commit_hash
 fi
@@ -35,7 +36,12 @@ CXXFLAGS="-fsanitize=address"
 
 cd $XML2_BUILD_PATH/xml2_$commit_hash
 ./autogen.sh
-./configure CC="$CC" CXX="$CXX" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" --enable-static
+if [ "$commit_hash" = "dep" ]; then
+  ./configure CC="$CC" CXX="$CXX" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" --enable-static --with-http --with-ftp
+else
+  ./configure CC="$CC" CXX="$CXX" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" --enable-static
+fi
+
 
 make -j16
 cd $XML2_INSTALL_PATH && mkdir -p $commit_hash

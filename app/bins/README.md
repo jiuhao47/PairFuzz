@@ -9,11 +9,11 @@ json
 tar
 xz
 h264
-
+bmp
 
 ## fail
 
-bmp 一堆依赖需要手工安装
+
 
 ## not done
 

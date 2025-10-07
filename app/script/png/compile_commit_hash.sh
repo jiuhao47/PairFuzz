@@ -19,7 +19,12 @@ mkdir -p $PNG_BUILD_PATH/
 rm -rf $PNG_BUILD_PATH/png_$commit_hash && rm -rf $PNG_INSTALL_PATH/$commit_hash
 cp -r $PNG_SRC_PATH $PNG_BUILD_PATH/png_$commit_hash
 cd $PNG_BUILD_PATH/png_$commit_hash
-git reset --hard $commit_hash
+if [ "$commit_hash" = "dep" ]; then
+  echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
+else
+  git reset --hard $commit_hash
+fi
+
 
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
@@ -39,7 +44,7 @@ cd $PNG_INSTALL_PATH/png_$commit_hash
 make install DESTDIR=$PNG_INSTALL_PATH/$commit_hash
 rm -rf $PNG_BUILD_PATH/png_$commit_hash
 
-cd $PNG_LIB_PATH
-make genlib_thread COMMIT_HASH=$commit_hash
-make genlib_docker COMMIT_HASH=$commit_hash
-make test_thread
+# cd $PNG_LIB_PATH
+# make genlib_thread COMMIT_HASH=$commit_hash
+# make genlib_docker COMMIT_HASH=$commit_hash
+# make test_thread

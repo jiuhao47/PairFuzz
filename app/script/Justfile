@@ -15,7 +15,13 @@ libspng:
 	./compile_commit_hash.sh adc94393
 
 bmp: GM IM
-	cd ./xml && ./compile_commit_hash.sh dep
+	cd ./xml2 && ./compile_commit_hash.sh dep
+	cd ./libpng && ./compile_commit_hash.sh dep
+	cd ./zlib && ./compile_commit_hash.sh dep
+	cd ./bzip2 && ./compile_commit_hash.sh dep
+	cd ./xz && ./compile_commit_hash.sh dep
+	cd ./jpeg && ./compile_commit_hash.sh dep
+
 
 GM:
 	cd ./GM && \

@@ -1,13 +1,8 @@
 /target
 app/src/
-app/build
-app/corpus
+app/build/
+app/corpus/
 target/
-libs/
-!app/libs/
-!app/libs/**/*.c
-!app/libs/**/*.cpp
-!app/libs/**/*.cc
 run/
 misc/
 *.a

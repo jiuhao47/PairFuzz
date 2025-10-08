@@ -53,7 +53,7 @@ extern "C" int tar_parse(const uint8_t *data, size_t size) {
   int ret = 1;
 
   // 创建一个临时文件，用于存储模糊测试输入
-  char tmp_filename[] = "/app/fuzz_tar_XXXXXX";
+  char tmp_filename[] = "/tmp/fuzz_tar_XXXXXX";
   int fd = mkstemp(tmp_filename);
   if (fd < 0) {
     perror("mkstemp");
@@ -70,7 +70,7 @@ extern "C" int tar_parse(const uint8_t *data, size_t size) {
   close(fd);
 
   // 创建一个临时目录，用于解压文件
-  char tmp_dir[] = "/app/fuzz_tar_extract_XXXXXX";
+  char tmp_dir[] = "/tmp/fuzz_tar_extract_XXXXXX";
   mkdtemp(tmp_dir);
 
   // 打开 tar 文件

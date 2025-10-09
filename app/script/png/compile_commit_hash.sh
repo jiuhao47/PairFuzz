@@ -20,7 +20,7 @@ rm -rf $PNG_BUILD_PATH/png_$commit_hash && rm -rf $PNG_INSTALL_PATH/$commit_hash
 cp -r $PNG_SRC_PATH $PNG_BUILD_PATH/png_$commit_hash
 cd $PNG_BUILD_PATH/png_$commit_hash
 if [ "$commit_hash" = "dep" ]; then
-  echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
+  git reset --hard 872555f # 1.6.47
 else
   git reset --hard $commit_hash
 fi

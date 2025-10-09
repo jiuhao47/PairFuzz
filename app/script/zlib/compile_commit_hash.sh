@@ -23,11 +23,12 @@ rm -rf $ZLIB_BUILD_PATH/zlib_$commit_hash && rm -rf $ZLIB_INSTALL_PATH/$commit_h
 cp -r $ZLIB_SRC_PATH $ZLIB_BUILD_PATH/zlib_$commit_hash
 cd $ZLIB_BUILD_PATH/zlib_$commit_hash
 if [ "$commit_hash" = "dep" ]; then
-  echo "commit_hash is 'dep' — skipping git reset (using dependency snapshot)"
+  git reset --hard 09155ea # zlib 1.3
 else
   git reset --hard $commit_hash
+  python3 $APP_PATH/script/zlib/patch_checksum.py $ZLIB_BUILD_PATH/zlib_$commit_hash
 fi
-python3 $APP_PATH/script/zlib/patch_checksum.py $ZLIB_BUILD_PATH/zlib_$commit_hash
+
 # ./autogen.sh
 mkdir -p build
 cd build

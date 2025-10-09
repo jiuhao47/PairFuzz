@@ -5,7 +5,7 @@
 DIFFRAY_INIT();
 
 // include the core implementation which provides expat_xmlparse
-#include "expat_parse.cpp"
+#include "expat_core.cpp"
 
 int main(int argc, char **argv) {
   DIFFRAY_RUN(expat_xmlparse);

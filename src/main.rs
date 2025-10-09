@@ -211,16 +211,23 @@ pub fn main() {
         "zero_nonzero",
         &[&rv_exec_observer_a, &rv_exec_observer_b],
     );
-    let map_obj_fb = crate::feedbacks::two_state_map::TwoStateMapFeedback::new_with_params(
+    let map_diff_obj_fb = crate::feedbacks::two_state_map::TwoStateMapFeedback::new_with_params(
         &mut objective_observer,
         1u8,
         1u8,
         true,
         false,
     );
-    let mut objective = feedback_or_fast!(
-        crate::feedbacks::CrashObjective::new(),
-        feedback_and_fast!(diff_obj, map_obj_fb)
+    let map_crash_obj_fb = crate::feedbacks::two_state_map::TwoStateMapFeedback::new_with_params(
+        &mut objective_observer,
+        1u8,
+        1u8,
+        true,
+        false,
+    );
+    let mut objective = feedback_and_fast!(
+        feedback_or_fast!(crate::feedbacks::CrashObjective::new(), diff_obj),
+        map_diff_obj_fb
     );
 
     let (maybe_state, mut mgr) =

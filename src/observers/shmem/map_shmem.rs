@@ -71,6 +71,11 @@ pub struct ShmemComboUpdater {
     num_edges: usize,
     combined_ptr: *mut u8,
     combined_len: usize,
+    // Own the combined backing buffer when provided so it is freed when the
+    // updater is dropped. This avoids leaking memory when the updater is
+    // deserialized or constructed with an owned backing buffer.
+    #[allow(dead_code)]
+    combined_backing: Option<Box<[u8]>>,
     shmem_a: Option<libafl_bolts::shmem::StdShMem>,
     shmem_b: Option<libafl_bolts::shmem::StdShMem>,
 }
@@ -79,19 +84,30 @@ impl ShmemComboUpdater {
     /// Create an updater that will copy shmem_a / shmem_b into combined_ptr.
     /// Note: caller must ensure the StdShMem objects live at least as long as
     /// this updater (they are moved into the struct to keep them alive).
+    /// Create an updater that will copy shmem_a / shmem_b into combined_ptr.
+    /// If `combined_backing` is Some(boxed_slice) the updater will take
+    /// ownership of the backing and compute the pointer from it. Otherwise
+    /// `combined_ptr` is used as-is (caller is responsible for backing lifetime).
     pub fn new(
         name: &'static str,
         num_edges: usize,
         combined_ptr: *mut u8,
+        combined_backing: Option<Box<[u8]>>,
         shmem_a: Option<libafl_bolts::shmem::StdShMem>,
         shmem_b: Option<libafl_bolts::shmem::StdShMem>,
     ) -> Self {
         let combined_len = num_edges.checked_mul(2).unwrap_or(num_edges);
+        let actual_ptr = if let Some(ref backing) = combined_backing {
+            backing.as_ptr() as *mut u8
+        } else {
+            combined_ptr
+        };
         Self {
             name: Cow::from(name),
             num_edges,
-            combined_ptr,
+            combined_ptr: actual_ptr,
             combined_len,
+            combined_backing,
             shmem_a,
             shmem_b,
         }
@@ -167,16 +183,18 @@ impl<'de> Deserialize<'de> for ShmemComboUpdater {
         let boxed: Box<str> = name.into_boxed_str();
         let static_str: &'static str = Box::leak(boxed);
 
-        // allocate combined backing (2 * num_edges) and leak it
+        // allocate combined backing (2 * num_edges) and keep ownership in the
+        // updater so it can be dropped later instead of leaking.
         let combined_len = num_edges.checked_mul(2).unwrap_or(num_edges);
         let boxed_slice = vec![0u8; combined_len].into_boxed_slice();
-        let combined_ptr = Box::into_raw(boxed_slice) as *mut u8;
+        let combined_ptr = boxed_slice.as_ptr() as *mut u8;
 
         Ok(ShmemComboUpdater {
             name: Cow::from(static_str),
             num_edges,
             combined_ptr,
             combined_len,
+            combined_backing: Some(boxed_slice),
             shmem_a: None,
             shmem_b: None,
         })

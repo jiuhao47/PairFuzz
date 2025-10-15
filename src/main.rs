@@ -25,6 +25,8 @@ use libafl_bolts::{current_time, nonzero, rands::StdRand, tuples::tuple_list};
 use mimalloc::MiMalloc;
 use std::{fs, path::PathBuf, time::Duration};
 
+// driver::constants now holds shared constants (see src/driver/constants.rs)
+
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
@@ -39,12 +41,9 @@ use observers::ReturnValueObserver;
 use crate::driver::args::Args;
 use crate::utils::logging::{error, info, init_from_verbose, set_log_dir, warn};
 
-// The instrumented target harness is in `harness` (kept as a module).
-mod harness;
-
 #[expect(clippy::too_many_lines)]
 pub fn main() {
-    // 解析命令行并初始化日志
+    // Parse command-line arguments and initialize logging
     let args = Args::parse();
     init_from_verbose(args.verbose, None);
     // Disable ASAN leak detection and make ASAN abort on errors when present
@@ -53,55 +52,75 @@ pub fn main() {
     // Ensure log directory exists and configure logger to write there
     if let Some(log_dir) = &args.log_dir {
         if let Err(e) = fs::create_dir_all(log_dir) {
-            error("main", &format!("无法创建日志目录 {:?}: {}", log_dir, e));
+            error(
+                "main",
+                &format!("Failed to create log directory {:?}: {}", log_dir, e),
+            );
             std::process::exit(1);
         };
         set_log_dir(Some(log_dir.clone()));
         if args.verbose > 0 {
             info(
                 "main",
-                &format!("日志将写入到目录: {:?} (主日志: diffray.log)", log_dir),
+                &format!(
+                    "Logs will be written to directory: {:?} (main log: diffray.log)",
+                    log_dir
+                ),
             );
         }
     } else if args.verbose > 0 {
-        info("main", "启用详细输出模式");
+        info("main", "Detailed output enabled");
     }
 
+    // Run the main logic in a fallible function to allow unified error handling
+    if let Err(e) = run(args) {
+        error("main", &format!("Fatal error: {}", e));
+        std::process::exit(1);
+    }
+}
+
+fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
     if let Err(e) = fs::create_dir_all(&args.output_dir) {
         error(
             "main",
-            &format!("无法创建输出目录 {:?}: {}", args.output_dir, e),
+            &format!(
+                "Failed to create output directory {:?}: {}",
+                args.output_dir, e
+            ),
         );
-        std::process::exit(1);
+        return Err(Box::new(e));
     }
 
     if args.verbose > 0 {
-        info("main", "配置参数:");
-        info("main", &format!("  输入目录: {:?}", args.input_dir));
-        info("main", &format!("  输出目录: {:?}", args.output_dir));
-        info("main", &format!("  日志目录: {:?}", args.log_dir));
-        info("main", &format!("  执行超时时间: {}毫秒", args.timeout_ms));
+        info("main", "Configuration:");
+        info("main", &format!("  Input directory: {:?}", args.input_dir));
+        info(
+            "main",
+            &format!("  Output directory: {:?}", args.output_dir),
+        );
+        info("main", &format!("  Log directory: {:?}", args.log_dir));
+        info(
+            "main",
+            &format!("  Single-execution timeout: {} ms", args.timeout_ms),
+        );
     }
+
+    // The remainder of the original main function continues below...
 
     // Fuzzing configuration
     // num_edges: maximum size of an individual coverage map
-    let num_edges: usize = 65536;
+    let num_edges: usize = crate::driver::constants::MAP_SIZE;
 
     // We'll allocate coverage observers (A, B) and a combined objective buffer.
     use libafl::observers::HitcountsMapObserver;
     use libafl::observers::StdMapObserver;
 
-    let (map_observer_a, map_observer_b, mut objective_observer);
+    let (map_observer_a, map_observer_b, objective_observer);
 
-    // Create feedback-side return-value observers (used for State initialization)
+    // Return-value feedback observers (used by rv-mode Single/Combo)
     let rv_feedback_observer_a = ReturnValueObserver::new("first_return");
     let rv_feedback_observer_b = ReturnValueObserver::new("second_return");
-    let rv_wrapper = crate::driver::feedbacks::make_rv_wrapper(
-        args.rv_mode,
-        &rv_feedback_observer_a,
-        &rv_feedback_observer_b,
-    );
 
     // Executor-attached return-value observers (may be backed by small shmem regions)
     use libafl_bolts::shmem::StdShMem;
@@ -127,21 +146,27 @@ pub fn main() {
         );
         // Also include a SimpleMonitor that prints to stdout. When the `introspection`
         // feature is enabled in libafl this monitor will include per-client perf stats.
-        let simple_mon = libafl::monitors::SimpleMonitor::new(|s| println!("{s}"));
+        // The printing behavior is controlled by the CLI flag `--no-simple-monitor`.
+        let enable_simple = args.simple_monitor_enabled();
+        let simple_mon = libafl::monitors::SimpleMonitor::new(move |s| {
+            if enable_simple {
+                println!("{s}")
+            }
+        });
         tuple_list!(json_mon, simple_mon)
     };
 
     // Event manager: supports restarting and may provide a restored State
     let mut shmem_provider = StdShMemProvider::new().expect("failed to create shmem provider");
 
-    // Try to allocate per-target coverage shmems. Fall back to heap-backed maps on error.
-    let mut _cov_shmem_a: Option<libafl_bolts::shmem::StdShMem> = None;
-    let mut _cov_shmem_b: Option<libafl_bolts::shmem::StdShMem> = None;
-    let mut cov_shm_id_a: Option<String> = None;
-    let mut cov_shm_id_b: Option<String> = None;
+    // Try to allocate per-target coverage shared memory. Fall back to heap-backed maps on error.
+    let mut _cov_shmem_a: Option<libafl_bolts::shmem::StdShMem>;
+    let mut _cov_shmem_b: Option<libafl_bolts::shmem::StdShMem>;
+    let cov_shm_id_a: Option<String>;
+    let cov_shm_id_b: Option<String>;
 
     // Allocate coverage shmem for A (or fallback)
-    match crate::driver::shmem::try_alloc_cov_shmem_with_ptr(
+    match crate::observers::shmem::rv_shmem::try_alloc_cov_shmem_with_ptr(
         &mut shmem_provider,
         num_edges,
         "__DIFFRAY_TMP_COV_A",
@@ -156,15 +181,20 @@ pub fn main() {
             }
             _cov_shmem_a = Some(s_a);
         }
-        Err(_) => {
-            // fallback: create heap-backed first observer
-            let (a, _, _) = observers::coverage_helpers::make_map_observers(num_edges);
-            map_observer_a = a;
+        Err(e) => {
+            error(
+                "main",
+                &format!(
+                    "Failed to allocate coverage shmem for A ({}). Aborting to avoid inconsistent observer state.",
+                    e
+                ),
+            );
+            std::process::exit(1);
         }
     }
 
     // Allocate coverage shmem for B (or fallback)
-    match crate::driver::shmem::try_alloc_cov_shmem_with_ptr(
+    match crate::observers::shmem::rv_shmem::try_alloc_cov_shmem_with_ptr(
         &mut shmem_provider,
         num_edges,
         "__DIFFRAY_TMP_COV_B",
@@ -178,19 +208,25 @@ pub fn main() {
             }
             _cov_shmem_b = Some(s_b);
         }
-        Err(_) => {
-            // fallback: create heap-backed second observer
-            let (_, b, _) = observers::coverage_helpers::make_map_observers(num_edges);
-            map_observer_b = b;
+        Err(e) => {
+            error(
+                "main",
+                &format!(
+                    "Failed to allocate coverage shmem for B ({}). Aborting to avoid inconsistent observer state.",
+                    e
+                ),
+            );
+            std::process::exit(1);
         }
     }
 
-    // Objective buffer: combine A and B maps into a heap-backed buffer of size 2*num_edges
+    // Objective buffer: combine A and B maps into a heap-backed buffer of size 2 * num_edges
     let objective_len = num_edges.checked_mul(2).unwrap_or(num_edges);
-    let objective_ptr: *mut u8 = {
-        let boxed = vec![0u8; objective_len].into_boxed_slice();
-        Box::into_raw(boxed) as *mut u8
-    };
+    // Allocate the objective buffer and KEEP ownership in a Box so it will be
+    // automatically freed when dropped. We pass a raw pointer to the observer
+    // but retain the Box (moved into the updater later) to avoid leaks.
+    let mut objective_box = vec![0u8; objective_len].into_boxed_slice();
+    let objective_ptr: *mut u8 = objective_box.as_mut_ptr();
     unsafe {
         let obs_obj = StdMapObserver::differential_from_mut_ptr(
             "objective-edges",
@@ -200,31 +236,58 @@ pub fn main() {
         objective_observer = HitcountsMapObserver::new(obs_obj);
     }
 
-    // Build coverage feedbacks and compose with return-value feedback wrapper.
-    let (coverage_fb_a, coverage_fb_b) =
-        crate::driver::feedbacks::make_cov_wrapper(args.cov_mode, &map_observer_a, &map_observer_b);
-    let coverage_fb = feedback_and_fast!(coverage_fb_a, coverage_fb_b);
-    let mut feedback = feedback_or_fast!(coverage_fb, rv_wrapper);
+    // Build coverage/return-value feedbacks. Support rv-mode == Single by constructing
+    // a DiffrayFeedback that uses return-value observers only. Otherwise fall
+    // back to the SingleCov two-map feedback used previously.
+    let mut feedback = match args.mode {
+        crate::driver::args::RunMode::SinglePl => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_pl(
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
+        crate::driver::args::RunMode::ComboPl => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_pl(
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
+        crate::driver::args::RunMode::SingleRv => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_rv(
+                &rv_feedback_observer_a,
+                &rv_feedback_observer_b,
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
+        crate::driver::args::RunMode::ComboRv => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_rv(
+                &rv_feedback_observer_a,
+                &rv_feedback_observer_b,
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
+        crate::driver::args::RunMode::ComboCov => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_cov(
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
+        crate::driver::args::RunMode::SingleCov => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_cov(
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
+    };
 
     // Build objectives: diff objective (based on return values) and map objective
     let diff_obj = crate::feedbacks::DiffObjective::new(
         "zero_nonzero",
         &[&rv_exec_observer_a, &rv_exec_observer_b],
     );
-    let map_diff_obj_fb = crate::feedbacks::two_state_map::TwoStateMapFeedback::new_with_params(
-        &mut objective_observer,
-        1u8,
-        1u8,
-        true,
-        false,
-    );
-    let map_crash_obj_fb = crate::feedbacks::two_state_map::TwoStateMapFeedback::new_with_params(
-        &mut objective_observer,
-        1u8,
-        1u8,
-        true,
-        false,
-    );
+    let map_diff_obj_fb = libafl::feedbacks::MaxMapFeedback::new(&objective_observer);
     let mut objective = feedback_and_fast!(
         feedback_or_fast!(crate::feedbacks::CrashObjective::new(), diff_obj),
         map_diff_obj_fb
@@ -236,7 +299,7 @@ pub fn main() {
             Err(e) => match e {
                 libafl::Error::ShuttingDown => {
                     // restarter requested shutdown
-                    return;
+                    return Ok(());
                 }
                 _ => panic!("Failed to setup the restarter: {}", e),
             },
@@ -267,18 +330,15 @@ pub fn main() {
 
     // Initialize named metadata for map observers so corpus/state resume and
     // scheduler heuristics that rely on observer metadata work correctly.
-    // We create temporary TwoStateMapFeedback instances and use their
+    // We create a temporary DiffrayFeedback instance and use its
     // `StateInitializer` impl to register any named metadata in the `State`.
     {
-        use crate::feedbacks::two_state_map::TwoStateMapFeedback;
-
-        let mut tmp_a = TwoStateMapFeedback::new_with_params(&map_observer_a, 1u8, 1u8, true, true);
-        let _ = <crate::feedbacks::two_state_map::TwoStateMapFeedback<_> as
-            libafl::feedbacks::StateInitializer<_>>::init_state(&mut tmp_a, &mut state);
-
-        let mut tmp_b = TwoStateMapFeedback::new_with_params(&map_observer_b, 1u8, 1u8, true, true);
-        let _ = <crate::feedbacks::two_state_map::TwoStateMapFeedback<_> as
-            libafl::feedbacks::StateInitializer<_>>::init_state(&mut tmp_b, &mut state);
+        let mut tmp_maps_fb = crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_cov(
+            &map_observer_a,
+            &map_observer_b,
+        );
+        let _ = <crate::feedbacks::diffray_feedback::DiffrayFeedback<_> as
+            libafl::feedbacks::StateInitializer<_>>::init_state(&mut tmp_maps_fb, &mut state);
     }
 
     // Scheduler and fuzzer construction
@@ -288,8 +348,8 @@ pub fn main() {
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     // Build two Forkserver executors (A and B) and wrap them in a DiffExecutor
-    // Use a separate shmem provider for forkserver builders
-    let mut fs_shmem_provider = StdShMemProvider::new().expect("failed to create shmem provider");
+    // Reuse the existing shmem provider to reduce duplicate allocations/syscalls
+    // instead of creating a new `fs_shmem_provider`.
 
     // Some targets expect __AFL_SHM_ID in the environment; we write any allocated
     // coverage shmem ids into the parent's env so forkserver builders can pick them up.
@@ -298,16 +358,16 @@ pub fn main() {
     let mut rv_shmem_b: Option<StdShMem> = None;
     if args.prog_a.is_some() || args.prog_b.is_some() {
         // use the same provider to allocate small shmems; warn on errors (will fallback to TLS)
-        match crate::driver::shmem::try_new_shmem_and_write_env(
-            &mut fs_shmem_provider,
+        match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
+            &mut shmem_provider,
             4,
             "__DIFFRAY_RV_SHM_ID_A",
         ) {
             Ok(s) => rv_shmem_a = Some(s),
             Err(e) => warn("main", &format!("failed to alloc rv shmem A: {}", e)),
         }
-        match crate::driver::shmem::try_new_shmem_and_write_env(
-            &mut fs_shmem_provider,
+        match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
+            &mut shmem_provider,
             4,
             "__DIFFRAY_RV_SHM_ID_B",
         ) {
@@ -341,42 +401,46 @@ pub fn main() {
             ),
         );
         // If we allocated a rv shmem earlier, extract id/size and inject into child's env
-        // Determine persistent setting: CLI flag takes precedence over detected capability
-        let is_persistent_a = if args.persistent {
-            true
-        } else {
+        // Determine persistent setting: CLI flags take precedence over detected capability.
+        // Use `Args::persistent_enabled()` to encapsulate precedence between
+        // `--persistent` and `--no-persistent`.
+        let is_persistent_a = if args.persistent_enabled() {
             caps_a.persistent
+        } else {
+            false
         };
 
         let mut builder_a = ForkserverExecutor::builder()
             .program(prog_a.as_os_str().to_os_string())
-            .shmem_provider(&mut fs_shmem_provider)
+            .shmem_provider(&mut shmem_provider)
             .autotokens(&mut tokens)
             .is_persistent(is_persistent_a)
             .coverage_map_size(num_edges)
             .timeout(Duration::from_millis(args.timeout_ms));
 
-        // If a per-target coverage shmem was allocated, inject its id into the child's env
+        // Collect child envs to inject into the builder in a single pass.
+        let mut child_envs_a: Vec<(&str, String)> = Vec::new();
+
+        // If a per-target coverage shmem was allocated, add its id to the child env list
         if let Some(id) = cov_shm_id_a.as_ref() {
-            builder_a = builder_a.env("__AFL_SHM_ID", id.clone());
+            child_envs_a.push(("__AFL_SHM_ID", id.clone()));
             // Also log for diagnostics
             info("main", &format!("Injected __AFL_SHM_ID for A = {}", id));
         }
 
         if let Some(s) = rv_shmem_a.take() {
-            match crate::driver::shmem::extract_id_size_and_clear(&s, "__DIFFRAY_TMP_RV_A") {
+            match crate::observers::shmem::rv_shmem::extract_id_size_and_clear(
+                &s,
+                "__DIFFRAY_TMP_RV_A",
+            ) {
                 Ok((id, size)) => {
-                    // Inject into child builder using the extracted id/size
-                    builder_a = builder_a
-                        .env("__DIFFRAY_RV_SHM_ID_A", id.clone())
-                        .env("__DIFFRAY_RV_SHM_ID_A_SIZE", size.clone());
-                    // Remove any parent-process env pollution to avoid child inheritance
-                    let _ = std::env::remove_var("__DIFFRAY_RV_SHM_ID_A");
-                    let _ = std::env::remove_var("__DIFFRAY_RV_SHM_ID_A_SIZE");
+                    // Queue envs for child builder injection using the extracted id/size
+                    child_envs_a.push(("__DIFFRAY_RV_SHM_ID_A", id.clone()));
+                    child_envs_a.push(("__DIFFRAY_RV_SHM_ID_A_SIZE", size.clone()));
                     info(
                         "main",
                         &format!(
-                            "Injected __DIFFRAY_RV_SHM_ID_A into builder (id={} size={})",
+                            "Prepared __DIFFRAY_RV_SHM_ID_A for builder (id={} size={})",
                             id, size
                         ),
                     );
@@ -394,13 +458,25 @@ pub fn main() {
 
         // If per-target cov shmem was allocated, write __AFL_SHM_ID into parent env
         if let Some(s) = _cov_shmem_a.as_ref() {
-            if let Err(e) = crate::driver::shmem::write_shmem_to_env(s, "__AFL_SHM_ID") {
+            if let Err(e) = crate::observers::shmem::rv_shmem::write_shmem_to_env(s, "__AFL_SHM_ID")
+            {
                 warn(
                     "main",
                     &format!("failed to write __AFL_SHM_ID for A: {}", e),
                 );
             }
             info("main", "Wrote __AFL_SHM_ID into parent env for executor A");
+        }
+
+        // Apply collected child envs to the builder in one pass to reduce repetitive
+        // builder.env calls scattered across the code.
+        for (k, v) in child_envs_a.drain(..) {
+            builder_a = builder_a.env(k, v);
+        }
+
+        // Clear any parent env pollution that may remain (single loop instead of scattered calls)
+        for key in &["__DIFFRAY_RV_SHM_ID_A", "__DIFFRAY_RV_SHM_ID_A_SIZE"] {
+            let _ = std::env::remove_var(key);
         }
 
         // Build executor A using dynamic map sizing; exit on failure.
@@ -444,40 +520,42 @@ pub fn main() {
             ),
         );
 
-        // Determine persistent setting for B: CLI flag takes precedence
-        let is_persistent_b = if args.persistent {
-            true
-        } else {
+        // Determine persistent setting for B: CLI flags take precedence over detected capability.
+        let is_persistent_b = if args.persistent_enabled() {
             caps_b.persistent
+        } else {
+            false
         };
 
         let mut builder_b = ForkserverExecutor::builder()
             .program(prog_b.as_os_str().to_os_string())
-            .shmem_provider(&mut fs_shmem_provider)
+            .shmem_provider(&mut shmem_provider)
             .autotokens(&mut tokens)
             .is_persistent(is_persistent_b)
             .coverage_map_size(num_edges)
             .timeout(Duration::from_millis(args.timeout_ms));
 
-        // If a per-target coverage shmem was allocated, inject its id into the child's env
+        // Collect child envs for B and inject in a single pass
+        let mut child_envs_b: Vec<(&str, String)> = Vec::new();
+
+        // If a per-target coverage shmem was allocated, add its id to the child env list
         if let Some(id) = cov_shm_id_b.as_ref() {
-            builder_b = builder_b.env("__AFL_SHM_ID", id.clone());
+            child_envs_b.push(("__AFL_SHM_ID", id.clone()));
             info("main", &format!("Injected __AFL_SHM_ID for B = {}", id));
         }
 
         if let Some(s) = rv_shmem_b.take() {
-            match crate::driver::shmem::extract_id_size_and_clear(&s, "__DIFFRAY_TMP_RV_B") {
+            match crate::observers::shmem::rv_shmem::extract_id_size_and_clear(
+                &s,
+                "__DIFFRAY_TMP_RV_B",
+            ) {
                 Ok((id, size)) => {
-                    builder_b = builder_b
-                        .env("__DIFFRAY_RV_SHM_ID_B", id.clone())
-                        .env("__DIFFRAY_RV_SHM_ID_B_SIZE", size.clone());
-                    // Remove any parent-process env pollution to avoid child inheritance
-                    let _ = std::env::remove_var("__DIFFRAY_RV_SHM_ID_B");
-                    let _ = std::env::remove_var("__DIFFRAY_RV_SHM_ID_B_SIZE");
+                    child_envs_b.push(("__DIFFRAY_RV_SHM_ID_B", id.clone()));
+                    child_envs_b.push(("__DIFFRAY_RV_SHM_ID_B_SIZE", size.clone()));
                     info(
                         "main",
                         &format!(
-                            "Injected __DIFFRAY_RV_SHM_ID_B into builder (id={} size={})",
+                            "Prepared __DIFFRAY_RV_SHM_ID_B for builder (id={} size={})",
                             id, size
                         ),
                     );
@@ -494,13 +572,24 @@ pub fn main() {
 
         // If per-target cov shmem was allocated, write __AFL_SHM_ID into parent env
         if let Some(s) = _cov_shmem_b.as_ref() {
-            if let Err(e) = crate::driver::shmem::write_shmem_to_env(s, "__AFL_SHM_ID") {
+            if let Err(e) = crate::observers::shmem::rv_shmem::write_shmem_to_env(s, "__AFL_SHM_ID")
+            {
                 warn(
                     "main",
                     &format!("failed to write __AFL_SHM_ID for B: {}", e),
                 );
             }
             info("main", "Wrote __AFL_SHM_ID into parent env for executor B");
+        }
+
+        // Apply collected child envs to the builder in one pass
+        for (k, v) in child_envs_b.drain(..) {
+            builder_b = builder_b.env(k, v);
+        }
+
+        // Clear any parent env pollution that may remain
+        for key in &["__DIFFRAY_RV_SHM_ID_B", "__DIFFRAY_RV_SHM_ID_B_SIZE"] {
+            let _ = std::env::remove_var(key);
         }
 
         match builder_b.build_dynamic_map(map_observer_b, tuple_list!(rv_exec_observer_b)) {
@@ -526,10 +615,13 @@ pub fn main() {
     // ensures they remain alive for the duration of the run.
     let shmem_a = _cov_shmem_a.take();
     let shmem_b = _cov_shmem_b.take();
-    let updater = observers::coverage_combiner::ShmemComboUpdater::new(
+    // Move the objective backing into the updater so it owns and will free it.
+    let updater = observers::shmem::ShmemComboUpdater::new(
         "shmem_combo_updater",
         num_edges,
+        // combined_ptr is ignored when combined_backing is Some
         objective_ptr,
+        Some(objective_box),
         shmem_a,
         shmem_b,
     );
@@ -549,7 +641,10 @@ pub fn main() {
         if let Some(input_dir) = &args.input_dir {
             if input_dir.exists() && input_dir.is_dir() {
                 if args.verbose > 0 {
-                    info("main", &format!("从目录加载初始种子: {:?}", input_dir));
+                    info(
+                        "main",
+                        &format!("Loading initial seeds from directory: {:?}", input_dir),
+                    );
                 }
                 state
                     .load_initial_inputs(
@@ -563,13 +658,16 @@ pub fn main() {
                 if args.verbose > 0 {
                     info(
                         "main",
-                        &format!("成功导入 {} 个输入文件", state.corpus().count()),
+                        &format!(
+                            "Successfully imported {} input files",
+                            state.corpus().count()
+                        ),
                     );
                 }
             } else {
                 error(
                     "main",
-                    &format!("错误: 指定的种子目录不存在或不是目录: {:?}", input_dir),
+                    &format!("Error: specified seed directory does not exist or is not a directory: {:?}", input_dir),
                 );
                 std::process::exit(1);
             }
@@ -577,7 +675,7 @@ pub fn main() {
             if args.verbose > 0 {
                 warn(
                     "main",
-                    "State要求载入初始种子，但未提供 -i 路径，改为生成随机初始输入",
+                    "State requires initial seeds but -i was not provided; generating random initial inputs instead",
                 );
             }
             state
@@ -592,7 +690,10 @@ pub fn main() {
         }
     } else {
         if args.verbose > 0 {
-            info("main", "未要求载入初始种子，生成随机初始输入");
+            info(
+                "main",
+                "No initial seeds required; generating random inputs",
+            );
         }
         state
             .generate_initial_inputs(
@@ -611,16 +712,15 @@ pub fn main() {
 
     // Setup a mutational stage with a basic bytes mutator
     let mutator = HavocScheduledMutator::new(havoc_mutations());
+    // Stages: only the mutational stage
     let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
     if args.verbose > 0 {
-        info("main", "开始模糊测试...");
+        info("main", "Starting fuzzing...");
     }
-
-    // 根据配置决定使用哪种模糊测试循环
     // Unlimited fuzz loop: use the standard fuzz_loop (no time/iteration limits)
     if args.verbose > 0 {
-        info("main", "运行无限制的模糊测试循环");
+        info("main", "Running unlimited fuzzing loop");
     }
 
     // This call will run indefinitely (or until the restarter/manager stops it)
@@ -630,7 +730,10 @@ pub fn main() {
         &mut state,
         &mut mgr,
     ) {
-        Ok(_) => {}
-        Err(e) => error("main", &format!("模糊测试循环中出现错误: {}", e)),
+        Ok(_) => return Ok(()),
+        Err(e) => {
+            error("main", &format!("Error in fuzz loop: {}", e));
+            return Err(Box::new(e));
+        }
     }
 }

@@ -102,6 +102,14 @@ pub struct Args {
         help = "Explicitly disable persistent mode (equivalent to --persistent=false)."
     )]
     pub no_persistent: bool,
+    /// Disable the simple stdout monitor. By default a SimpleMonitor that prints to stdout
+    /// is included alongside the on-disk JSON monitor. Use this flag to suppress that stdout
+    /// monitor (useful for background/CI runs).
+    #[arg(
+        long = "no-simple-monitor",
+        help = "Disable the simple stdout monitor (SimpleMonitor)"
+    )]
+    pub no_simple_monitor: bool,
 }
 
 impl Args {
@@ -112,5 +120,11 @@ impl Args {
         } else {
             self.persistent
         }
+    }
+
+    /// Return whether the simple stdout monitor should be enabled. The `--no-simple-monitor`
+    /// flag takes precedence.
+    pub fn simple_monitor_enabled(&self) -> bool {
+        !self.no_simple_monitor
     }
 }

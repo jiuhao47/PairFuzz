@@ -569,7 +569,7 @@ where
         let cap: usize = std::env::var("DIFFRAY_TWOSTATE_CAPACITY")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(65536usize);
+            .unwrap_or(crate::driver::constants::MAP_SIZE);
         let bits_words = (cap + 63) / 64;
         for name in self.names.iter() {
             state.add_named_metadata_checked(

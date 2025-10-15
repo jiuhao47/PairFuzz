@@ -56,7 +56,7 @@ where
     for (idx, handle) in this.map_refs.iter().enumerate() {
         let name = &this.names[idx];
         append_metadata_debug_log(
-            "multi_two_state_map",
+            "metadata",
             &format!("enter append_metadata() for '{}'(idx={})", name, idx),
         );
 
@@ -65,7 +65,7 @@ where
             Some(h) => h.as_ref(),
             None => {
                 crate::utils::logging::warn(
-                    "multi_two_state_map",
+                    "metadata",
                     &format!(
                         "append_metadata: observer '{}' not present; skipping metadata append.",
                         name
@@ -240,7 +240,7 @@ where
         if debug_enabled && len > 0 {
             let ratio = (covered_ever as f64) / (len as f64);
             append_metadata_debug_log(
-                "multi_two_state_map",
+                "metadata",
                 &format!(
                     "append_metadata: stats ratio (ever-seen) for '{}' (covered/len) = {}/{} ({:.6})",
                     name, covered_ever, len, ratio
@@ -257,7 +257,7 @@ where
                 if !increased.is_empty() {
                     let delta = covered_ever as isize - covered_ever_before as isize;
                     append_metadata_debug_log(
-                        "multi_two_state_map",
+                        "metadata",
                         &format!(
                             "append_metadata: covered delta for '{}' = {:+} ({} -> {})",
                             name, delta, covered_ever_before, covered_ever
@@ -309,12 +309,12 @@ where
                             let omitted = noteworthy.len() - cap;
                             out.push_str(&format!("\n  - ... (omitted {} entries)", omitted));
                         }
-                        append_metadata_debug_log("multi_two_state_map", &out);
+                        append_metadata_debug_log("metadata", &out);
                     }
 
                     if covered_only_count > 0 {
                         append_metadata_debug_log(
-                            "multi_two_state_map",
+                            "metadata",
                             &format!(
                                 "append_metadata: covered-only count for '{}' = {}",
                                 name, covered_only_count
@@ -392,7 +392,7 @@ where
                     .map(|md| md.seen.len())
                     .unwrap_or(0);
                 append_metadata_debug_log(
-                    "multi_two_state_map",
+                    "metadata",
                     &format!(
                         "append_metadata: NEW ReturnValueSingle '{}' -> val={:?} (previously seen={})",
                         stats_name, val_opt, prev_count
@@ -438,7 +438,7 @@ where
                     .map(|md| md.seen.len())
                     .unwrap_or(0);
                 append_metadata_debug_log(
-                    "multi_two_state_map",
+                    "metadata",
                     &format!(
                         "append_metadata: NEW SinglePL '{}' -> count={} (previously seen={})",
                         stats_name, count, prev_count
@@ -500,7 +500,7 @@ where
             .unwrap_or(0);
         let fp = crate::feedbacks::hist_stats::fingerprint(&HistKey::Combo(key.clone()));
         append_metadata_debug_log(
-            "multi_two_state_map",
+            "metadata",
             &format!(
                 "append_metadata: NEW ComboCov '{}' -> fp=0x{:016x} (previously seen={})",
                 stats_name, fp, prev_count
@@ -550,7 +550,7 @@ where
                 .map(|md| md.seen.len())
                 .unwrap_or(0);
             append_metadata_debug_log(
-                "multi_two_state_map",
+                "metadata",
                 &format!(
                     "append_metadata: NEW ComboRv '{}' -> key={:?} (previously seen={})",
                     stats_name,
@@ -614,7 +614,7 @@ where
             .map(|md| md.seen.len())
             .unwrap_or(0);
         append_metadata_debug_log(
-            "multi_two_state_map",
+            "metadata",
             &format!(
                 "append_metadata: NEW ComboPL '{}' -> counts={:?} (previously seen combos={})",
                 stats_name,

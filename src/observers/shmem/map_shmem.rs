@@ -96,25 +96,6 @@ impl ShmemComboUpdater {
             shmem_b,
         }
     }
-
-    /// Helper constructor wrapper that logs creation when debug env is enabled.
-    pub fn new_with_log(
-        name: &'static str,
-        num_edges: usize,
-        combined_ptr: *mut u8,
-        shmem_a: Option<libafl_bolts::shmem::StdShMem>,
-        shmem_b: Option<libafl_bolts::shmem::StdShMem>,
-    ) -> Self {
-        let upd = Self::new(name, num_edges, combined_ptr, shmem_a, shmem_b);
-        combiner_debug_log(
-            "coverage_combiner",
-            &format!(
-                "ShmemComboUpdater::new: created name={} num_edges={} combined_len={}",
-                name, num_edges, upd.combined_len
-            ),
-        );
-        upd
-    }
 }
 
 impl Named for ShmemComboUpdater {

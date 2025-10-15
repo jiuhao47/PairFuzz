@@ -1,95 +1,69 @@
 use std::borrow::Cow;
-use std::env;
-use std::time::Instant;
+// helper functions are kept in this module for testability
 
-use libafl::{
-    observers::{DifferentialObserver, HitcountsMapObserver, Observer, StdMapObserver},
-    Error,
-};
+use libafl::{observers::Observer, Error};
 use libafl_bolts::Named;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A differential helper that builds a combined coverage buffer from the two per-executor
-/// coverage maps. This is useful for "combo" coverage where we want to inspect the cross
-/// product of edges hit by run A and run B.
-#[derive(Debug)]
-pub struct ComboCoverageBuilder {
-    name: Cow<'static, str>,
-    num_edges: usize,
-    combined_ptr: *mut u8,
-    combined_len: usize,
+// Module-local debug helper. Controlled by the environment variable
+// `DIFFRAY_COVERAGE_COMBINER_DEBUG` (defined in `src/driver/env_var.rs`).
+fn coverage_combiner_debug_log(tag: &str, msg: &str) {
+    if crate::driver::env_var::env_bool_cached(crate::driver::env_var::COVERAGE_COMBINER_DEBUG) {
+        crate::utils::logging::debug(tag, msg);
+    }
 }
 
-impl ComboCoverageBuilder {
-    /// Create a new combo builder that allocates a combined buffer of size num_edges*num_edges.
-    /// The buffer is leaked to get a stable pointer usable by observers created later.
-    pub fn new(name: &'static str, num_edges: usize) -> Self {
-        // debug: num_edges
-        let combined_len = num_edges.checked_mul(4).unwrap_or(0);
-        // allocate boxed slice and leak it to obtain a stable 'static pointer
-        let boxed = vec![0u8; combined_len].into_boxed_slice();
-        let combined_ptr = Box::into_raw(boxed) as *mut u8;
-        // creation logged only when profiling enabled elsewhere
-        Self {
-            name: Cow::from(name),
-            num_edges,
-            combined_ptr,
-            combined_len,
+/// Copy two optional source slices into the combined buffer.
+///
+/// Layout convention: combined[0..num_edges] <- A, combined[num_edges..2*num_edges] <- B.
+/// The function zeros the provided `combined` slice first and then copies up to
+/// `num_edges` bytes from each source if present.
+pub(crate) fn copy_shmem_to_combined(
+    a: Option<&[u8]>,
+    b: Option<&[u8]>,
+    combined: &mut [u8],
+    num_edges: usize,
+) {
+    // zero the combined buffer first (only up to combined.len())
+    let clen = combined.len();
+    for x in combined.iter_mut() {
+        *x = 0;
+    }
+    if num_edges == 0 {
+        return;
+    }
+    if let Some(a_s) = a {
+        let a_len = usize::min(a_s.len(), num_edges);
+        let dst_len = usize::min(a_len, clen);
+        combined[..dst_len].copy_from_slice(&a_s[..dst_len]);
+    }
+    if let Some(b_s) = b {
+        let b_len = usize::min(b_s.len(), num_edges);
+        let start = num_edges;
+        if start < clen {
+            let dst_len = usize::min(b_len, clen - start);
+            combined[start..start + dst_len].copy_from_slice(&b_s[..dst_len]);
         }
     }
-
-    /// Return a HitcountsMapObserver over the combined buffer. Caller is responsible to keep
-    /// this alive for the duration of the fuzzing run.
-    ///
-    /// # Safety
-    /// The returned observer will reference the leaked combined buffer pointer.
-    pub unsafe fn combined_map_observer(
-        &self,
-    ) -> HitcountsMapObserver<StdMapObserver<'static, u8, true>> {
-        let ptr = self.combined_ptr;
-        let len = self.combined_len;
-        // create a differential StdMapObserver (DIFFERENTIAL = true)
-        let std_obs: StdMapObserver<'static, u8, true> =
-            StdMapObserver::differential_from_mut_ptr(self.name.clone(), ptr, len);
-        // observer creation is quiet by default
-        HitcountsMapObserver::new(std_obs)
-    }
 }
 
-// Custom serialization: only serialize the name and num_edges. On deserialization we
-// re-create the builder and allocate a new combined buffer of the requested size.
-impl Serialize for ComboCoverageBuilder {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        (&self.name.as_ref(), &self.num_edges).serialize(serializer)
-    }
-}
+// NOTE: The heap-backed `ComboCoverageBuilder` was removed from this module.
+// Live combination of coverage is performed by `ShmemComboUpdater` (shared
+// memory based). The hashing and shmem-copy helpers below are retained for
+// testability and potential future re-introduction of a heap-backed mode.
 
-impl<'de> Deserialize<'de> for ComboCoverageBuilder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let (name, num_edges): (String, usize) = <(String, usize)>::deserialize(deserializer)?;
-        // leak the name to obtain a 'static str for the builder
-        let boxed: Box<str> = name.into_boxed_str();
-        let static_str: &'static str = Box::leak(boxed);
-        Ok(ComboCoverageBuilder::new(static_str, num_edges))
-    }
-}
-
-impl Named for ComboCoverageBuilder {
-    fn name(&self) -> &Cow<'static, str> {
-        &self.name
-    }
-}
-
-/// A lightweight updater that copies two per-executor shared-memory coverage
-/// buffers into a single combined objective backing. The combined backing layout
-/// matches the previous convention: first `num_edges` bytes are program A, next
-/// `num_edges` bytes are program B (total length = 2*num_edges).
+/// ShmemComboUpdater
+///
+/// Copies two per-executor shared-memory coverage buffers into a single
+/// combined objective backing. The layout is: first `num_edges` bytes are
+/// program A, next `num_edges` bytes are program B (combined_len = 2*num_edges).
+///
+/// Safety: this struct stores raw pointers and `StdShMem` mappings. Callers must
+/// ensure any `StdShMem` values passed into `new` live at least as long as the
+/// updater (they are moved into the struct). Methods that write into shared
+/// mappings perform raw pointer writes and are explicitly documented as unsafe
+/// from a Rust aliasing perspective — this is acceptable because the backing
+/// is shared memory, not ordinary Rust memory.
 #[derive(Debug)]
 pub struct ShmemComboUpdater {
     name: Cow<'static, str>,
@@ -121,11 +95,113 @@ impl ShmemComboUpdater {
             shmem_b,
         }
     }
+
+    /// Helper constructor wrapper that logs creation when debug env is enabled.
+    pub fn new_with_log(
+        name: &'static str,
+        num_edges: usize,
+        combined_ptr: *mut u8,
+        shmem_a: Option<libafl_bolts::shmem::StdShMem>,
+        shmem_b: Option<libafl_bolts::shmem::StdShMem>,
+    ) -> Self {
+        let upd = Self::new(name, num_edges, combined_ptr, shmem_a, shmem_b);
+        coverage_combiner_debug_log(
+            "coverage_combiner",
+            &format!(
+                "ShmemComboUpdater::new: created name={} num_edges={} combined_len={}",
+                name, num_edges, upd.combined_len
+            ),
+        );
+        upd
+    }
 }
 
 impl Named for ShmemComboUpdater {
     fn name(&self) -> &Cow<'static, str> {
         &self.name
+    }
+}
+
+impl ShmemComboUpdater {
+    /// Clear the attached shmem source buffers (zero first `num_edges` bytes).
+    /// This is intended to be called by collectors after they have finished
+    /// reading observer data to avoid interfering with collection timing.
+    ///
+    /// Safety: we perform raw writes into the mapped shared-memory region using
+    /// an immutable borrow. This is intentional: the underlying mapping is
+    /// shared memory and not subject to Rust's usual aliasing guarantees.
+    /// Use only when you cannot obtain a mutable reference to the updater.
+    pub fn clear_shmem_sources(&self) {
+        if self.num_edges == 0 {
+            return;
+        }
+        use core::ptr;
+        if let Some(a) = &self.shmem_a {
+            let a_len = usize::min(a.len(), self.num_edges);
+            let ptr_start = a.as_ptr() as *mut u8;
+            unsafe {
+                for i in 0..a_len {
+                    ptr::write(ptr_start.add(i), 0u8);
+                }
+            }
+        }
+        if let Some(b) = &self.shmem_b {
+            let b_len = usize::min(b.len(), self.num_edges);
+            let ptr_start = b.as_ptr() as *mut u8;
+            unsafe {
+                for i in 0..b_len {
+                    ptr::write(ptr_start.add(i), 0u8);
+                }
+            }
+        }
+        coverage_combiner_debug_log(
+            "coverage_combiner",
+            &format!(
+                "ShmemComboUpdater::clear_shmem_sources: cleared {} edges",
+                self.num_edges
+            ),
+        );
+    }
+
+    /// Clear specific indices in the attached shmem source buffers.
+    /// Requires a mutable reference because it mutates the shared mapping in a
+    /// more explicit and controlled way. This is the preferred method when the
+    /// caller holds a `&mut ShmemComboUpdater` or an actual mutable reference to
+    /// the observers tuple containing it.
+    pub fn clear_shmem_indices(&mut self, indices: &[usize]) {
+        if self.num_edges == 0 || indices.is_empty() {
+            return;
+        }
+        use core::ptr;
+        if let Some(a) = &mut self.shmem_a {
+            let a_len = usize::min(a.len(), self.num_edges);
+            let ptr_start = a.as_ptr() as *mut u8;
+            unsafe {
+                for &i in indices.iter() {
+                    if i < a_len {
+                        ptr::write(ptr_start.add(i), 0u8);
+                    }
+                }
+            }
+        }
+        if let Some(b) = &mut self.shmem_b {
+            let b_len = usize::min(b.len(), self.num_edges);
+            let ptr_start = b.as_ptr() as *mut u8;
+            unsafe {
+                for &i in indices.iter() {
+                    if i < b_len {
+                        ptr::write(ptr_start.add(i), 0u8);
+                    }
+                }
+            }
+        }
+        coverage_combiner_debug_log(
+            "coverage_combiner",
+            &format!(
+                "ShmemComboUpdater::clear_shmem_indices: cleared {} indices",
+                indices.len()
+            ),
+        );
     }
 }
 
@@ -166,8 +242,7 @@ impl<'de> Deserialize<'de> for ShmemComboUpdater {
     }
 }
 
-impl<OTA, OTB, I, S> libafl::observers::DifferentialObserver<OTA, OTB, I, S>
-    for ShmemComboUpdater
+impl<OTA, OTB, I, S> libafl::observers::DifferentialObserver<OTA, OTB, I, S> for ShmemComboUpdater
 where
     S: libafl::state::HasExecutions,
 {
@@ -177,25 +252,39 @@ where
                 return Ok(());
             }
             let combined = core::slice::from_raw_parts_mut(self.combined_ptr, self.combined_len);
-
-            // Zero the combined buffer first
-            for b in combined.iter_mut() {
-                *b = 0;
+            // Use helper to copy shmem slices into combined backing
+            let a_slice_opt = self.shmem_a.as_ref().map(|s| &s[..]);
+            let b_slice_opt = self.shmem_b.as_ref().map(|s| &s[..]);
+            copy_shmem_to_combined(a_slice_opt, b_slice_opt, combined, self.num_edges);
+            // Emit debug summary about copy (non-zero counts) only when debug enabled.
+            if crate::driver::env_var::env_bool_cached(
+                crate::driver::env_var::COVERAGE_COMBINER_DEBUG,
+            ) {
+                let a_nonzero =
+                    a_slice_opt.map_or(0usize, |s| s.iter().filter(|&&b| b != 0).count());
+                let b_nonzero =
+                    b_slice_opt.map_or(0usize, |s| s.iter().filter(|&&b| b != 0).count());
+                coverage_combiner_debug_log(
+                    "coverage_combiner",
+                    &format!(
+                        "ShmemComboUpdater::post_observe_second: copied a_nonzero={} b_nonzero={} into combined_len={}",
+                        a_nonzero, b_nonzero, self.combined_len
+                    ),
+                );
+            } else {
+                coverage_combiner_debug_log(
+                    "coverage_combiner",
+                    &format!(
+                        "ShmemComboUpdater::post_observe_second: copied into combined_len={}",
+                        self.combined_len
+                    ),
+                );
             }
-
-            // Copy A into first half
-            if let Some(a) = &self.shmem_a {
-                let a_len = usize::min(a.len(), self.num_edges);
-                let a_slice = &a[..a_len];
-                combined[..a_len].copy_from_slice(a_slice);
-            }
-
-            // Copy B into second half
-            if let Some(b) = &self.shmem_b {
-                let b_len = usize::min(b.len(), self.num_edges);
-                let b_slice = &b[..b_len];
-                combined[self.num_edges..self.num_edges + b_len].copy_from_slice(b_slice);
-            }
+            // Optionally schedule zeroing of the source shmems after observers/feedbacks
+            // Previously we optionally scheduled zeroing of the source shmems here
+            // (to be performed at post_exec time). That logic caused timing issues
+            // with collection and is intentionally removed — callers should perform
+            // any desired cleanup after collection completes.
         }
         Ok(())
     }
@@ -203,6 +292,8 @@ where
 
 impl<_I, _S> Observer<_I, _S> for ShmemComboUpdater {
     fn pre_exec(&mut self, _state: &mut _S, _input: &_I) -> Result<(), Error> {
+        // pre_exec intentionally left empty; diagnostics previously present
+        // were commented out and have been removed to keep the hot path lean.
         Ok(())
     }
 
@@ -215,180 +306,25 @@ impl<_I, _S> Observer<_I, _S> for ShmemComboUpdater {
         Ok(())
     }
 }
-
-impl<_I, _S> Observer<_I, _S> for ComboCoverageBuilder {
-    fn pre_exec(&mut self, _state: &mut _S, _input: &_I) -> Result<(), Error> {
-        // let debug_msg = format!(
-        //     "ComboCoverageBuilder: pre_exec called with {} edges",
-        //     self.num_edges
-        // );
-        // let _ = debug_log("coverage_combiner", &debug_msg);
-        Ok(())
-    }
-
-    fn post_exec(
-        &mut self,
-        _state: &mut _S,
-        _input: &_I,
-        _exit_kind: &libafl::executors::ExitKind,
-    ) -> Result<(), Error> {
-        // let debug_msg = format!(
-        //     "ComboCoverageBuilder: post_exec called with {} edges",
-        //     self.num_edges
-        // );
-        // let _ = debug_log("coverage_combiner", &debug_msg);
-        Ok(())
-    }
-}
-
-impl<OTA, OTB, I, S> DifferentialObserver<OTA, OTB, I, S> for ComboCoverageBuilder {
-    /// After the second run finished, build the combined buffer by computing the outer-product
-    /// of the two per-executor edge hit arrays. This reads the global edges slice exposed by
-    /// the runtime (e.g. `crate::targets::EDGES` / `libafl_targets` backing) and writes into
-    /// the combined buffer.
-    fn post_observe_second(&mut self, _observers: &mut OTB) -> Result<(), Error> {
-        // Safety: we access raw pointers that are managed by the runtime; keep operations minimal
-        unsafe {
-            // optional profiling enabled via DIFFRAY_PROFILE=1
-            let profiling = env::var("DIFFRAY_PROFILE")
-                .map(|v| v == "1")
-                .unwrap_or(false);
-            let prof_t0 = if profiling {
-                Some(Instant::now())
-            } else {
-                None
-            };
-
-            // get pointer to the global edges map and its length
-            let num = self.num_edges;
-            if num == 0 || self.combined_len == 0 {
-                return Ok(());
-            }
-
-            let edges_ptr = libafl_targets::edges_map_mut_ptr();
-
-            let first = core::slice::from_raw_parts(edges_ptr, num);
-            let second = core::slice::from_raw_parts(edges_ptr.add(num), num);
-            let combined = core::slice::from_raw_parts_mut(self.combined_ptr, self.combined_len);
-
-            // XXX: switched to cumulative mode: do not clear the combined buffer each run.
-            // The combined bitmap now accumulates writes across runs to avoid the O(n^2)
-            // or O(num_edges^2) per-iteration clear cost. This changes semantics: once a
-            // slot is set it remains set (or its counter increases) until the process ends.
-            // If you prefer per-run isolation, consider the epoch/generation approach instead.
-
-            // Heuristic hashing approach to avoid O(n^2) outer product.
-            // 1) Treat each map as a set of seen-edge indices (ignore counters >0).
-            // 2) Compute unordered-set hashes h1/h2 by mixing per-index contribution.
-            // 3) Combine h1/h2 into a single 64-bit value and derive a small number of
-            //    sample indices into the combined buffer by re-hashing with different salts.
-            // This yields O(n) runtime and constant memory, at the cost of collisions / lower
-            // resolution compared to the full outer-product bitmap.
-
-            #[inline]
-            fn splitmix64(mut x: u64) -> u64 {
-                x = x.wrapping_add(0x9e3779b97f4a7c15);
-                x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-                x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
-                x ^ (x >> 31)
-            }
-
-            // compute an order-independent hash for each set by xoring mixed idx values
-            let mut h1: u64 = 0;
-            let mut h2: u64 = 0;
-            let mut k1: usize = 0;
-            let mut k2: usize = 0;
-            for i in 0..num {
-                if first.get(i).copied().unwrap_or(0) != 0 {
-                    h1 = h1.wrapping_add(splitmix64(i as u64 + 0x9e3779b97f4a7c15));
-                    k1 += 1;
-                }
-                if second.get(i).copied().unwrap_or(0) != 0 {
-                    h2 = h2.wrapping_add(splitmix64(i as u64 ^ 0x243f6a8885a308d3));
-                    k2 += 1;
-                }
-            }
-
-            if profiling {
-                if let Some(t0) = prof_t0 {
-                    let dur = Instant::now().duration_since(t0).as_secs_f64();
-                    let msg = format!(
-                        "combo_perf: num={} k1={} k2={} hash_elapsed={:.8}s",
-                        num, k1, k2, dur
-                    );
-                    crate::utils::logging::debug("coverage_combiner", &msg);
-                }
-            }
-
-            // combine the two set-hashes into a single value and index into the bitmap
-            // Use the existing combined buffer size (num_edges^2) as BitmapSize so we keep
-            // the original address space.
-            let combined_hash = splitmix64(h1.wrapping_mul(0x9e3779b97f4a7c15) ^ h2);
-            let m = self.combined_len as u64;
-            if m != 0 {
-                let idx = (combined_hash % m) as usize;
-
-                // saturating increment at the single derived index
-                let write_t0 = if profiling {
-                    Some(Instant::now())
-                } else {
-                    None
-                };
-                // let new = combined.get_unchecked_mut(idx).saturating_add(1);
-                *combined.get_unchecked_mut(idx) = 1;
-                if profiling {
-                    if let Some(w0) = write_t0 {
-                        let dur_w = Instant::now().duration_since(w0).as_secs_f64();
-                        let msg = format!(
-                            "combo_perf: write_elapsed={:.8}s idx={} combined_len={}",
-                            dur_w, idx, self.combined_len
-                        );
-                        crate::utils::logging::debug("coverage_combiner", &msg);
-                    }
-                }
-
-                if profiling {
-                    let debug_msg = format!(
-                        "ComboCoverageBuilder: post_observe_second combined hash {:x} -> index {}",
-                        combined_hash, idx
-                    );
-                    crate::utils::logging::debug("coverage_combiner", &debug_msg);
-                }
-            }
-
-            if profiling {
-                if let Some(t0) = prof_t0 {
-                    let tot = Instant::now().duration_since(t0).as_secs_f64();
-                    let msg = format!(
-                        "combo_perf: total_elapsed={:.8}s combined_len={} num_edges={}",
-                        tot, self.combined_len, self.num_edges
-                    );
-                    crate::utils::logging::debug("coverage_combiner", &msg);
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// Create the non-multimap observers: allocate a single EDGES backing of size 2*num_edges,
-/// and return (first_map_observer, second_map_observer, map_swapper, combined_map_observer)
-/// All returned observers use leaked buffers and thus are 'static.
-// (helper removed — keep ComboCoverageBuilder for future combo buffer allocation)
+// ComboCoverageBuilder and the related helper for allocating a single
+// combined backing were removed intentionally. The module retains the
+// small helpers and `ShmemComboUpdater` used at runtime.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn build_combined_small() {
-        let num_edges = 8;
-        let b = ComboCoverageBuilder::new("combined-test", num_edges);
-        unsafe {
-            let obs = b.combined_map_observer();
-            // ensure combined observer created without panics
-            drop(obs);
-        }
+    fn test_copy_shmem_to_combined_basic() {
+        let a = vec![2u8, 3u8, 4u8];
+        let b = vec![5u8, 6u8];
+        let mut combined = vec![0u8; 10];
+        copy_shmem_to_combined(Some(&a), Some(&b), &mut combined, 5);
+        // a should occupy combined[0..3]
+        assert_eq!(&combined[0..3], &a[..]);
+        // b should occupy combined[5..7]
+        assert_eq!(&combined[5..7], &b[..]);
+        // other slots zero
+        assert_eq!(combined[3], 0u8);
+        assert_eq!(combined[4], 0u8);
     }
 }

@@ -2,7 +2,15 @@
 use crate::feedbacks::hist_stats::{
     history_contains, history_insert, ComboSeenStats, HistKey, HistVal,
 };
-use crate::feedbacks::two_state_map::TwoStateStats;
+use serde::{Deserialize, Serialize};
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TwoStateStats {
+    pub max_seen: Vec<u8>,
+    pub min_seen: Vec<u8>,
+    pub seen_first_bits: Vec<u64>,
+}
+
+libafl_bolts::impl_serdeany!(TwoStateStats);
 // local bit helpers used via BitsMutView; avoid importing Bits to prevent unused-import warning
 use core::marker::PhantomData;
 use libafl::corpus::Testcase;

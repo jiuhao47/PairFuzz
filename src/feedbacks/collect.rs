@@ -1,5 +1,5 @@
 use crate::feedbacks::diffray_feedback::{DiffrayFeedback, Mode, ObserverInfo};
-use crate::feedbacks::two_state_map::TwoStateStats;
+use crate::feedbacks::metadata::TwoStateStats;
 use crate::observers::ReturnValueObserver;
 use crate::utils::bits::BitsRef;
 use libafl::observers::MapObserver;

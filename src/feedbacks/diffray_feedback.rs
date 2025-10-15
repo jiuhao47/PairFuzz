@@ -3,7 +3,7 @@
 // interesting). The structure is intentionally extensible to allow other
 // combination strategies in the future.
 use crate::feedbacks::hist_stats::{history_contains, HistKey, HistVal};
-use crate::feedbacks::two_state_map::TwoStateStats;
+use crate::feedbacks::metadata::TwoStateStats;
 use crate::observers::ReturnValueObserver;
 use core::fmt::Debug;
 use libafl::corpus::Testcase;

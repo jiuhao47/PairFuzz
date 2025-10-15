@@ -137,6 +137,16 @@ impl Bits {
     pub fn from_vec(words: Vec<u64>) -> Self {
         Self { words }
     }
+
+    /// Create a mutable borrowing view over an existing Vec<u64> without
+    /// taking ownership. This allows hot-path callers to operate on the
+    /// backing words directly without allocating or moving the Vec.
+    #[inline]
+    pub fn from_vec_ref(words: &mut Vec<u64>) -> BitsMut {
+        BitsMut {
+            words: words.as_mut_slice(),
+        }
+    }
 }
 
 /// Atomic, non-resizing bitset backed by `Vec<AtomicU64>`.
@@ -144,6 +154,52 @@ impl Bits {
 #[allow(dead_code)]
 pub struct AtomicBits {
     words: Vec<AtomicU64>,
+}
+
+/// Mutable borrowing view over a slice of u64 words for in-place bit updates.
+pub struct BitsMut<'a> {
+    words: &'a mut [u64],
+}
+
+impl<'a> BitsMut<'a> {
+    /// Create a BitsMut from a mutable Vec<u64> reference (no allocation).
+    #[inline]
+    pub fn new(words: &'a mut Vec<u64>) -> Self {
+        BitsMut {
+            words: words.as_mut_slice(),
+        }
+    }
+
+    /// Read bit at `idx`. Out-of-range reads return false.
+    #[inline]
+    pub fn get(&self, idx: usize) -> bool {
+        let word = idx >> 6;
+        let bit = idx & 63;
+        if word < self.words.len() {
+            ((self.words[word] >> bit) & 1) == 1
+        } else {
+            false
+        }
+    }
+
+    /// Test whether the bit was already set, and set it if not. Returns true
+    /// if previously set, false if we set it now.
+    #[inline]
+    pub fn test_and_set(&mut self, idx: usize) -> bool {
+        let word = idx >> 6;
+        let bit = idx & 63;
+        let mask = 1u64 << bit;
+        if word < self.words.len() {
+            let prev = (self.words[word] & mask) != 0;
+            if !prev {
+                self.words[word] |= mask;
+            }
+            prev
+        } else {
+            // Out-of-range: caller should have resized; treat as previously unset without setting
+            false
+        }
+    }
 }
 
 impl AtomicBits {

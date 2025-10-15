@@ -144,47 +144,6 @@ impl ShmemComboUpdater {
             ),
         );
     }
-
-    /// Clear specific indices in the attached shmem source buffers.
-    /// Requires a mutable reference because it mutates the shared mapping in a
-    /// more explicit and controlled way. This is the preferred method when the
-    /// caller holds a `&mut ShmemComboUpdater` or an actual mutable reference to
-    /// the observers tuple containing it.
-    pub fn clear_shmem_indices(&mut self, indices: &[usize]) {
-        if self.num_edges == 0 || indices.is_empty() {
-            return;
-        }
-        use core::ptr;
-        if let Some(a) = &mut self.shmem_a {
-            let a_len = usize::min(a.len(), self.num_edges);
-            let ptr_start = a.as_ptr() as *mut u8;
-            unsafe {
-                for &i in indices.iter() {
-                    if i < a_len {
-                        ptr::write(ptr_start.add(i), 0u8);
-                    }
-                }
-            }
-        }
-        if let Some(b) = &mut self.shmem_b {
-            let b_len = usize::min(b.len(), self.num_edges);
-            let ptr_start = b.as_ptr() as *mut u8;
-            unsafe {
-                for &i in indices.iter() {
-                    if i < b_len {
-                        ptr::write(ptr_start.add(i), 0u8);
-                    }
-                }
-            }
-        }
-        combiner_debug_log(
-            "coverage_combiner",
-            &format!(
-                "ShmemComboUpdater::clear_shmem_indices: cleared {} indices",
-                indices.len()
-            ),
-        );
-    }
 }
 
 // Custom serialization: serialize only the name and num_edges. On deserialize

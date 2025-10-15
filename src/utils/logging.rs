@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::driver::env_var::LOG;
 
 /// Log level for diffray logger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -139,7 +140,7 @@ pub fn trace(module: &str, msg: &str) {
 /// Initialize logger level from an environment variable like DIFFRAY_LOG (optional),
 /// or leave default INFO. Returns the chosen level.
 pub fn init_from_env() -> LogLevel {
-    if let Ok(s) = std::env::var("DIFFRAY_LOG") {
+    if let Ok(s) = std::env::var(LOG) {
         let s_low = s.to_lowercase();
         let lvl = match s_low.as_str() {
             "error" => LogLevel::Error,

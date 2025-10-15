@@ -1,3 +1,9 @@
+//! Driver-like helpers for allocating and exporting shared memory used by
+//! return-value observers (rv observers). These are convenience helpers moved
+//! here to co-locate shmem-related code near observer implementations.
+//!
+//! Note: the original `src/driver/shmem.rs` is kept as a shim that re-exports
+//! these helpers to preserve external callers.
 use libafl_bolts::shmem::{ShMemProvider, StdShMem, StdShMemProvider};
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -40,8 +46,10 @@ pub fn try_alloc_cov_shmem(
     unsafe {
         libafl_bolts::shmem::ShMem::write_to_env(&s, &uniq).map_err(|e| e.to_string())?;
     }
-    let id = env::var(&uniq).map_err(|e| e.to_string())?;
+    // Read the id and ensure we remove the temporary env in all paths.
+    let id_res = env::var(&uniq).map_err(|e| e.to_string());
     let _ = env::remove_var(&uniq);
+    let id = id_res?;
     Ok((s, id))
 }
 
@@ -57,15 +65,21 @@ pub fn extract_id_size_and_clear(
     unsafe {
         libafl_bolts::shmem::ShMem::write_to_env(shmem, &uniq).map_err(|e| e.to_string())?;
     }
-    let id = env::var(&uniq).map_err(|e| e.to_string())?;
-    let size = env::var(format!("{}_SIZE", &uniq)).map_err(|e| e.to_string())?;
+    // Read id and size, but ensure the temporary env vars are cleared even on
+    // error.
+    let id_result = env::var(&uniq).map_err(|e| e.to_string());
+    let size_result = env::var(format!("{}_SIZE", &uniq)).map_err(|e| e.to_string());
+    // clear temps (best-effort)
+    let _ = env::remove_var(&uniq);
+    let _ = env::remove_var(format!("{}_SIZE", &uniq));
+
+    let id = id_result?;
+    let size = size_result?;
     // normalize numeric ids to the `sysv:` form (keeps original behavior)
     let mut id_norm = id.clone();
     if !id_norm.is_empty() && id_norm.chars().all(|c| c.is_ascii_digit()) {
         id_norm = format!("sysv:{}", id_norm);
     }
-    let _ = env::remove_var(&uniq);
-    let _ = env::remove_var(format!("{}_SIZE", &uniq));
     Ok((id_norm, size))
 }
 

@@ -7,42 +7,43 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // Module-local debug helper. Controlled by the environment variable
 // `DIFFRAY_COVERAGE_COMBINER_DEBUG` (defined in `src/driver/env_var.rs`).
-fn coverage_combiner_debug_log(tag: &str, msg: &str) {
+fn combiner_debug_log(tag: &str, msg: &str) {
     if crate::driver::env_var::env_bool_cached(crate::driver::env_var::COVERAGE_COMBINER_DEBUG) {
         crate::utils::logging::debug(tag, msg);
     }
 }
 
-/// Copy two optional source slices into the combined buffer.
+/// Combine two optional source slices into the backing buffer.
 ///
-/// Layout convention: combined[0..num_edges] <- A, combined[num_edges..2*num_edges] <- B.
-/// The function zeros the provided `combined` slice first and then copies up to
-/// `num_edges` bytes from each source if present.
-pub(crate) fn copy_shmem_to_combined(
-    a: Option<&[u8]>,
-    b: Option<&[u8]>,
-    combined: &mut [u8],
-    num_edges: usize,
+/// Layout convention: combined_backing[0..edges_per_half] <- left,
+/// combined_backing[edges_per_half..2*edges_per_half] <- right.
+/// The function zeros the provided `combined_backing` slice first and then copies
+/// up to `edges_per_half` bytes from each source if present.
+pub(crate) fn combine_shmem_into_backing(
+    left: Option<&[u8]>,
+    right: Option<&[u8]>,
+    combined_backing: &mut [u8],
+    edges_per_half: usize,
 ) {
-    // zero the combined buffer first (only up to combined.len())
-    let clen = combined.len();
-    for x in combined.iter_mut() {
+    // zero the backing buffer first (only up to combined_backing.len())
+    let backing_len = combined_backing.len();
+    for x in combined_backing.iter_mut() {
         *x = 0;
     }
-    if num_edges == 0 {
+    if edges_per_half == 0 {
         return;
     }
-    if let Some(a_s) = a {
-        let a_len = usize::min(a_s.len(), num_edges);
-        let dst_len = usize::min(a_len, clen);
-        combined[..dst_len].copy_from_slice(&a_s[..dst_len]);
+    if let Some(left_s) = left {
+        let left_len = usize::min(left_s.len(), edges_per_half);
+        let dst_len = usize::min(left_len, backing_len);
+        combined_backing[..dst_len].copy_from_slice(&left_s[..dst_len]);
     }
-    if let Some(b_s) = b {
-        let b_len = usize::min(b_s.len(), num_edges);
-        let start = num_edges;
-        if start < clen {
-            let dst_len = usize::min(b_len, clen - start);
-            combined[start..start + dst_len].copy_from_slice(&b_s[..dst_len]);
+    if let Some(right_s) = right {
+        let right_len = usize::min(right_s.len(), edges_per_half);
+        let start = edges_per_half;
+        if start < backing_len {
+            let dst_len = usize::min(right_len, backing_len - start);
+            combined_backing[start..start + dst_len].copy_from_slice(&right_s[..dst_len]);
         }
     }
 }
@@ -105,7 +106,7 @@ impl ShmemComboUpdater {
         shmem_b: Option<libafl_bolts::shmem::StdShMem>,
     ) -> Self {
         let upd = Self::new(name, num_edges, combined_ptr, shmem_a, shmem_b);
-        coverage_combiner_debug_log(
+        combiner_debug_log(
             "coverage_combiner",
             &format!(
                 "ShmemComboUpdater::new: created name={} num_edges={} combined_len={}",
@@ -154,7 +155,7 @@ impl ShmemComboUpdater {
                 }
             }
         }
-        coverage_combiner_debug_log(
+        combiner_debug_log(
             "coverage_combiner",
             &format!(
                 "ShmemComboUpdater::clear_shmem_sources: cleared {} edges",
@@ -195,7 +196,7 @@ impl ShmemComboUpdater {
                 }
             }
         }
-        coverage_combiner_debug_log(
+        combiner_debug_log(
             "coverage_combiner",
             &format!(
                 "ShmemComboUpdater::clear_shmem_indices: cleared {} indices",
@@ -255,7 +256,7 @@ where
             // Use helper to copy shmem slices into combined backing
             let a_slice_opt = self.shmem_a.as_ref().map(|s| &s[..]);
             let b_slice_opt = self.shmem_b.as_ref().map(|s| &s[..]);
-            copy_shmem_to_combined(a_slice_opt, b_slice_opt, combined, self.num_edges);
+            combine_shmem_into_backing(a_slice_opt, b_slice_opt, combined, self.num_edges);
             // Emit debug summary about copy (non-zero counts) only when debug enabled.
             if crate::driver::env_var::env_bool_cached(
                 crate::driver::env_var::COVERAGE_COMBINER_DEBUG,
@@ -264,7 +265,7 @@ where
                     a_slice_opt.map_or(0usize, |s| s.iter().filter(|&&b| b != 0).count());
                 let b_nonzero =
                     b_slice_opt.map_or(0usize, |s| s.iter().filter(|&&b| b != 0).count());
-                coverage_combiner_debug_log(
+                combiner_debug_log(
                     "coverage_combiner",
                     &format!(
                         "ShmemComboUpdater::post_observe_second: copied a_nonzero={} b_nonzero={} into combined_len={}",
@@ -272,7 +273,7 @@ where
                     ),
                 );
             } else {
-                coverage_combiner_debug_log(
+                combiner_debug_log(
                     "coverage_combiner",
                     &format!(
                         "ShmemComboUpdater::post_observe_second: copied into combined_len={}",
@@ -314,11 +315,11 @@ impl<_I, _S> Observer<_I, _S> for ShmemComboUpdater {
 mod tests {
     use super::*;
     #[test]
-    fn test_copy_shmem_to_combined_basic() {
+    fn test_combine_shmem_into_backing_basic() {
         let a = vec![2u8, 3u8, 4u8];
         let b = vec![5u8, 6u8];
         let mut combined = vec![0u8; 10];
-        copy_shmem_to_combined(Some(&a), Some(&b), &mut combined, 5);
+        combine_shmem_into_backing(Some(&a), Some(&b), &mut combined, 5);
         // a should occupy combined[0..3]
         assert_eq!(&combined[0..3], &a[..]);
         // b should occupy combined[5..7]

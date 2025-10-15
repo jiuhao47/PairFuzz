@@ -3,3 +3,4 @@
 
 /// Default coverage map size used by executors and observers.
 pub const MAP_SIZE: usize = 65536;
+// !!! DO NOT MODIFY MAP_SIZE

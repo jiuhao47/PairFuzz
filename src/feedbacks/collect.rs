@@ -40,7 +40,7 @@ where
     let observer = match observers.get(handle) {
         Some(h) => h.as_ref(),
         None => {
-            return Err(Error::illegal_state(&format!(
+            return Err(Error::illegal_state(format!(
                 "collect_found_for_observer: map observer '{}' missing at runtime",
                 f.names[idx]
             )));
@@ -56,8 +56,8 @@ where
         return Ok(false);
     }
     let stats = stats_opt.unwrap();
-    let map_meta_opt = named.get::<libafl::feedbacks::MapFeedbackMetadata<u8>>(&f.names[idx]);
-    let history_map = map_meta_opt.map(|m| m.history_map.as_slice());
+    // History map was migrated out; decision logic now uses seen_first_bits /
+    // max_seen / min_seen directly.
 
     let mut found = false;
     let max_seen = &stats.max_seen;
@@ -88,21 +88,25 @@ where
         }
         let max = if i < max_len { max_seen[i] } else { u8::MIN };
         let min = if i < min_len { min_seen[i] } else { u8::MAX };
-        // Simplify history_map lookup for readability and slightly lower overhead
-        let prev_hist = if let Some(h) = history_map {
-            h.get(i).copied().unwrap_or(initial_u8)
-        } else {
-            initial_u8
-        };
-        if prev_hist == initial_u8 && !seen_first_bits.get(i) {
+        // Determine found status using seen_first_bits/max_seen/min_seen instead
+        // Cache seen_first_bits.get(i) to avoid repeated access calls
+        let prev_seen_first_bool = seen_first_bits.get(i);
+        // Condition 1: never seen before (first-seen not set) and current != initial
+        if !prev_seen_first_bool && cur != initial_u8 {
             found = true;
             break;
         }
-        let newly_seen = prev_hist == initial_u8;
-        let prev_seen_first_bool = seen_first_bits.get(i);
-        if (prev_seen_first_bool || newly_seen)
-            && ((cfg_check_high && cur.saturating_sub(max) >= cfg_high_delta)
-                || (cfg_check_low && cur < min && min.saturating_sub(cur) >= cfg_low_delta))
+        // Condition 2: high breach - current exceeds historical max
+        if cfg_check_high && cur.saturating_sub(max) >= cfg_high_delta {
+            found = true;
+            break;
+        }
+        // Condition 3: low breach - current is lower than historical min, but
+        // only consider if this index has been seen before (prev_seen_first_bool)
+        if cfg_check_low
+            && prev_seen_first_bool
+            && cur < min
+            && min.saturating_sub(cur) >= cfg_low_delta
         {
             found = true;
             break;
@@ -142,7 +146,7 @@ pub fn collect_indices<C, S, OT>(
     handle: &Handle<C>,
     _state: &S,
     observers: &OT,
-) -> Result<Vec<(usize, u8)>, Error>
+) -> Result<smallvec::SmallVec<[(usize, u8); 16]>, Error>
 where
     C: libafl::observers::CanTrack
         + MapObserver
@@ -154,7 +158,7 @@ where
     let observer = match observers.get(handle) {
         Some(h) => h.as_ref(),
         None => {
-            return Err(Error::illegal_state(&format!(
+            return Err(Error::illegal_state(format!(
                 "collect_indices_for_observer: map observer '{}' missing at runtime",
                 f.names[_idx]
             )));
@@ -164,7 +168,7 @@ where
     let initial = observer.initial();
     let initial_u8: u8 = initial.into();
 
-    let mut indices: Vec<(usize, u8)> = Vec::new();
+    let mut indices: smallvec::SmallVec<[(usize, u8); 16]> = smallvec::SmallVec::with_capacity(16);
     for (i, item_ref) in observer.as_iter().enumerate() {
         let cur: u8 = (*item_ref).into();
         if cur != initial_u8 {
@@ -174,7 +178,7 @@ where
 
     // Diagnostic logging: when enabled, print initial sentinel, count and a small sample
     if !indices.is_empty() {
-        // Only format the sample if debug logging is enabled to avoid
+        // Only perform heavy formatting if debug logging is enabled to avoid
         // unnecessary allocations in the hot path.
         if crate::driver::env_var::env_bool_cached(crate::driver::env_var::COLLECT_DEBUG) {
             let sample_cap = 16usize;
@@ -196,12 +200,14 @@ where
                 ),
             );
         } else {
+            // cheap log with minimal formatting
             collect_debug_log(
                 "collect_indices",
                 &format!("initial={} collected={}", initial_u8, indices.len()),
             );
         }
-    } else {
+    } else if crate::driver::env_var::env_bool_cached(crate::driver::env_var::COLLECT_DEBUG) {
+        // only format the 0 case when debug enabled
         collect_debug_log(
             "collect_indices",
             &format!("initial={} collected=0", initial_u8),
@@ -260,10 +266,20 @@ where
                     .as_ref()
                     .map(|h| h.name().to_string())
                     .unwrap_or_else(|| f.names.get(idx).map(|s| s.to_string()).unwrap_or_default());
+                // Also collect 'found' for RV modes by consulting the map observer
+                // semantics. If the corresponding map observer is present, call
+                // collect_found to determine whether any notable changes were
+                // observed (e.g., first-seen/high/low breaches). This allows the
+                // driver to persist coverage only when 'found' is true.
+                let found = if let Some(handle) = f.map_refs.get(idx) {
+                    collect_found(f, idx, handle, state, observers)?
+                } else {
+                    false
+                };
                 infos.push(ObserverInfo {
                     idx,
                     name: Cow::from(name),
-                    found: false,
+                    found,
                     indices: None,
                     return_value: rv,
                 });
@@ -279,10 +295,16 @@ where
                     .as_ref()
                     .map(|h| h.name().to_string())
                     .unwrap_or_else(|| f.names.get(idx).map(|s| s.to_string()).unwrap_or_default());
+                // Mirror SingleRv: derive found via the corresponding map observer
+                let found = if let Some(handle) = f.map_refs.get(idx) {
+                    collect_found(f, idx, handle, state, observers)?
+                } else {
+                    false
+                };
                 infos.push(ObserverInfo {
                     idx,
                     name: Cow::from(name),
-                    found: false,
+                    found,
                     indices: None,
                     return_value: rv,
                 });

@@ -85,7 +85,7 @@ pub struct ObserverInfo {
     pub idx: usize,
     pub name: Cow<'static, str>,
     pub found: bool,
-    pub indices: Option<Vec<(usize, u8)>>,
+    pub indices: Option<smallvec::SmallVec<[(usize, u8); 16]>>,
     /// Optional return-value observer (name, last_value) collected for this map observer
     pub return_value: Option<(String, Option<i32>)>,
 }
@@ -101,7 +101,8 @@ pub struct DiffrayFeedback<C> {
     /// per-observer config objects
     pub(crate) configs: Vec<DiffrayConfig>,
     /// novelties aggregated across all observers (optional when observers support novelties)
-    pub(crate) novelties: Option<Vec<usize>>,
+    /// Use SmallVec to avoid heap allocations for the common small case.
+    pub(crate) novelties: Option<smallvec::SmallVec<[usize; 8]>>,
     /// cached joined names (e.g. "a,b") to avoid repeated join/format
     pub(crate) _names_joined: String,
     /// track-hit flag compatibility with single-version implementation
@@ -166,7 +167,11 @@ where
             _ => vec![DiffrayConfig::default(), DiffrayConfig::default()],
         };
 
-        let novelties = if C::NOVELTIES { Some(vec![]) } else { None };
+        let novelties = if C::NOVELTIES {
+            Some(smallvec::SmallVec::new())
+        } else {
+            None
+        };
 
         // Cache joined names to avoid repeated join()/format! calls on hot path
         let names_joined = names
@@ -578,17 +583,19 @@ where
                     max_seen: vec![u8::MIN; cap],
                     min_seen: vec![u8::MAX; cap],
                     seen_first_bits: vec![0u64; bits_words],
+                    num_covered_map_indexes: 0,
                 },
             )?;
-            state.add_named_metadata_checked(
-                name,
-                libafl::feedbacks::MapFeedbackMetadata::<u8>::default(),
-            )?;
+            // MapFeedbackMetadata removed: history is now stored in TwoStateStats
+            // Log initialization with PID so we can correlate metadata
+            // re-creation across process restarts or multiple workers.
             crate::utils::logging::debug(
                 "diffray_feedback",
                 &format!(
-                    "Initialized TwoStateStats metadata '{}' with capacity {}",
-                    name, cap
+                    "Initialized TwoStateStats metadata '{}' with capacity {} (pid={})",
+                    name,
+                    cap,
+                    std::process::id()
                 ),
             );
         }
@@ -635,12 +642,17 @@ where
         // executor code paths) and have access to the testcase' `MapIndexesMetadata`.
         // Part 2: combine using the configured mode (separated for extensibility)
         let final_result = self.combine_observer_infos(state, &infos);
+        // Only persist execution-time coverage when any observer reported a
+        // 'found' condition. Collect guarantees `found` is populated for all
+        // modes, so we simply check the infos vector and persist when any
+        // element is true. This avoids persisting coverage for uninteresting
+        // runs.
+        let any_found = infos.iter().any(|info| info.found);
+        if any_found && !matches!(self.mode, Mode::SingleCov) {
+            crate::feedbacks::metadata::append_exec_cov(self, state, _manager, observers)?;
+        }
         feedback_debug_log_lazy("diffray_feedback", || {
-            format!(
-                "final is_interesting -> {} (infos={:?})",
-                final_result,
-                infos.iter().map(|i| i.found).collect::<Vec<_>>()
-            )
+            format!("final is_interesting -> {}", final_result,)
         });
         Ok(final_result)
     }
@@ -663,6 +675,7 @@ where
         observers: &OT,
         testcase: &mut Testcase<I>,
     ) -> Result<(), Error> {
+        feedback_debug_log("diffray_feedback", "enter append_metadata()");
         // Persist return-value history for SingleRv / ComboRv modes.
         match self.mode {
             Mode::Debug => {
@@ -672,16 +685,10 @@ where
             Mode::SingleRv => {
                 // Persist single-RV history
                 self.append_single_rv::<S, OT>(state, observers)?;
-                // Also persist map observer coverage metadata (if any map observers configured).
-                // Map coverage should be collected and appended, but not participate in the
-                // 'interesting' decision for RV modes.
-                self.append_single_cov::<EM, I, OT, S>(state, _manager, observers, testcase)?;
             }
             Mode::ComboRv => {
                 // Persist combo-RV history
                 self.append_combo_rv::<S, OT>(state, observers)?;
-                // Also persist map observer coverage metadata (if any map observers configured).
-                self.append_single_cov::<EM, I, OT, S>(state, _manager, observers, testcase)?;
             }
             Mode::SingleCov => {
                 self.append_single_cov::<EM, I, OT, S>(state, _manager, observers, testcase)?;
@@ -689,23 +696,22 @@ where
             Mode::SinglePL => {
                 // Persist SinglePL counts then coverage metadata
                 self.append_single_pl::<S, OT>(state, observers)?;
-                self.append_single_cov::<EM, I, OT, S>(state, _manager, observers, testcase)?;
             }
             Mode::ComboPL => {
                 // Persist combo PL vector and coverage metadata
                 self.append_combo_pl::<S, OT>(state, observers)?;
-                self.append_single_cov::<EM, I, OT, S>(state, _manager, observers, testcase)?;
             }
             Mode::ComboCov => {
                 // Persist combo exact indices vector and coverage metadata
                 self.append_combo_cov::<S, OT>(state, observers)?;
-                self.append_single_cov::<EM, I, OT, S>(state, _manager, observers, testcase)?;
             }
         }
 
         // Attach novelties metadata (if any), like TwoStateMapFeedback does.
         if let Some(novelties) = self.novelties.as_mut().map(core::mem::take) {
-            let meta = libafl::feedbacks::MapNoveltiesMetadata::new(novelties);
+            // MapNoveltiesMetadata::new expects a Vec<usize>; convert SmallVec
+            let nov_vec: Vec<usize> = novelties.into_vec();
+            let meta = libafl::feedbacks::MapNoveltiesMetadata::new(nov_vec);
             testcase.add_metadata(meta);
         }
 

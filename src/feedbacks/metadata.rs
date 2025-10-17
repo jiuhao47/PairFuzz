@@ -8,6 +8,10 @@ pub struct TwoStateStats {
     pub max_seen: Vec<u8>,
     pub min_seen: Vec<u8>,
     pub seen_first_bits: Vec<u64>,
+    // Migrated fields from MapFeedbackMetadata
+    // history_map removed: coverage persistence is now represented by
+    // seen_first_bits / max_seen / min_seen. See repo discussion.
+    pub num_covered_map_indexes: usize,
 }
 
 libafl_bolts::impl_serdeany!(TwoStateStats);
@@ -22,6 +26,7 @@ use libafl::Error;
 use libafl::HasMetadata;
 use libafl::HasNamedMetadata;
 use libafl_bolts::tuples::MatchNameRef;
+use std::borrow::Cow;
 use std::u8;
 
 // Reuse the DiffrayFeedback type defined in diffray_feedback.rs
@@ -55,10 +60,12 @@ where
     // For each map observer, perform same append behavior as two_state_map::append_metadata
     for (idx, handle) in this.map_refs.iter().enumerate() {
         let name = &this.names[idx];
-        append_metadata_debug_log(
-            "metadata",
-            &format!("enter append_metadata() for '{}'(idx={})", name, idx),
-        );
+        if crate::driver::env_var::env_bool_cached(crate::driver::env_var::APPEND_METADATA_DEBUG) {
+            append_metadata_debug_log(
+                "metadata",
+                &format!("enter append_metadata() for '{}'(idx={})", name, idx),
+            );
+        }
 
         // snapshot observer
         let observer = match observers.get(handle) {
@@ -80,22 +87,19 @@ where
 
         // take stats vectors out (short scope) - operate on existing vectors in-place
         let len = observer.len();
-        let named = state.named_metadata_map_mut();
 
-        // take history_map and covered count out first (owned) to avoid overlapping mutable borrows
-        let (mut history_map, _covered) = {
-            let map_state_mut = named
-                .get_mut::<libafl::feedbacks::MapFeedbackMetadata<u8>>(name)
-                .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: map metadata missing"))?;
-            (
-                std::mem::take(&mut map_state_mut.history_map),
-                map_state_mut.num_covered_map_indexes,
-            )
+        // Operate in-place on TwoStateStats to avoid replacing internal vectors
+        // with temporaries that other readers might observe. Acquire a mutable
+        // reference to the stats and then borrow its fields mutably in this
+        // single scope so we can update max/min and bits without moving data out.
+        let stats_mut = {
+            let named_mut = state.named_metadata_map_mut();
+            named_mut
+                .get_mut::<TwoStateStats>(name)
+                .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: stats metadata missing"))?
         };
+        let _covered = stats_mut.num_covered_map_indexes;
 
-        let stats_mut = named
-            .get_mut::<TwoStateStats>(name)
-            .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: stats metadata missing"))?;
         let max_seen = &mut stats_mut.max_seen;
         let min_seen = &mut stats_mut.min_seen;
         let seen_first_bits = &mut stats_mut.seen_first_bits;
@@ -110,9 +114,8 @@ where
         if seen_first_bits.len() < bits_len {
             seen_first_bits.resize(bits_len, 0);
         }
-        if history_map.len() < len {
-            history_map.resize(len, initial_u8);
-        }
+        // No persistent per-index history buffer to resize here; we maintain
+        // seen_first_bits, max_seen and min_seen which are resized as needed.
 
         let debug_enabled =
             crate::driver::env_var::env_bool_cached(crate::driver::env_var::APPEND_METADATA_DEBUG);
@@ -122,12 +125,11 @@ where
         #[allow(dead_code)]
         struct IndexChange {
             idx: usize,
-            prev_history: u8,
             cur: u8,
             prev_max: u8,
             prev_min: u8,
-            prev_seen_first: bool,
-            new_covered: bool,
+            // whether the seen_first_bits was set BEFORE processing this sample
+            seen_first_set: bool,
             reason_first: bool,
             reason_high: bool,
             reason_low: bool,
@@ -146,20 +148,24 @@ where
             let item = *item_ref;
             let cur: u8 = item.into();
 
-            let prev_history = history_map[i];
-            let mut new_covered = false;
-            if prev_history == initial_u8 && cur != initial_u8 {
-                new_covered = true;
-            }
-            history_map[i] = cur;
+            // Determine newly_seen by comparing current value against initial
+            // and the seen_first_bits indicator.
+            let prev_seen_first = seen_bits.get(i);
+            let newly_seen = cur != initial_u8 && !prev_seen_first;
 
+            // bounds check: ensure vectors were resized correctly; if not, return error instead of panic
+            if i >= max_seen.len() || i >= min_seen.len() {
+                return Err(Error::illegal_argument(&format!(
+                    "DiffrayFeedback: stats vector length mismatch for '{}' at idx {} (max_seen.len={}, min_seen.len={})",
+                    name, i, max_seen.len(), min_seen.len()
+                )));
+            }
             let prev_max = max_seen[i];
             let prev_min = min_seen[i];
-            let prev_seen_first = seen_bits.get(i);
-            if cur > max_seen[i] {
+            if cur > prev_max {
                 max_seen[i] = cur;
             }
-            if cur < min_seen[i] && (cur != initial_u8 || prev_seen_first) {
+            if cur < prev_min && (cur != initial_u8 || prev_seen_first) {
                 min_seen[i] = cur;
             }
 
@@ -167,8 +173,7 @@ where
             let mut reason_high = false;
             let mut reason_low = false;
 
-            let newly_seen = prev_history == initial_u8 && cur != initial_u8;
-            if prev_history == initial_u8 && cur != initial_u8 && !prev_seen_first {
+            if newly_seen {
                 // test-and-set: if previously unset, set and count a covered delta
                 let was_set = seen_bits.test_and_set(i);
                 if !was_set {
@@ -212,12 +217,10 @@ where
                 if let Some(changes) = changes_opt.as_mut() {
                     changes.push(IndexChange {
                         idx: i,
-                        prev_history,
                         cur,
                         prev_max,
                         prev_min,
-                        prev_seen_first,
-                        new_covered,
+                        seen_first_set: prev_seen_first,
                         reason_first,
                         reason_high,
                         reason_low,
@@ -228,14 +231,8 @@ where
 
         let covered_ever: usize = covered_ever_before + covered_delta;
 
-        // write back map metadata: put history_map back and update covered count
-        {
-            let map_state_mut = named
-                .get_mut::<libafl::feedbacks::MapFeedbackMetadata<u8>>(name)
-                .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: map metadata missing"))?;
-            map_state_mut.history_map = history_map;
-            map_state_mut.num_covered_map_indexes = covered_ever as usize;
-        }
+        // update TwoStateStats' coverage count (tracked via seen_first_bits)
+        stats_mut.num_covered_map_indexes = covered_ever as usize;
 
         if debug_enabled && len > 0 {
             let ratio = (covered_ever as f64) / (len as f64);
@@ -251,7 +248,9 @@ where
             if let Some(changes) = changes_opt.as_ref() {
                 let increased: Vec<_> = changes
                     .iter()
-                    .filter(|c| c.new_covered)
+                    // newly covered candidates are those where the seen_first bit
+                    // was NOT set before processing and the current value is non-initial
+                    .filter(|c| !c.seen_first_set && c.cur != initial_u8)
                     .map(|c| c.idx)
                     .collect();
                 if !increased.is_empty() {
@@ -279,17 +278,17 @@ where
                             rs.push(format!("low-breach(prev_min={})", c.prev_min));
                         }
                         if !rs.is_empty() {
-                            let newly_seen = c.prev_history == initial_u8 && c.cur != initial_u8;
+                            // seen_first_set indicates whether this bit was already set
+                            // before processing; if false and cur != initial then this
+                            // index is a newly-seen candidate.
                             noteworthy.push(format!(
-                                "idx {} cur={} reasons=[{}] prev_history={} prev_seen_first={} newly_seen={}",
+                                "idx {} cur={} reasons=[{}] seen_first_set={}",
                                 c.idx,
                                 c.cur,
                                 rs.join(", "),
-                                c.prev_history,
-                                c.prev_seen_first,
-                                newly_seen
+                                c.seen_first_set
                             ));
-                        } else if c.new_covered {
+                        } else if !c.seen_first_set && c.cur != initial_u8 {
                             covered_only_count += 1;
                         }
                     }
@@ -329,15 +328,13 @@ where
 
         // Attach indices metadata like MapFeedback (don't attach novelties here; handled once after match)
         if C::INDICES {
+            // collect indices in a single pass without creating intermediate iterators
             let mut indices = Vec::new();
             indices.reserve(len / 8 + 1);
-            for (i, _) in observer
-                .as_iter()
-                .map(|x| *x)
-                .enumerate()
-                .filter(|(_, v)| *v != initial)
-            {
-                indices.push(i);
+            for (i, v_ref) in observer.as_iter().enumerate() {
+                if *v_ref != initial {
+                    indices.push(i);
+                }
             }
             let meta = libafl::feedbacks::MapIndexesMetadata::new(indices);
             if testcase.try_add_metadata(meta).is_err() {
@@ -624,5 +621,180 @@ where
         );
     }
     history_insert(state, &stats_name, &HistKey::Combo(counts))?;
+    Ok(())
+}
+
+/// Persist execution-time coverage into the state's TwoStateStats.
+/// This mutates `history_map` and `num_covered_map_indexes` similar to
+/// `append_single_cov`, but does so directly at execution time without
+/// creating a Testcase.
+pub fn append_exec_cov<C, EM, I, OT, S>(
+    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    state: &mut S,
+    manager: &mut EM,
+    observers: &OT,
+) -> Result<(), Error>
+where
+    C: libafl::observers::CanTrack
+        + libafl::observers::MapObserver
+        + for<'it> libafl_bolts::AsIter<'it, Item = C::Entry>,
+    C::Entry: Into<u8> + Copy,
+    EM: libafl::events::EventFirer<I, S>,
+    S: HasNamedMetadata + HasExecutions,
+    OT: MatchNameRef,
+{
+    // Persist behavior is now unconditional when callers invoke this helper.
+    // Caller (e.g. DiffrayFeedback) selects when to invoke based on mode/logic.
+    let mut summaries: Vec<(Cow<'static, str>, usize, usize)> = Vec::new();
+    for (idx, handle) in this.map_refs.iter().enumerate() {
+        let name = &this.names[idx];
+
+        let observer = match observers.get(handle) {
+            Some(h) => h.as_ref(),
+            None => continue,
+        };
+
+        let initial = observer.initial();
+        let initial_u8: u8 = initial.into();
+        let len = observer.len();
+
+        // Acquire mutable access to map metadata. Capture executions before mutable borrows.
+        let _execs_before = *state.executions();
+        // Acquire mutable stats and operate on its fields in-place to avoid
+        // temporarily replacing internal data which other readers might observe.
+        let stats_mut = state
+            .named_metadata_map_mut()
+            .get_mut::<TwoStateStats>(name)
+            .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: stats metadata missing"))?;
+        let covered_ever_before = stats_mut.num_covered_map_indexes;
+
+        // Prepare container for newly-discovered indices; used only for debug
+        // diagnostics when APPEND_METADATA_DEBUG is enabled.
+
+        // Use the already-acquired stats_mut to access seen_first_bits only.
+        let seen_first_bits = &mut stats_mut.seen_first_bits;
+        let bits_len = (len + 63) / 64;
+        if seen_first_bits.len() < bits_len {
+            seen_first_bits.resize(bits_len, 0);
+        }
+
+        // Debug: no aggregate counters needed here; we'll report the delta and
+        // the list of newly-discovered indices if any.
+
+        let mut seen_bits = crate::utils::bits::BitsMut::new(seen_first_bits);
+
+        let mut covered_delta: usize = 0;
+        let mut new_indices: Option<Vec<usize>> = if crate::driver::env_var::env_bool_cached(
+            crate::driver::env_var::APPEND_METADATA_DEBUG,
+        ) {
+            Some(Vec::with_capacity(64))
+        } else {
+            None
+        };
+
+        for (i, item_ref) in observer.as_iter().enumerate() {
+            let cur: u8 = (*item_ref).into();
+
+            // Determine newly covered by seen_first_bits and current value.
+            let prev_seen_first = seen_bits.get(i);
+            if cur != initial_u8 && !prev_seen_first {
+                let was_set = seen_bits.test_and_set(i);
+                if !was_set {
+                    covered_delta += 1;
+                }
+                if let Some(ref mut v) = new_indices {
+                    if v.len() < 1024 {
+                        v.push(i);
+                    }
+                }
+            }
+
+            // exec-time persistence intentionally doesn't track per-index
+            // historical max/min here — only the seen-first bit is used to
+            // detect newly-seen entries and update covered counts.
+        }
+
+        let covered_ever = covered_ever_before + covered_delta;
+        let len_now = len;
+        // Update TwoStateStats with the migrated fields. TwoStateStats is
+        // authoritative; we no longer write back to MapFeedbackMetadata here.
+        {
+            let stats_mut = state
+                .named_metadata_map_mut()
+                .get_mut::<TwoStateStats>(name)
+                .ok_or_else(|| {
+                    Error::illegal_argument("DiffrayFeedback: stats metadata missing")
+                })?;
+            stats_mut.num_covered_map_indexes = covered_ever as usize;
+        }
+
+        // For post-write diagnostics use the previously-captured covered_ever_before
+        // as the prior written value.
+        let _prev_written_local = covered_ever_before as usize;
+        let _new_written_local = covered_ever as usize;
+
+        // (post-write diagnostic logging removed)
+        summaries.push((name.clone(), covered_ever, len_now));
+
+        if crate::driver::env_var::env_bool_cached(crate::driver::env_var::APPEND_METADATA_DEBUG) {
+            let delta = covered_ever as isize - covered_ever_before as isize;
+            append_metadata_debug_log(
+                "metadata",
+                &format!(
+                    "append_metadata: covered delta for '{}' = {:+} ({} -> {})",
+                    name, delta, covered_ever_before, covered_ever
+                ),
+            );
+
+            if let Some(idxs) = new_indices.as_ref() {
+                if !idxs.is_empty() {
+                    // cap output to a small sample to keep logs readable
+                    let sample_cap = 16usize.min(idxs.len());
+                    let mut s = String::with_capacity(sample_cap * 6);
+                    use core::fmt::Write;
+                    for (i, v) in idxs.iter().take(sample_cap).enumerate() {
+                        if i > 0 {
+                            s.push_str(",");
+                        }
+                        write!(s, "{}", v).ok();
+                    }
+                    if idxs.len() > sample_cap {
+                        let omitted = idxs.len() - sample_cap;
+                        append_metadata_debug_log(
+                            "metadata",
+                            &format!(
+                                "append_exec_cov: '{}' new_indices=[{}] ... (omitted {} entries)",
+                                name, s, omitted
+                            ),
+                        );
+                    } else {
+                        append_metadata_debug_log(
+                            "metadata",
+                            &format!("append_exec_cov: '{}' new_indices=[{}]", name, s),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Emit UpdateUserStats events for each persisted observer so monitors/logs show persistent coverage
+    for (name, covered_ever, len_now) in summaries.into_iter() {
+        manager.fire(
+            state,
+            EventWithStats::with_current_time(
+                Event::UpdateUserStats {
+                    name: name.clone(),
+                    value: UserStats::new(
+                        UserStatsValue::Ratio(covered_ever as u64, len_now as u64),
+                        AggregatorOps::Avg,
+                    ),
+                    phantom: PhantomData,
+                },
+                *state.executions(),
+            ),
+        )?;
+    }
+
     Ok(())
 }

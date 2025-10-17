@@ -43,9 +43,12 @@ use crate::utils::logging::{error, info, init_from_verbose, set_log_dir, warn};
 
 #[expect(clippy::too_many_lines)]
 pub fn main() {
-    // Parse command-line arguments and initialize logging
+    // Parse CLI arguments and configure logging to use `args.log_dir` so
+    // logs are written into the user-specified directory instead of the repo root.
     let args = Args::parse();
-    init_from_verbose(args.verbose, None);
+    init_from_verbose(args.verbose, args.log_dir.clone());
+    // Emit a compact summary of arguments/environment for diagnostics.
+    log_working_state(&args);
     // Disable ASAN leak detection and make ASAN abort on errors when present
     unsafe { std::env::set_var("ASAN_OPTIONS", "abort_on_error=1:detect_leaks=false") }
 
@@ -59,20 +62,12 @@ pub fn main() {
             std::process::exit(1);
         };
         set_log_dir(Some(log_dir.clone()));
-        if args.verbose > 0 {
-            info(
-                "main",
-                &format!(
-                    "Logs will be written to directory: {:?} (main log: diffray.log)",
-                    log_dir
-                ),
-            );
-        }
+        // removed verbose log: "Logs will be written to directory..." per request
     } else if args.verbose > 0 {
         info("main", "Detailed output enabled");
     }
 
-    // Run the main logic in a fallible function to allow unified error handling
+    // Run the main logic in a fallible function to centralize error handling
     if let Err(e) = run(args) {
         error("main", &format!("Fatal error: {}", e));
         std::process::exit(1);
@@ -92,24 +87,11 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err(Box::new(e));
     }
 
-    if args.verbose > 0 {
-        info("main", "Configuration:");
-        info("main", &format!("  Input directory: {:?}", args.input_dir));
-        info(
-            "main",
-            &format!("  Output directory: {:?}", args.output_dir),
-        );
-        info("main", &format!("  Log directory: {:?}", args.log_dir));
-        info(
-            "main",
-            &format!("  Single-execution timeout: {} ms", args.timeout_ms),
-        );
-    }
-
-    // The remainder of the original main function continues below...
+    // Startup configuration logs were removed to reduce verbosity.
+    // Main fuzzing setup follows.
 
     // Fuzzing configuration
-    // num_edges: maximum size of an individual coverage map
+    // num_edges: coverage map size (from driver::constants::MAP_SIZE)
     let num_edges: usize = crate::driver::constants::MAP_SIZE;
 
     // We'll allocate coverage observers (A, B) and a combined objective buffer.
@@ -127,14 +109,14 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut rv_exec_observer_a = ReturnValueObserver::new("first_return");
     let mut rv_exec_observer_b = ReturnValueObserver::new("second_return");
 
-    // Monitoring setup: how stats are displayed/recorded
-    // Provide a predicate that always logs so JSON stats are written frequently.
+    // Monitoring setup: how stats are displayed/recorded.
+    // Predicate that always returns true so JSON stats are written frequently.
     fn always_log(_: &mut libafl::monitors::stats::ClientStatsManager) -> bool {
         true
     }
 
     let monitors = {
-        // place the fuzzer JSON stats inside the log directory if provided
+        // Place the fuzzer JSON stats inside the log directory if provided.
         let json_log_path = args
             .log_dir
             .as_ref()
@@ -144,9 +126,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             json_log_path,
             always_log as fn(&mut libafl::monitors::stats::ClientStatsManager) -> bool,
         );
-        // Also include a SimpleMonitor that prints to stdout. When the `introspection`
-        // feature is enabled in libafl this monitor will include per-client perf stats.
-        // The printing behavior is controlled by the CLI flag `--no-simple-monitor`.
+        // Also include a simple stdout monitor; controlled by the CLI flag `--no-simple-monitor`.
         let enable_simple = args.simple_monitor_enabled();
         let simple_mon = libafl::monitors::SimpleMonitor::new(move |s| {
             if enable_simple {
@@ -222,9 +202,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // Objective buffer: combine A and B maps into a heap-backed buffer of size 2 * num_edges
     let objective_len = num_edges.checked_mul(2).unwrap_or(num_edges);
-    // Allocate the objective buffer and KEEP ownership in a Box so it will be
-    // automatically freed when dropped. We pass a raw pointer to the observer
-    // but retain the Box (moved into the updater later) to avoid leaks.
+    // Allocate a boxed objective buffer and keep ownership to avoid leaks; a raw pointer is
+    // passed to the observer while the Box remains owned here.
     let mut objective_box = vec![0u8; objective_len].into_boxed_slice();
     let objective_ptr: *mut u8 = objective_box.as_mut_ptr();
     unsafe {
@@ -421,7 +400,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         // Collect child envs to inject into the builder in a single pass.
         let mut child_envs_a: Vec<(&str, String)> = Vec::new();
 
-        // If a per-target coverage shmem was allocated, add its id to the child env list
+        // If a per-target coverage shmem was allocated, add its id to the child's env list
         if let Some(id) = cov_shm_id_a.as_ref() {
             child_envs_a.push(("__AFL_SHM_ID", id.clone()));
             // Also log for diagnostics
@@ -434,7 +413,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 "__DIFFRAY_TMP_RV_A",
             ) {
                 Ok((id, size)) => {
-                    // Queue envs for child builder injection using the extracted id/size
+                    // Queue env vars for injection into the child's environment
                     child_envs_a.push(("__DIFFRAY_RV_SHM_ID_A", id.clone()));
                     child_envs_a.push(("__DIFFRAY_RV_SHM_ID_A_SIZE", size.clone()));
                     info(
@@ -447,16 +426,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => warn("main", &format!("failed to extract rv shmem id A: {}", e)),
             }
-            // Attach shmem to executor-side observer
+            // Attach the shmem to the executor-side return-value observer
             rv_exec_observer_a.set_shmem(s);
             info(
                 "main",
                 "Attached rv shmem to executor observer A (first_return)",
             );
-            // rv_shmem_snapshot.log removed per user request
+            // note: rv_shmem snapshot logging removed by request
         }
 
-        // If per-target cov shmem was allocated, write __AFL_SHM_ID into parent env
+        // If a per-target coverage shmem exists, write its id into the parent env
         if let Some(s) = _cov_shmem_a.as_ref() {
             if let Err(e) = crate::observers::shmem::rv_shmem::write_shmem_to_env(s, "__AFL_SHM_ID")
             {
@@ -468,18 +447,17 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             info("main", "Wrote __AFL_SHM_ID into parent env for executor A");
         }
 
-        // Apply collected child envs to the builder in one pass to reduce repetitive
-        // builder.env calls scattered across the code.
+        // Apply collected child envs to the builder in one pass
         for (k, v) in child_envs_a.drain(..) {
             builder_a = builder_a.env(k, v);
         }
 
-        // Clear any parent env pollution that may remain (single loop instead of scattered calls)
+        // Remove temporary parent environment variables to avoid pollution
         for key in &["__DIFFRAY_RV_SHM_ID_A", "__DIFFRAY_RV_SHM_ID_A_SIZE"] {
             let _ = std::env::remove_var(key);
         }
 
-        // Build executor A using dynamic map sizing; exit on failure.
+        // Build executor A with dynamic coverage map sizing; exit on failure.
         match builder_a.build_dynamic_map(map_observer_a, tuple_list!(rv_exec_observer_a)) {
             Ok(exec) => exec,
             Err(e) => {
@@ -500,7 +478,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // Build executor B (forkserver) and attach coverage/rv shmems if available
     let executor_b = if let Some(prog_b) = &args.prog_b {
-        // Validate target binary for executor B and detect capabilities
+        // Validate target binary for executor B and detect its capabilities
         let caps_b = match crate::driver::bin_check::check_binary(
             &mut prog_b.clone(),
             false,
@@ -520,7 +498,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             ),
         );
 
-        // Determine persistent setting for B: CLI flags take precedence over detected capability.
+        // Determine persistent setting for B: CLI flags override detected capability.
         let is_persistent_b = if args.persistent_enabled() {
             caps_b.persistent
         } else {
@@ -535,7 +513,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .coverage_map_size(num_edges)
             .timeout(Duration::from_millis(args.timeout_ms));
 
-        // Collect child envs for B and inject in a single pass
+        // Collect child envs for B to inject later in one pass
         let mut child_envs_b: Vec<(&str, String)> = Vec::new();
 
         // If a per-target coverage shmem was allocated, add its id to the child env list
@@ -567,10 +545,10 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 "main",
                 "Attached rv shmem to executor observer B (second_return)",
             );
-            // rv_shmem_snapshot.log removed per user request
+            // note: rv_shmem snapshot logging removed by request
         }
 
-        // If per-target cov shmem was allocated, write __AFL_SHM_ID into parent env
+        // If a per-target coverage shmem exists, write its id into the parent env
         if let Some(s) = _cov_shmem_b.as_ref() {
             if let Err(e) = crate::observers::shmem::rv_shmem::write_shmem_to_env(s, "__AFL_SHM_ID")
             {
@@ -582,12 +560,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             info("main", "Wrote __AFL_SHM_ID into parent env for executor B");
         }
 
-        // Apply collected child envs to the builder in one pass
+        // Apply collected child envs to the builder
         for (k, v) in child_envs_b.drain(..) {
             builder_b = builder_b.env(k, v);
         }
 
-        // Clear any parent env pollution that may remain
+        // Remove temporary parent environment variables
         for key in &["__DIFFRAY_RV_SHM_ID_B", "__DIFFRAY_RV_SHM_ID_B_SIZE"] {
             let _ = std::env::remove_var(key);
         }
@@ -610,9 +588,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     };
 
-    // Create a ShmemComboUpdater that will copy (A,B) coverage into the objective
-    // buffer after the second observation. Moving shmem objects into the updater
-    // ensures they remain alive for the duration of the run.
+    // Create a ShmemComboUpdater that copies (A,B) coverage into the objective
+    // buffer. Move shmem objects into the updater to keep them alive for the run.
     let shmem_a = _cov_shmem_a.take();
     let shmem_b = _cov_shmem_b.take();
     // Move the objective backing into the updater so it owns and will free it.
@@ -629,14 +606,11 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut differential_executor = DiffExecutor::new(executor_a, executor_b, diff_observers_list);
 
-    // Generator of printable bytearrays of max size 32
+    // Generator that produces printable byte arrays with max size 32
     let mut generator = RandPrintablesGenerator::new(nonzero!(32));
 
-    // Handle initial seeds similar to libafl-fuzz:
-    // If the State indicates we must load initial inputs (e.g. first run), try
-    // to load them from the provided `-i` directory. If loading fails, fall
-    // back to generating a small initial corpus. If the State does not require
-    // initial seeds, generate random initial inputs.
+    // Handle initial seeds similar to libafl-fuzz: load from `-i` when required,
+    // otherwise generate random initial inputs.
     if state.must_load_initial_inputs() {
         if let Some(input_dir) = &args.input_dir {
             if input_dir.exists() && input_dir.is_dir() {
@@ -666,9 +640,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 error(
-                    "main",
-                    &format!("Error: specified seed directory does not exist or is not a directory: {:?}", input_dir),
-                );
+                        "main",
+                        &format!("Error: specified seed directory does not exist or is not a directory: {:?}", input_dir),
+                    );
                 std::process::exit(1);
             }
         } else {
@@ -706,19 +680,19 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .expect("Failed to generate the initial corpus");
     }
 
-    // Add tokens metadata, record start time and notify fuzzer that seed loading is done
+    // Add tokens metadata, record start time and mark that seed loading is complete
     state.add_metadata(tokens);
     *state.start_time_mut() = current_time();
 
-    // Setup a mutational stage with a basic bytes mutator
+    // Setup a mutational stage using HavocScheduledMutator
     let mutator = HavocScheduledMutator::new(havoc_mutations());
-    // Stages: only the mutational stage
+    // Use a single mutational stage
     let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
     if args.verbose > 0 {
         info("main", "Starting fuzzing...");
     }
-    // Unlimited fuzz loop: use the standard fuzz_loop (no time/iteration limits)
+    // Unlimited fuzz loop: call the standard fuzzer loop (runs until stopped)
     if args.verbose > 0 {
         info("main", "Running unlimited fuzzing loop");
     }
@@ -735,5 +709,73 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             error("main", &format!("Error in fuzz loop: {}", e));
             return Err(Box::new(e));
         }
+    }
+}
+
+// Log a concise snapshot of the current working state and parsed args.
+// Keep messages English-only per repository policy and use existing
+// logging helpers (info/warn/error) so output goes to the configured logger.
+fn log_working_state(args: &Args) {
+    use std::env;
+    info("main", "--- Working state ---");
+
+    // Current working directory
+    match env::current_dir() {
+        Ok(pwd) => info("main", &format!("cwd: {:?}", pwd)),
+        Err(e) => warn("main", &format!("cwd: <error: {}>", e)),
+    }
+
+    // Important environment variables
+    let asan = env::var("ASAN_OPTIONS").unwrap_or_else(|_| "<not set>".to_string());
+    info("main", &format!("env.ASAN_OPTIONS: {}", asan));
+
+    // CLI args (one-per-line for readability)
+    info("main", &format!("args.input_dir: {:?}", args.input_dir));
+    info("main", &format!("args.corpus_dir: {:?}", args.corpus_dir));
+    info("main", &format!("args.output_dir: {:?}", args.output_dir));
+    info("main", &format!("args.log_dir: {:?}", args.log_dir));
+    info("main", &format!("args.verbose: {}", args.verbose));
+    info("main", &format!("args.timeout_ms: {}", args.timeout_ms));
+    info("main", &format!("args.mode: {}", args.mode));
+    info(
+        "main",
+        &format!("args.persistent_mode: {}", args.persistent_mode),
+    );
+    info(
+        "main",
+        &format!("effective persistent: {}", args.persistent_enabled()),
+    );
+    info(
+        "main",
+        &format!("args.simple_monitor_mode: {}", args.simple_monitor_mode),
+    );
+    info(
+        "main",
+        &format!(
+            "effective simple monitor enabled: {}",
+            args.simple_monitor_enabled()
+        ),
+    );
+    info("main", "--- End working state ---");
+
+    // Check target program paths existence if provided (separate block)
+    if let Some(prog_a) = &args.prog_a {
+        if prog_a.exists() {
+            info("main", &format!("prog-a: exists: {:?}", prog_a));
+        } else {
+            warn("main", &format!("prog-a: missing: {:?}", prog_a));
+        }
+    } else {
+        info("main", "prog-a: not provided");
+    }
+
+    if let Some(prog_b) = &args.prog_b {
+        if prog_b.exists() {
+            info("main", &format!("prog-b: exists: {:?}", prog_b));
+        } else {
+            warn("main", &format!("prog-b: missing: {:?}", prog_b));
+        }
+    } else {
+        info("main", "prog-b: not provided");
     }
 }

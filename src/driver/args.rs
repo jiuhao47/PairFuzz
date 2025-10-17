@@ -25,6 +25,42 @@ impl std::fmt::Display for RunMode {
     }
 }
 
+// Persistent mode enum (top-level, like RunMode)
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum PersistentMode {
+    Auto,
+    Enabled,
+    Disabled,
+}
+
+impl std::fmt::Display for PersistentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PersistentMode::Auto => write!(f, "auto"),
+            PersistentMode::Enabled => write!(f, "enabled"),
+            PersistentMode::Disabled => write!(f, "disabled"),
+        }
+    }
+}
+
+// Simple monitor enum (top-level)
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum SimpleMonitorMode {
+    Auto,
+    Enabled,
+    Disabled,
+}
+
+impl std::fmt::Display for SimpleMonitorMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SimpleMonitorMode::Auto => write!(f, "auto"),
+            SimpleMonitorMode::Enabled => write!(f, "enabled"),
+            SimpleMonitorMode::Disabled => write!(f, "disabled"),
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "diffray")]
 #[command(
@@ -87,44 +123,39 @@ pub struct Args {
     /// Run mode: single-cov|single-rv|single-pl|combo-cov|combo-rv|combo-pl
     #[arg(long = "mode", help = "Run mode: single-cov|single-rv|single-pl|combo-cov|combo-rv|combo-pl", default_value_t = RunMode::SingleCov)]
     pub mode: RunMode,
-    /// Enable forkserver persistent mode (default: enabled). If the target binary does not
-    /// support persistent mode, the builder will automatically fall back.
+
     #[arg(
-        long = "persistent",
-        help = "Enable forkserver persistent mode (default: enabled).",
-        default_value_t = true
+        long = "persistent-mode",
+        help = "Persistent mode: auto|enabled|disabled (auto preserves previous default)",
+        value_enum,
+        default_value_t = PersistentMode::Auto
     )]
-    pub persistent: bool,
-    /// Explicitly disable persistent mode (equivalent to `--persistent=false`). When both
-    /// `--persistent` and `--no-persistent` are provided, `--no-persistent` takes precedence.
-    #[arg(
-        long = "no-persistent",
-        help = "Explicitly disable persistent mode (equivalent to --persistent=false)."
-    )]
-    pub no_persistent: bool,
-    /// Disable the simple stdout monitor. By default a SimpleMonitor that prints to stdout
-    /// is included alongside the on-disk JSON monitor. Use this flag to suppress that stdout
-    /// monitor (useful for background/CI runs).
-    #[arg(
-        long = "no-simple-monitor",
-        help = "Disable the simple stdout monitor (SimpleMonitor)"
-    )]
-    pub no_simple_monitor: bool,
+    pub persistent_mode: PersistentMode,
+
+    /// (legacy flags removed) Use `--persistent-mode` instead.
+    #[arg(long = "simple-monitor", help = "Simple monitor: auto|enabled|disabled", value_enum, default_value_t = SimpleMonitorMode::Auto)]
+    pub simple_monitor_mode: SimpleMonitorMode,
+    // legacy flags removed: use --persistent-mode and --simple-monitor instead
 }
 
 impl Args {
     /// Return the effective persistent setting. `--no-persistent` takes precedence if set.
     pub fn persistent_enabled(&self) -> bool {
-        if self.no_persistent {
-            false
-        } else {
-            self.persistent
+        // Consult the enum: Auto -> default true, Enabled -> true, Disabled -> false
+        match self.persistent_mode {
+            PersistentMode::Auto => true, // historical default was enabled
+            PersistentMode::Enabled => true,
+            PersistentMode::Disabled => false,
         }
     }
 
     /// Return whether the simple stdout monitor should be enabled. The `--no-simple-monitor`
     /// flag takes precedence.
     pub fn simple_monitor_enabled(&self) -> bool {
-        !self.no_simple_monitor
+        match self.simple_monitor_mode {
+            SimpleMonitorMode::Auto => true, // default: enabled
+            SimpleMonitorMode::Enabled => true,
+            SimpleMonitorMode::Disabled => false,
+        }
     }
 }

@@ -375,7 +375,257 @@ class TaskExecutor:
             except Exception:
                 pass
 
+            # best-effort: kill any descendant processes of the recorded pid
+            try:
+                if pid:
+                    desc_res = self._kill_descendants(pid)
+                    attempt_info["descendants_kill"] = desc_res
+            except Exception:
+                pass
+
         return results
+
+    def _cleanup_shmem(self, task_root: Path) -> Dict[str, Any]:
+        """Best-effort cleanup of SysV shared memory segments.
+
+        Improvements over the simple approach:
+        - record raw `ipcs -m` output for debugging
+        - select candidates based on owner (match current user) but attempt
+          removal regardless of nattch (IPC_RMID marks for removal even when
+          attached). This avoids races where processes detach shortly after
+          being killed.
+        - capture ipcrm returncode/stdout/stderr and write details to
+          `cleanup_shmem.log` for diagnosis.
+        - perform a short retry pass after a sleep to catch segments that
+          become unattached just after process termination.
+        """
+        import getpass
+
+        user = getpass.getuser()
+        res: Dict[str, Any] = {
+            "raw_ipcs": None,
+            "candidates": [],
+            "attempts": [],
+            "deleted": [],
+            "failed": [],
+        }
+
+        def _enum_ipcs():
+            try:
+                out = subprocess.check_output(
+                    ["ipcs", "-m"], text=True, stderr=subprocess.STDOUT
+                )
+            except Exception as e:
+                return False, str(e)
+            return True, out
+
+        ok, out_or_err = _enum_ipcs()
+        if not ok:
+            res["error"] = f"ipcs failed: {out_or_err}"
+            try:
+                (task_root / "cleanup_shmem.log").write_text(json.dumps(res, indent=2))
+            except Exception:
+                pass
+            return res
+
+        out = out_or_err
+        res["raw_ipcs"] = out
+
+        # find header and parse table lines robustly
+        lines = out.splitlines()
+        header_idx = None
+        for i, l in enumerate(lines):
+            if "shmid" in l and "owner" in l:
+                header_idx = i
+                break
+        if header_idx is None:
+            res["error"] = "unable to find ipcs header"
+            try:
+                (task_root / "cleanup_shmem.log").write_text(json.dumps(res, indent=2))
+            except Exception:
+                pass
+            return res
+
+        for l in lines[header_idx + 1 :]:
+            if not l.strip():
+                continue
+            parts = l.split()
+            if len(parts) < 6:
+                continue
+            try:
+                shmid = parts[1]
+                owner = parts[2]
+                nattch = parts[5]
+            except Exception:
+                continue
+            # consider candidate if it's owned by current user (or user is root)
+            if owner == user or user == "root":
+                res["candidates"].append(
+                    {"shmid": shmid, "owner": owner, "nattch": nattch}
+                )
+
+        # attempt removal for each candidate, capture output
+        for c in list(res["candidates"]):
+            shmid = c["shmid"]
+            try:
+                cp = subprocess.run(
+                    ["ipcrm", "-m", str(shmid)], capture_output=True, text=True
+                )
+                attempt = {
+                    "shmid": shmid,
+                    "rc": cp.returncode,
+                    "stdout": cp.stdout,
+                    "stderr": cp.stderr,
+                }
+                res["attempts"].append(attempt)
+                if cp.returncode == 0:
+                    res["deleted"].append(shmid)
+                else:
+                    res["failed"].append(
+                        {"shmid": shmid, "rc": cp.returncode, "stderr": cp.stderr}
+                    )
+            except Exception as e:
+                res["failed"].append({"shmid": shmid, "error": str(e)})
+
+        # short wait and retry for any remaining failures (race with detaches)
+        if res["failed"]:
+            time.sleep(0.2)
+            ok2, out2 = _enum_ipcs()
+            if ok2:
+                # look for shmid that now appear with nattch==0 and retry
+                for l in out2.splitlines():
+                    if not l.strip():
+                        continue
+                    parts = l.split()
+                    if len(parts) < 6:
+                        continue
+                    try:
+                        shmid = parts[1]
+                        owner = parts[2]
+                        nattch = parts[5]
+                    except Exception:
+                        continue
+                    # if previously failed and now nattch==0, retry
+                    for f in list(res["failed"]):
+                        sid = f.get("shmid")
+                        if sid == shmid and nattch == "0":
+                            try:
+                                cp = subprocess.run(
+                                    ["ipcrm", "-m", str(shmid)],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                attempt = {
+                                    "shmid": shmid,
+                                    "rc": cp.returncode,
+                                    "stdout": cp.stdout,
+                                    "stderr": cp.stderr,
+                                    "retry": True,
+                                }
+                                res["attempts"].append(attempt)
+                                if cp.returncode == 0:
+                                    res["deleted"].append(shmid)
+                                    res["failed"].remove(f)
+                                else:
+                                    f.setdefault("retries", 0)
+                                    f["retries"] = f.get("retries", 0) + 1
+                                    f.setdefault("last_stderr", cp.stderr)
+                            except Exception as e:
+                                f.setdefault("retries", 0)
+                                f["retries"] = f.get("retries", 0) + 1
+                                f.setdefault("last_error", str(e))
+
+        try:
+            (task_root / "cleanup_shmem.log").write_text(json.dumps(res, indent=2))
+        except Exception:
+            pass
+        return res
+
+    def _kill_descendants(self, root_pid: Any) -> Dict[str, Any]:
+        """Find and kill descendant processes of `root_pid` (best-effort).
+
+        Returns a dict with keys `root`, `descendants`, `killed`, `failed`.
+        This walks /proc to build parent links and finds processes whose
+        ancestor chain includes `root_pid`. For each descendant it first
+        sends SIGTERM and if still alive attempts SIGKILL.
+        """
+        out: Dict[str, Any] = {
+            "root": root_pid,
+            "descendants": [],
+            "killed": [],
+            "failed": [],
+        }
+        try:
+            rp = int(root_pid)
+        except Exception:
+            return out
+
+        proc_base = Path("/proc")
+        if not proc_base.exists():
+            return out
+
+        # build parent map
+        pmap = {}
+        for entry in proc_base.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                pid = int(entry.name)
+                status = entry / "status"
+                if not status.exists():
+                    continue
+                txt = status.read_text()
+                ppid = 0
+                for line in txt.splitlines():
+                    if line.startswith("PPid:"):
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            ppid = int(parts[1])
+                        break
+                pmap[pid] = ppid
+            except Exception:
+                continue
+
+        # find descendants: any pid whose ancestor chain reaches rp
+        descendants = []
+        for pid in list(pmap.keys()):
+            cur = pmap.get(pid, 0)
+            seen = set()
+            chain_ok = False
+            while cur and cur not in seen:
+                if cur == rp:
+                    chain_ok = True
+                    break
+                seen.add(cur)
+                cur = pmap.get(cur, 0)
+            if chain_ok:
+                descendants.append(pid)
+
+        out["descendants"] = descendants
+
+        for d in descendants:
+            try:
+                # polite terminate
+                try:
+                    os.kill(d, signal.SIGTERM)
+                except Exception:
+                    pass
+                time.sleep(0.05)
+                # if still alive escalate
+                try:
+                    os.kill(d, 0)
+                    try:
+                        os.kill(d, signal.SIGKILL)
+                    except Exception:
+                        pass
+                except Exception:
+                    # not running anymore
+                    pass
+                out["killed"].append(d)
+            except Exception as e:
+                out["failed"].append({"pid": d, "error": str(e)})
+
+        return out
 
     @staticmethod
     def load_config(path: Path) -> TaskConfig:
@@ -1136,6 +1386,12 @@ class TaskExecutor:
                         print(f"[TASK_MONITOR] terminate_bg_jobs result: {term_res}")
                     except Exception as e:
                         print(f"[TASK_MONITOR] terminate_bg_jobs failed: {e}")
+                    # best-effort cleanup of leftover SysV shared memory segments
+                    try:
+                        shm_res = self._cleanup_shmem(task_root)
+                        print(f"[TASK_MONITOR] shmem cleanup result: {shm_res}")
+                    except Exception as e:
+                        print(f"[TASK_MONITOR] shmem cleanup failed: {e}")
 
             # make watcher non-daemon so it can finish termination work even if
             # the main thread would otherwise exit; we'll join it before
@@ -1473,6 +1729,194 @@ def terminate_jobs(task_root: Path):
         except Exception as e:
             print(f"[DETACHED_MONITOR] failed to kill job {jid}: {e}")
 
+    # NOTE: cleanup_shmem and cleanup_descendants are intentionally defined
+    # at module level in the generated monitor script. They were previously
+    # nested under terminate_jobs which caused NameError when called later.
+
+def cleanup_shmem(task_root: Path):
+    import getpass, subprocess, json, time
+
+    user = getpass.getuser()
+    res = {"raw_ipcs": None, "candidates": [], "attempts": [], "deleted": [], "failed": []}
+
+    def _enum_ipcs():
+        try:
+            out = subprocess.check_output(["ipcs", "-m"], text=True, stderr=subprocess.STDOUT)
+        except Exception as e:
+            return False, str(e)
+        return True, out
+
+    ok, out_or_err = _enum_ipcs()
+    if not ok:
+        print(f"[DETACHED_MONITOR] ipcs failed: {out_or_err}")
+        return
+    out = out_or_err
+    res["raw_ipcs"] = out
+
+    lines = out.splitlines()
+    header_idx = None
+    for i, l in enumerate(lines):
+        if "shmid" in l and "owner" in l:
+            header_idx = i
+            break
+    if header_idx is None:
+        print("[DETACHED_MONITOR] ipcs header not found; skipping shmem cleanup")
+        return
+    for l in lines[header_idx + 1 :]:
+        if not l.strip():
+            continue
+        parts = l.split()
+        if len(parts) < 6:
+            continue
+        shmid = parts[1]
+        owner = parts[2]
+        nattch = parts[5]
+        if owner == user or user == "root":
+            res["candidates"].append({"shmid": shmid, "owner": owner, "nattch": nattch})
+
+    for c in list(res["candidates"]):
+        shmid = c["shmid"]
+        try:
+            cp = subprocess.run(["ipcrm", "-m", str(shmid)], capture_output=True, text=True)
+            attempt = {"shmid": shmid, "rc": cp.returncode, "stdout": cp.stdout, "stderr": cp.stderr}
+            res["attempts"].append(attempt)
+            if cp.returncode == 0:
+                res["deleted"].append(shmid)
+            else:
+                res["failed"].append({"shmid": shmid, "rc": cp.returncode, "stderr": cp.stderr})
+        except Exception as e:
+            res["failed"].append({"shmid": shmid, "error": str(e)})
+
+    # retry once after a short sleep for races with detach
+    if res["failed"]:
+        time.sleep(0.2)
+        ok2, out2 = _enum_ipcs()
+        if ok2:
+            for l in out2.splitlines():
+                if not l.strip():
+                    continue
+                parts = l.split()
+                if len(parts) < 6:
+                    continue
+                shmid = parts[1]
+                nattch = parts[5]
+                for f in list(res["failed"]):
+                    sid = f.get("shmid")
+                    if sid == shmid and nattch == "0":
+                        try:
+                            cp = subprocess.run(["ipcrm", "-m", str(shmid)], capture_output=True, text=True)
+                            attempt = {"shmid": shmid, "rc": cp.returncode, "stdout": cp.stdout, "stderr": cp.stderr, "retry": True}
+                            res["attempts"].append(attempt)
+                            if cp.returncode == 0:
+                                res["deleted"].append(shmid)
+                                try:
+                                    res["failed"].remove(f)
+                                except Exception:
+                                    pass
+                            else:
+                                f.setdefault("retries", 0)
+                                f["retries"] = f.get("retries", 0) + 1
+                                f.setdefault("last_stderr", cp.stderr)
+                        except Exception as e:
+                            f.setdefault("retries", 0)
+                            f["retries"] = f.get("retries", 0) + 1
+                            f.setdefault("last_error", str(e))
+
+    try:
+        (task_root / "cleanup_shmem.log").write_text(json.dumps(res, indent=2))
+    except Exception:
+        pass
+    print(f"[DETACHED_MONITOR] shmem cleanup result: {res}")
+
+
+def cleanup_descendants(task_root: Path):
+    import os, signal, time, json
+
+    res = {"killed": [], "failed": [], "scanned": []}
+    proc_base = Path("/proc")
+    if not proc_base.exists():
+        print("[DETACHED_MONITOR] /proc not available; skipping descendant cleanup")
+        return
+
+    # load jobs to know root pids
+    p = task_root / 'bg_jobs.json'
+    if not p.exists():
+        return
+    try:
+        jobs = json.loads(p.read_text())
+    except Exception:
+        return
+
+    # build parent map once
+    pmap = {}
+    for entry in proc_base.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            pid = int(entry.name)
+            status = entry / 'status'
+            if not status.exists():
+                continue
+            txt = status.read_text()
+            ppid = 0
+            for line in txt.splitlines():
+                if line.startswith('PPid:'):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        ppid = int(parts[1])
+                    break
+            pmap[pid] = ppid
+        except Exception:
+            continue
+
+    def find_descendants(root):
+        out = []
+        for pid in list(pmap.keys()):
+            cur = pmap.get(pid, 0)
+            seen = set()
+            while cur and cur not in seen:
+                if cur == root:
+                    out.append(pid)
+                    break
+                seen.add(cur)
+                cur = pmap.get(cur, 0)
+        return out
+
+    for j in jobs:
+        pid = j.get('pid')
+        if not pid:
+            continue
+        try:
+            root = int(pid)
+        except Exception:
+            continue
+        desc = find_descendants(root)
+        res['scanned'].append({"root": root, "descendants": desc})
+        for d in desc:
+            try:
+                try:
+                    os.kill(d, signal.SIGTERM)
+                except Exception:
+                    pass
+                time.sleep(0.05)
+                try:
+                    os.kill(d, 0)
+                    try:
+                        os.kill(d, signal.SIGKILL)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                res['killed'].append(d)
+            except Exception as e:
+                res['failed'].append({'pid': d, 'error': str(e)})
+
+    try:
+        (task_root / 'cleanup_descendants.log').write_text(json.dumps(res, indent=2))
+    except Exception:
+        pass
+    print(f"[DETACHED_MONITOR] descendant cleanup result: {res}")
+
 def main():
     task_root = Path(__file__).parent
     # find config
@@ -1507,6 +1951,14 @@ def main():
 
     print(f"[DETACHED_MONITOR] duration reached; terminating bg jobs in {task_root}")
     terminate_jobs(task_root)
+    try:
+        cleanup_shmem(task_root)
+    except Exception as e:
+        print(f"[DETACHED_MONITOR] cleanup_shmem failed: {e}")
+    try:
+        cleanup_descendants(task_root)
+    except Exception as e:
+        print(f"[DETACHED_MONITOR] cleanup_descendants failed: {e}")
 
 if __name__ == '__main__':
     main()

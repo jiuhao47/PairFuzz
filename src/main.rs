@@ -1,7 +1,7 @@
 use clap::Parser;
 use libafl::monitors::OnDiskJsonMonitor;
 use libafl::{
-    corpus::{Corpus, InMemoryOnDiskCorpus},
+    corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleRestartingEventManager,
     executors::{forkserver::ForkserverExecutor, DiffExecutor},
     feedback_and_fast,
@@ -23,6 +23,7 @@ use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 use libafl_bolts::StdTargetArgs;
 use libafl_bolts::{current_time, nonzero, rands::StdRand, tuples::tuple_list};
 use mimalloc::MiMalloc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs, path::PathBuf, time::Duration};
 
 // driver::constants now holds shared constants (see src/driver/constants.rs)
@@ -110,10 +111,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut rv_exec_observer_b = ReturnValueObserver::new("second_return");
 
     // Monitoring setup: how stats are displayed/recorded.
-    // Predicate that always returns true so JSON stats are written frequently.
-    fn always_log(_: &mut libafl::monitors::stats::ClientStatsManager) -> bool {
-        true
-    }
+    // (previously had an always-on predicate here; replaced by a controlled predicate)
 
     let monitors = {
         // Place the fuzzer JSON stats inside the log directory if provided.
@@ -122,9 +120,35 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .as_ref()
             .map(|d| d.join("fuzzer_stats.json"))
             .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
+        // JSON monitor: 15s heartbeat and skip writes caused by new testcase/objective.
+        // We implement the predicate as a plain function that uses an atomic to
+        // store the last write time (seconds) so the predicate can be a function
+        // pointer (which implements Debug) and won't capture a closure type.
+        static LAST_JSON_WRITE: AtomicU64 = AtomicU64::new(0);
+        static JSON_HEARTBEAT_SECS: AtomicU64 = AtomicU64::new(15);
+
+        // Store configured heartbeat from CLI into the atomic so the predicate
+        // can read it. `args` is in scope here.
+        JSON_HEARTBEAT_SECS.store(args.json_heartbeat_secs, Ordering::Relaxed);
+
+        fn json_monitor_predicate(
+            _client_stats_manager: &mut libafl::monitors::stats::ClientStatsManager,
+        ) -> bool {
+            let now = current_time().as_secs();
+            let last = LAST_JSON_WRITE.load(Ordering::Relaxed);
+            let heartbeat = JSON_HEARTBEAT_SECS.load(Ordering::Relaxed);
+            // heartbeat interval
+            if now.saturating_sub(last) < heartbeat {
+                return false;
+            }
+
+            LAST_JSON_WRITE.store(now, Ordering::Relaxed);
+            true
+        }
+
         let json_mon = OnDiskJsonMonitor::new(
             json_log_path,
-            always_log as fn(&mut libafl::monitors::stats::ClientStatsManager) -> bool,
+            json_monitor_predicate as fn(&mut libafl::monitors::stats::ClientStatsManager) -> bool,
         );
         // Also include a simple stdout monitor; controlled by the CLI flag `--no-simple-monitor`.
         let enable_simple = args.simple_monitor_enabled();
@@ -286,7 +310,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // Launch the restarting event manager. It may return a restored State.
     let rand = StdRand::new();
-    let corpus = InMemoryOnDiskCorpus::new(args.corpus_dir.clone()).unwrap();
+    let corpus = InMemoryCorpus::new();
     let solution = InMemoryOnDiskCorpus::new(args.output_dir.clone()).unwrap();
     let _was_restored = maybe_state.is_some();
     let mut state = maybe_state.unwrap_or_else(|| {
@@ -731,7 +755,6 @@ fn log_working_state(args: &Args) {
 
     // CLI args (one-per-line for readability)
     info("main", &format!("args.input_dir: {:?}", args.input_dir));
-    info("main", &format!("args.corpus_dir: {:?}", args.corpus_dir));
     info("main", &format!("args.output_dir: {:?}", args.output_dir));
     info("main", &format!("args.log_dir: {:?}", args.log_dir));
     info("main", &format!("args.verbose: {}", args.verbose));

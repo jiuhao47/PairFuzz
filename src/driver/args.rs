@@ -83,12 +83,8 @@ pub struct Args {
     )]
     pub output_dir: PathBuf,
     /// Primary corpus storage directory (persisted to disk by default).
-    #[arg(
-        long = "corpus",
-        help = "Primary corpus storage directory",
-        default_value = "./corpus"
-    )]
-    pub corpus_dir: PathBuf,
+    // NOTE: `--corpus` flag removed per request. If a persistent corpus path
+    // is required elsewhere, use the configured output or default locations.
     /// Directory to write log files into (if specified).
     #[arg(
         short = 'l',
@@ -108,6 +104,13 @@ pub struct Args {
         default_value = "5000"
     )]
     pub timeout_ms: u64,
+    /// JSON monitor heartbeat interval in seconds. Defaults to 15s.
+    #[arg(
+        long = "json-heartbeat-secs",
+        help = "JSON monitor heartbeat interval in seconds",
+        default_value_t = 15u64
+    )]
+    pub json_heartbeat_secs: u64,
     /// Path to the first implementation executable (used in forkserver mode).
     #[arg(
         long = "prog-a",

@@ -89,22 +89,43 @@ case "$command" in
 
   save)
     tag=${1:?need tag}
-    out=${2:-./${tag//[:\/]/_}.tar}
-    echo "Saving $tag -> $out"
-    docker save -o "$out" "$tag"
+    out=${2:-./${tag//[:\/]/_}.tar.gz}
+    echo "Saving $tag -> $out (compressed with gzip)"
+    # If the output filename ends with .gz (our default), stream docker save through gzip
+    if [ "${out##*.}" = "gz" ]; then
+      docker save "$tag" | gzip -c > "$out"
+    else
+      # user explicitly requested a non-gz output filename; fall back to docker save -o
+      docker save -o "$out" "$tag"
+    fi
     ;;
 
   scp)
     tarfile=${1:?tarfile}
     dest=${2:?user@host:path}
-    echo "Copying $tarfile to $dest"
-    scp "$tarfile" "$dest"
+    echo "Copying $tarfile to $dest (gzip-compressed transfer)"
+    # If the file is already gzipped, copy directly. Otherwise create a temporary gz and transfer it.
+    if [[ "$tarfile" == *.gz ]]; then
+      scp "$tarfile" "$dest"
+    else
+      tmp=$(mktemp --suffix=.gz)
+      gzip -c "$tarfile" > "$tmp"
+      scp "$tmp" "$dest"
+      rm -f "$tmp"
+    fi
     ;;
 
   load)
     remote_tar=${1:?user@host:/path/to/tar}
     echo "Loading image on remote host: $remote_tar"
-    ssh "${remote_tar%%:*}" "docker load -i ${remote_tar#*:}"
+    host="${remote_tar%%:*}"
+    path="${remote_tar#*:}"
+    # If the remote file is gzipped, use gunzip -c to stream into docker load on the remote host.
+    if [[ "$path" == *.gz ]]; then
+      ssh "$host" "gunzip -c '$path' | docker load"
+    else
+      ssh "$host" "docker load -i '$path'"
+    fi
     ;;
 
   run)

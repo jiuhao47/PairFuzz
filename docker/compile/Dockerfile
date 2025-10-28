@@ -26,6 +26,8 @@ RUN apt-get update \
     vim \
     htop \
     tmux \
+    fzf \
+    ncdu \
     openssh-server \
     libtool \
     automake \
@@ -33,12 +35,45 @@ RUN apt-get update \
     python3.11 \
     python3-dev \
     libpython3.11-dev \
+    python3-pip \
+    python3-venv \
+    # system libs useful for numeric / plotting wheels (reduces need to build from source)
+    libatlas-base-dev \
+    gfortran \
+    numactl \
+    libnuma-dev \
+    libfreetype6-dev \
     nasm \
     gettext \
     autopoint \
     po4a \
     doxygen \
+    libblas-dev \
+    liblapack-dev \
+    libunwind-dev \
+    libunwind8 \
+    libelf-dev \
+    elfutils \
+    libdw-dev \
+    gdb \
     && rm -rf /var/lib/apt/lists/*
+
+# Install common Python scientific/plotting libraries (numpy, scipy, pandas, matplotlib, seaborn)
+# We upgrade pip/setuptools/wheel first to prefer binary wheels where available which
+# keeps build times and image size reasonable. These are common dev conveniences; if
+# you prefer to pin exact versions, replace the pip install arguments accordingly.
+RUN set -eux; \
+    # Install Debian-packaged Python scientific libraries to avoid PEP 668
+    # (externally-managed environment) issues with system Python and pip.
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+    python3-numpy \
+    python3-scipy \
+    python3-pandas \
+    python3-matplotlib \
+    python3-seaborn \
+    ; \
+    rm -rf /var/lib/apt/lists/*;
 
 ## Install LLVM 18 (clang-18, lld-18, libc++ etc.) from apt.llvm.org
 # We detect the distro codename and add the LLVM APT repository, then install packages.

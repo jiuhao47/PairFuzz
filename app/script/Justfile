@@ -69,7 +69,7 @@ expat:
 	./compile_commit_hash.sh ac2b235 && \
 	./compile_commit_hash.sh 07108642 
 
-zlib: libzlib deflate
+zlib: libzlib libdeflate
 
 libzlib:
 	cd ./zlib && \
@@ -78,8 +78,8 @@ libzlib:
 
 tar: libtar archive
 
-deflate:
-	cd ./deflate && \
+libdeflate:
+	cd ./libdeflate && \
 	./compile_commit_hash.sh a11c44317 && \
 	./compile_commit_hash.sh efc217633
 
@@ -92,7 +92,7 @@ libtar:
 	cd libtar && \
 	./compile_commit_hash.sh 6d0ab4c
 
-h264: FFmpeg openh264
+h264: ffmpeg openh264
 	cd ./xz && \
 	./compile_commit_hash.sh dep
 	cd ./zlib && \
@@ -100,8 +100,8 @@ h264: FFmpeg openh264
 	cd ./bzip2 && \
 	./compile_commit_hash.sh dep
 
-FFmpeg:
-	cd ./FFmpeg && \
+ffmpeg:
+	cd ./ffmpeg && \
 	./compile_commit_hash.sh c88614662c && \
 	./compile_commit_hash.sh 4521700
 

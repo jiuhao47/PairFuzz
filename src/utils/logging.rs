@@ -1,6 +1,8 @@
 use crate::driver::env_var::LOG;
+use libc;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,7 +55,25 @@ fn open_log_file() -> io::Result<File> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    OpenOptions::new().create(true).append(true).open(path)
+    let f = OpenOptions::new().create(true).append(true).open(path)?;
+    // Ensure file descriptor is close-on-exec to avoid fd leaks into children
+    let _ = set_cloexec(&f);
+    Ok(f)
+}
+
+fn set_cloexec(f: &File) -> io::Result<()> {
+    // SAFETY: calling libc fcntl on a valid fd
+    unsafe {
+        let fd = f.as_raw_fd();
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 /// Set the directory where diffray.log will be written. Pass `None` to use repo root.
@@ -105,17 +125,31 @@ pub fn log(level: LogLevel, module: &str, msg: &str) {
         let _ = std::io::stdout().write_all(line.as_bytes());
     }
 
-    // Append to file (synchronously)
+    // Append to file (synchronously) but avoid holding the global mutex while performing I/O.
     let guard_mutex = get_log_file_mutex();
-    let mut guard = guard_mutex.lock().unwrap();
-    if guard.is_none() {
-        if let Ok(f) = open_log_file() {
-            *guard = Some(f);
+    // Ensure file is opened under lock
+    {
+        let mut guard = guard_mutex.lock().unwrap();
+        if guard.is_none() {
+            if let Ok(f) = open_log_file() {
+                *guard = Some(f);
+            }
         }
     }
-    if let Some(f) = guard.as_mut() {
+
+    // Take the File out of the mutex, perform write outside the lock, then put it back.
+    let file_opt = {
+        let mut guard = guard_mutex.lock().unwrap();
+        guard.take()
+    };
+
+    if let Some(mut f) = file_opt {
         let _ = f.write_all(line.as_bytes());
         let _ = f.flush();
+
+        // Return file to mutex
+        let mut guard = guard_mutex.lock().unwrap();
+        *guard = Some(f);
     }
 }
 

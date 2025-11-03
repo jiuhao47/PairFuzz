@@ -418,6 +418,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .shmem_provider(&mut shmem_provider)
             .autotokens(&mut tokens)
             .is_persistent(is_persistent_a)
+            // Enable child debug output when verbosity is very high (-vvv)
+            .debug_child(args.verbose >= 3)
             .coverage_map_size(num_edges)
             .timeout(Duration::from_millis(args.timeout_ms));
 
@@ -534,6 +536,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .shmem_provider(&mut shmem_provider)
             .autotokens(&mut tokens)
             .is_persistent(is_persistent_b)
+            // Enable child debug output when verbosity is very high (-vvv)
+            .debug_child(args.verbose >= 3)
             .coverage_map_size(num_edges)
             .timeout(Duration::from_millis(args.timeout_ms));
 

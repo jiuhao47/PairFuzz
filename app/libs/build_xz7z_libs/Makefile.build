@@ -1,22 +1,9 @@
-# FLAGS := -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls -Wall 
-# CC := /home/user/software/llvm-project/build/bin/clang
-# CXX := /home/user/software/llvm-project/build/bin/clang++
-
-
-LD_FLAGS := -rdynamic -shared 
-
 all:
 	mkdir -p output/
-	find ./ -name "*.c" -exec $(CC) $(CFLAGS) -Wimplicit-function-declaration -c {} -o output/{}.o \;
+	find . -name '*.c' -print0 | \
+		xargs -0 -n1 sh -c 'b=$$(basename "$$1"); $(CC) $(CFLAGS) -Wimplicit-function-declaration -c "$$1" -o "output/$${b}.o"' _
 	ar rcs output/libxz7z_$(COMMIT_HASH).a output/*.o
 	cp output/libxz7z_$(COMMIT_HASH).a ./
-
-7z_parse:
-	rm -f output/7z_parse.c.o
-	$(CC) -c 7z_parse.c -fsanitize=address,fuzzer-no-link -o output/7z_parse.c.o
-
-app:
-	$(CC) -fsanitize=address,fuzzer-no-link output/*.o -o app
 
 clean:
 	rm -f output/*.o

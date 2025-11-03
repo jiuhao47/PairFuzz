@@ -17,5 +17,3 @@ benchmark/libspng
 
 .vscode/
 .cur_input_*
-
-app/harness/

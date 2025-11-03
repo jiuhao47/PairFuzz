@@ -15,7 +15,7 @@ libspng:
 	./compile_commit_hash.sh adc94393
 
 bmp: GM IM
-	cd ./xml2 && ./compile_commit_hash.sh dep
+	cd ./libxml2 && ./compile_commit_hash.sh dep
 	cd ./libpng && ./compile_commit_hash.sh dep
 	cd ./zlib && ./compile_commit_hash.sh dep
 	cd ./bzip2 && ./compile_commit_hash.sh dep
@@ -50,15 +50,15 @@ mjson:
 	./compile_commit_hash.sh b766f34 && \
 	./compile_commit_hash.sh 6b0367
 
-xml: xml2 expat
+xml: libxml2 expat
 	cd ./xz && \
 	./compile_commit_hash.sh dep
 	cd ./zlib && \
 	./compile_commit_hash.sh dep
 
-xml2:
+libxml2:
 	#!/usr/bin/env bash
-	cd ./xml2 && \
+	cd ./libxml2 && \
 	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
 	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
 	./compile_commit_hash.sh 73514f2d && \ 

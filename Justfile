@@ -25,15 +25,34 @@ run app=APP: (fuzzer app) (pre_run app)
 	{{FUZZER}} -vvv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng"
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -vv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --mode single-rv --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libpng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libpng/libspng" --no-persistent 
+	{{FUZZER}} -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-cov --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/GM/IM" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/GM/GM" --persistent-mode auto --simple-monitor auto
 
 pre_run app=APP: 
 	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
-	cp ./app/corpus/png/* run/seeds/
+	# cp /home/user/workspace/workshop/diffray/misc/ssl/* run/seeds/
+	cp ./app/corpus/bmp/* run/seeds/
 
-build_docker:
-	./docker/deploy.sh build
-	
+docker_build:
+	./docker/deploy.sh --target compile build diffray:latest
+
+docker_save:
+	./docker/deploy.sh save diffray:latest ./docker/compile/.tmp/diffray_latest.tar.gz
+
+docker_transfer remote_host="kaichen_server":
+	./docker/deploy.sh scp ./docker/compile/.tmp/diffray_latest.tar.gz {{remote_host}}:/home/jiangjy/download/diffray_compile.tar.gz
+
+docker_load remote_host="kaichen_server":
+	./docker/deploy.sh load {{remote_host}}:/home/jiangjy/download/diffray_compile.tar.gz
+
+docker_start remote_host="kaichen_server":
+	./docker/deploy.sh run {{remote_host}} --image diffray:latest --name jiangjy-diffray --port 27001 --volume /home/jiangjy/workshop/diffray-task:/root/diffray-task
+
+docker_add_key remote_host="kaichen_server":
+	./docker/deploy.sh add-key {{remote_host}} jiangjy-diffray ~/.ssh/id_rsa.pub
+
+
+
+
 edocker:
 	docker run --rm -it \
 	  -v "$PWD":/home/dev/workspace \

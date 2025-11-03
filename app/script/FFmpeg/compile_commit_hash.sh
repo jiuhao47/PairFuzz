@@ -26,13 +26,16 @@ git reset --hard $commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-g -O2 -fPIC -fsanitize=address"
+CXXFLAGS="-g -O2 -fPIC -fsanitize=address"
 
 cd $FFMPEG_BUILD_PATH/FFmpeg_$commit_hash
 
-CXXFLAGS=$CXX CFLAGS=$CC  ./configure  --cxx=$CXX --cc=$CC 
+# CXXFLAGS=$CXXFLAGS CFLAGS=$CFLAGS LDFLAGS=$CFLAGS ./configure --enable-shared --cxx=$CXX --cc=$CC 
 # --prefix=$FFMPEG_INSTALL_PATH/FFmpeg_$commit_hash/install
+CXXFLAGS="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls" CFLAGS="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls" LDFLAGS="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls" ./configure --enable-pic --enable-shared --cxx="clang++" --cc="clang" --extra-cflags="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls" --extra-ldflags="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls" --extra-cxxflags="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls"
+
+# （不对啊）
 
 make -j16
 # mkdir -p install

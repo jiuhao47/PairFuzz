@@ -47,6 +47,15 @@ $CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_openh264_libs/openh264_prog
   -I "../../build/openh264/$openh264_hash/usr/local/include" \
   -o "$TEMP_DIR/openh264_program.o"
 
+# temp
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_FFmpeg_libs/test_ffmpeg.cc" \
+  -I "../../build/FFmpeg/$FFmpeg_hash/usr/local/include/" \
+  -o "../../libs/build_FFmpeg_libs/test_ffmpeg.o"
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_openh264_libs/test_openh264.cc" \
+  -I "../../build/openh264/$openh264_hash/usr/local/include" \
+  -o "../../libs/build_openh264_libs/test_openh264.o"
+
+
 # Add common compression libraries required by FFmpeg's codecs (zlib, lzma, bzip2)
 LINK_LIBS="-lm -lpthread -ldl"
 
@@ -64,10 +73,29 @@ $CXX_WRAPPER $COMMON_LINK_FLAGS "$TEMP_DIR/FFmpeg_program.o" \
   "../../build/bzip2/dep/usr/local/lib/libbz2.a" \
   -o "$TEMP_DIR/ffmpeg_executable" $LINK_LIBS
 
+echo "Linking FFmpeg test executable..."
+$CXX_WRAPPER $COMMON_LINK_FLAGS "../../libs/build_FFmpeg_libs/test_ffmpeg.o" \
+  "$BUILD_FFMPEG_LIB_DIR/libavcodec.a" \
+  "$BUILD_FFMPEG_LIB_DIR/libavdevice.a" \
+  "$BUILD_FFMPEG_LIB_DIR/libavfilter.a" \
+  "$BUILD_FFMPEG_LIB_DIR/libavformat.a" \
+  "$BUILD_FFMPEG_LIB_DIR/libavutil.a" \
+  "$BUILD_FFMPEG_LIB_DIR/libswresample.a" \
+  "$BUILD_FFMPEG_LIB_DIR/libswscale.a" \
+  "../../build/xz/dep/usr/local/lib/liblzma.a" \
+  "../../build/zlib/dep/usr/local/lib/libz.a" \
+  "../../build/bzip2/dep/usr/local/lib/libbz2.a" \
+  -o "../../libs/build_FFmpeg_libs/ffmpeg_test_executable" $LINK_LIBS
+
 echo "Linking openh264 executable..."
 $CXX_WRAPPER $COMMON_LINK_FLAGS "$TEMP_DIR/openh264_program.o" \
   "$BUILD_OPENH264_LIB_DIR/libopenh264.a" \
   -o "$TEMP_DIR/openh264_executable" $LINK_LIBS
+
+echo "Linking openh264 test executable..."
+$CXX_WRAPPER $COMMON_LINK_FLAGS "../../libs/build_openh264_libs/test_openh264.o" \
+  "$BUILD_OPENH264_LIB_DIR/libopenh264.a" \
+  -o "../../libs/build_openh264_libs/openh264_test_executable" $LINK_LIBS
 
 # Step 3: Move executables to bins/.bin
 echo "Installing executables to bins/.bin/$name_suffix..."

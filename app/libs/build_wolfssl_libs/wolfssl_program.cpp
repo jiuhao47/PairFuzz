@@ -5,7 +5,7 @@
 DIFFRAY_INIT();
 
 // include the harness implementation which provides verify_wolfssl
-#include "wolfssl_x509_core.cpp"
+#include "wolfssl_core_simple.cpp"
 
 int main(int argc, char **argv) {
   DIFFRAY_RUN(verify_wolfssl);

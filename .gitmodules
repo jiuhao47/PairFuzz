@@ -1,3 +1,6 @@
 [submodule "LibAFL"]
 	path = LibAFL
 	url = https://github.com/AFLplusplus/LibAFL
+[submodule "LocateFix"]
+	path = LocateFix
+	url = https://github.com/jiuhao47/LocateFix

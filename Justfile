@@ -30,7 +30,7 @@ run_directly app=APP: (pre_run app)
 pre_run app=APP: 
 	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
 	# cp /home/user/workspace/workshop/diffray/misc/ssl/* run/seeds/
-	cp ./app/corpus/bmp/* run/seeds/
+	cp ./app/corpus/png/* run/seeds/
 
 docker_build:
 	./docker/deploy.sh --target compile build diffray:latest
@@ -57,12 +57,12 @@ edocker:
 	docker run --rm -it \
 	  -v "$PWD":/home/dev/workspace \
 	  -w /home/dev/workspace \
+	  --net=host \
 	  diffray:latest
 
-profile: clean
+profile: clean pre_run
 	RUSTFLAGS="-C debuginfo=2" cargo build --profile=release
-	cargo flamegraph --release --bin {{FUZZER_NAME}} -- -v -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/archive_old/archive" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/archive_old/libtar"
-
+	cargo flamegraph --release --bin {{FUZZER_NAME}} -- -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-cov --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/cjson/cjson" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/cjson/mjson" --persistent-mode auto --simple-monitor auto
 clean: clean_build clean_app clean_run
 
 clean_build:

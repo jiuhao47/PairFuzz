@@ -5,3 +5,6 @@
 	path = LocateFix
 	url = https://github.com/jiuhao47/LocateFix
 	branch = main
+[submodule "AFLplusplus"]
+	path = AFLplusplus
+	url = https://github.com/jiuhao47/AFLplusplus

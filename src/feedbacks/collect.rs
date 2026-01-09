@@ -285,6 +285,42 @@ where
                 });
             }
         }
+        Mode::SingleRvPath => {
+            for (idx, opt_h) in f.rv_refs.iter().enumerate() {
+                if opt_h.is_none() {
+                    continue;
+                }
+                let rv = collect_rv::<C, OT>(f, idx, observers)?;
+                let name = opt_h
+                    .as_ref()
+                    .map(|h| h.name().to_string())
+                    .unwrap_or_else(|| f.names.get(idx).map(|s| s.to_string()).unwrap_or_default());
+                // derive found via corresponding map observer if present
+                let found = if let Some(handle) = f.map_refs.get(idx) {
+                    collect_found(f, idx, handle, state, observers)?
+                } else {
+                    false
+                };
+                // collect indices from corresponding map observer if present
+                let indices = if let Some(handle) = f.map_refs.get(idx) {
+                    let idxs = collect_indices(f, idx, handle, state, observers)?;
+                    if idxs.is_empty() {
+                        None
+                    } else {
+                        Some(idxs)
+                    }
+                } else {
+                    None
+                };
+                infos.push(ObserverInfo {
+                    idx,
+                    name: Cow::from(name),
+                    found,
+                    indices,
+                    return_value: rv,
+                });
+            }
+        }
         Mode::ComboRv => {
             for (idx, opt_h) in f.rv_refs.iter().enumerate() {
                 if opt_h.is_none() {

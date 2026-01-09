@@ -363,6 +363,179 @@ where
     Ok(())
 }
 
+/// Check whether the tuple (rv, path) has been seen historically for a side.
+pub fn rv_path_seen_in_history<S: HasNamedMetadata>(
+    state: &S,
+    side: &str,
+    rv: Option<i32>,
+    path: &Vec<usize>,
+) -> bool {
+    let rv_str = match rv {
+        Some(v) => v.to_string(),
+        None => "None".to_string(),
+    };
+    let stats_name = format!("RvPaths({},{})", side, rv_str);
+    history_contains(state, &stats_name, &HistKey::Combo(vec![HistVal::Cov(path.clone())]))
+}
+
+/// Append the (rv, path) combo into history for the given side.
+pub fn append_rv_path<S: HasNamedMetadata>(
+    state: &mut S,
+    side: &str,
+    rv: Option<i32>,
+    path: &Vec<usize>,
+) -> Result<(), Error> {
+    let rv_str = match rv {
+        Some(v) => v.to_string(),
+        None => "None".to_string(),
+    };
+    let stats_name = format!("RvPaths({},{})", side, rv_str);
+    history_insert(state, &stats_name, &HistKey::Combo(vec![HistVal::Cov(path.clone())]))
+}
+
+/// Append SingleRvPath entries: compute per-side (rv, path) and insert when
+/// this execution meets the SingleRvPath interesting criteria.
+pub fn append_single_rv_path<C, S, OT>(
+    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    state: &mut S,
+    observers: &OT,
+) -> Result<(), Error>
+where
+    C: libafl::observers::CanTrack
+        + libafl::observers::MapObserver
+        + for<'it> libafl_bolts::AsIter<'it, Item = C::Entry>,
+    C::Entry: Into<u8> + Copy,
+    S: HasNamedMetadata,
+    OT: MatchNameRef,
+{
+    let infos = crate::feedbacks::collect::collect::<C, S, OT>(this, state, observers)?;
+
+    let mut path_a: Vec<usize> = Vec::new();
+    let mut path_b: Vec<usize> = Vec::new();
+    let mut rv_a: Option<i32> = None;
+    let mut rv_b: Option<i32> = None;
+    for info in infos.iter() {
+        if info.idx == 0 {
+            if let Some(idxs) = &info.indices {
+                path_a = idxs.iter().map(|(i, _v)| *i).collect();
+            }
+            rv_a = info.return_value.as_ref().map(|t| t.1).unwrap_or(None);
+        } else if info.idx == 1 {
+            if let Some(idxs) = &info.indices {
+                path_b = idxs.iter().map(|(i, _v)| *i).collect();
+            }
+            rv_b = info.return_value.as_ref().map(|t| t.1).unwrap_or(None);
+        }
+    }
+
+    let is_zero = |v: Option<i32>| matches!(v, Some(0));
+    let rv_state_diff = (is_zero(rv_a) && !is_zero(rv_b)) || (is_zero(rv_b) && !is_zero(rv_a));
+
+    let side_a_new = !rv_path_seen_in_history(state, "A", rv_a, &path_a);
+    let side_b_new = !rv_path_seen_in_history(state, "B", rv_b, &path_b);
+
+    // Emit diagnostic summary so users can see rv values, path sizes, which side is new,
+    // and the rv_state_diff direction (which side is zero vs non-zero).
+    if crate::driver::env_var::env_bool_cached(crate::driver::env_var::APPEND_METADATA_DEBUG) {
+        let rv_a_str = match rv_a { Some(v) => v.to_string(), None => "None".to_string() };
+        let rv_b_str = match rv_b { Some(v) => v.to_string(), None => "None".to_string() };
+        let sample_a = if path_a.is_empty() { "[]".to_string() } else {
+            let mut s = String::new();
+            for (i, v) in path_a.iter().take(16).enumerate() {
+                if i > 0 { s.push_str(","); }
+                s.push_str(&v.to_string());
+            }
+            format!("[{}]{}", s, if path_a.len() > 16 { "..." } else { "" })
+        };
+        let sample_b = if path_b.is_empty() { "[]".to_string() } else {
+            let mut s = String::new();
+            for (i, v) in path_b.iter().take(16).enumerate() {
+                if i > 0 { s.push_str(","); }
+                s.push_str(&v.to_string());
+            }
+            format!("[{}]{}", s, if path_b.len() > 16 { "..." } else { "" })
+        };
+        let dir = if is_zero(rv_a) && !is_zero(rv_b) {
+            "A_zero_vs_B_nonzero"
+        } else if is_zero(rv_b) && !is_zero(rv_a) {
+            "B_zero_vs_A_nonzero"
+        } else {
+            "no_rv_state_diff"
+        };
+        append_metadata_debug_log(
+            "metadata",
+            &format!(
+                "append_single_rv_path: rv_a={} rv_b={} dir={} side_a_new={} side_b_new={} path_a_len={} sample_a={} path_b_len={} sample_b={}",
+                rv_a_str,
+                rv_b_str,
+                dir,
+                side_a_new,
+                side_b_new,
+                path_a.len(),
+                sample_a,
+                path_b.len(),
+                sample_b
+            ),
+        );
+    }
+
+    if rv_state_diff && (side_a_new || side_b_new) {
+        if side_a_new {
+            // Emit debug log for newly-seen (side,rv,path)
+            let rv_str = match rv_a {
+                Some(v) => v.to_string(),
+                None => "None".to_string(),
+            };
+            let stats_name = format!("RvPaths({},{})", "A", rv_str);
+            let prev_count = state
+                .named_metadata_map()
+                .get::<ComboSeenStats>(&stats_name)
+                .map(|md| md.seen.len())
+                .unwrap_or(0);
+            let key = HistKey::Combo(vec![HistVal::Cov(path_a.clone())]);
+            let fp = crate::feedbacks::hist_stats::fingerprint(&key);
+            append_metadata_debug_log(
+                "metadata",
+                &format!(
+                    "append_metadata: NEW RvPaths '{}' -> fp=0x{:016x} path_len={} (previously seen={})",
+                    stats_name,
+                    fp,
+                    path_a.len(),
+                    prev_count
+                ),
+            );
+            append_rv_path(state, "A", rv_a, &path_a)?;
+        }
+        if side_b_new {
+            let rv_str = match rv_b {
+                Some(v) => v.to_string(),
+                None => "None".to_string(),
+            };
+            let stats_name = format!("RvPaths({},{})", "B", rv_str);
+            let prev_count = state
+                .named_metadata_map()
+                .get::<ComboSeenStats>(&stats_name)
+                .map(|md| md.seen.len())
+                .unwrap_or(0);
+            let key = HistKey::Combo(vec![HistVal::Cov(path_b.clone())]);
+            let fp = crate::feedbacks::hist_stats::fingerprint(&key);
+            append_metadata_debug_log(
+                "metadata",
+                &format!(
+                    "append_metadata: NEW RvPaths '{}' -> fp=0x{:016x} path_len={} (previously seen={})",
+                    stats_name,
+                    fp,
+                    path_b.len(),
+                    prev_count
+                ),
+            );
+            append_rv_path(state, "B", rv_b, &path_b)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn append_single_rv<C, S, OT>(
     this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
     state: &mut S,

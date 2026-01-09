@@ -263,6 +263,14 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 &map_observer_b,
             )
         }
+        crate::driver::args::RunMode::SingleRvPath => {
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_rv_path(
+                &rv_feedback_observer_a,
+                &rv_feedback_observer_b,
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
         crate::driver::args::RunMode::ComboRv => {
             crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_rv(
                 &rv_feedback_observer_a,

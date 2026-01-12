@@ -1,7 +1,9 @@
+#include <wolfssl/ssl.h>
+
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/evp.h>
 #include <wolfssl/openssl/x509.h>
-#include <wolfssl/ssl.h>
+
 #define ACCEPT 0
 #define REJECT 1
 #define PRINT_ERR 2

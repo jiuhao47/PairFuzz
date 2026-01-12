@@ -19,7 +19,7 @@ applyTo: '**'
   - 只有当 `cargo check` 报告“0 错误”和“可接受或无严重警告”（由人类审查确认）时，才继续进行变更或提交建议。若有错误，先修复错误；若只有警告，列出并建议如何处理或说明为何暂时可以忽略。
 
   - 项目路径与适用范围（仅在修改 src/ 下的文件时生效）
-    - 当需要对 `src/` 下的文件执行补丁或其它文件系统变更时，必须使用仓库绝对根目录作为参考：`/home/user/workspace/workshop/diffray`。具体要求示例：用于 `apply_patch` 的文件路径应以该绝对根目录为起点（例如 `/home/user/workspace/workshop/diffray/src/foo.rs`），以避免路径解析错误或不一致的相对路径引用。
+    - 当需要对 `src/` 下的文件执行补丁或其它文件系统变更时，必须使用仓库绝对根目录作为参考：`/home/user/workspace/diffray`。具体要求示例：用于 `apply_patch` 的文件路径应以该绝对根目录为起点（例如 `/home/user/workspace/diffray/src/foo.rs`），以避免路径解析错误或不一致的相对路径引用。
     - 如果操作不涉及 `src/`（例如只修改 README、CI 配置或 docs），则绝对根路径约束可视为不强制，但建议仍保持以仓库根为参考以减少歧义。
 
   - 每次建议代码改动时，输出必须包含：

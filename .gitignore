@@ -16,3 +16,5 @@ benchmark/libspng
 
 .vscode/
 .cur_input_*
+
+AFLplusplus

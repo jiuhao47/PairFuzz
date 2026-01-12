@@ -6,6 +6,7 @@ CARGO_TARGET_DIR := env("CARGO_TARGET_DIR", "target")
 FUZZER := CARGO_TARGET_DIR / PROFILE_DIR / FUZZER_NAME
 LIBAFL_CC := CARGO_TARGET_DIR / PROFILE_DIR / "libafl_cc"
 APP := 'libpng'
+APP_FOLDER := PROJECT_DIR / "app" 
 
 alias build := fuzzer
 
@@ -25,12 +26,14 @@ run app=APP: (fuzzer app) (pre_run app)
 	{{FUZZER}} -vvv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng"
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-cov --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/GM/IM" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/GM/GM" --persistent-mode auto --simple-monitor auto
+	{{FUZZER}} -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-rv-cov --prog-a "/home/user/workspace/diffray/app/bins/.bin/libpng/libpng" --prog-b "/home/user/workspace/diffray/app/bins/.bin/libpng/libspng" --persistent-mode auto --simple-monitor auto
 
 pre_run app=APP: 
 	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
 	# cp /home/user/workspace/workshop/diffray/misc/ssl/* run/seeds/
 	cp ./app/corpus/png/* run/seeds/
+	# cp /home/user/workspace/diffray/AFLplusplus/quick/run/out/default/queue/id* run/seeds/
+	# cp /home/user/workspace/diffray/misc/corpus_tmp/fuzz-corpora/x509/* run/seeds/
 
 docker_build:
 	./docker/deploy.sh --target compile build diffray:latest
@@ -50,7 +53,15 @@ docker_start remote_host="kaichen_server":
 docker_add_key remote_host="kaichen_server":
 	./docker/deploy.sh add-key {{remote_host}} jiangjy-diffray ~/.ssh/id_rsa.pub
 
+scp_fuzzer remote_host="diffray_container":
+	scp {{FUZZER}} {{remote_host}}:/root/diffray-task/fuzzer/{{FUZZER_NAME}}
 
+
+
+recompile_app app:
+    #!/bin/bash
+    # cd {{APP_FOLDER}}/script/ && just {{app}}
+    cd {{APP_FOLDER}}/bins/{{app}} && ./gen.sh
 
 
 edocker:
@@ -63,6 +74,8 @@ edocker:
 profile: clean pre_run
 	RUSTFLAGS="-C debuginfo=2" cargo build --profile=release
 	cargo flamegraph --release --bin {{FUZZER_NAME}} -- -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-cov --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/cjson/cjson" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/cjson/mjson" --persistent-mode auto --simple-monitor auto
+
+
 clean: clean_build clean_app clean_run
 
 clean_build:

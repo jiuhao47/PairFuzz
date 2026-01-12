@@ -41,7 +41,7 @@ pub enum Mode {
     ComboCov,
     /// consider the tuple (rv1, rv2, ...) across observers and check if that combo appeared before
     ComboRv,
-    /// single return-value with coverage-aware novelty: check rv-state-diff and per-side (rv,path) novelty
+    /// single return-value with path-aware novelty: check rv-state-diff and per-side (rv,path) novelty
     SingleRvCov,
 }
 
@@ -486,9 +486,8 @@ where
 
                 // helper: Some(0) is zero-state; None is treated as non-zero per design
                 let is_zero = |v: Option<i32>| matches!(v, Some(0));
-                let _rv_state_diff_or_both_zero = (is_zero(rv_a) && !is_zero(rv_b))
-                    || (is_zero(rv_b) && !is_zero(rv_a))
-                    || (is_zero(rv_a) && is_zero(rv_b));
+                let rv_state_diff =
+                    (is_zero(rv_a) && !is_zero(rv_b)) || (is_zero(rv_b) && !is_zero(rv_a));
 
                 // check per-side whether (rv, path) was already seen
                 let side_a_new =
@@ -496,8 +495,7 @@ where
                 let side_b_new =
                     !crate::feedbacks::metadata::rv_path_seen_in_history(state, "B", rv_b, &path_b);
 
-                _rv_state_diff_or_both_zero && (side_a_new || side_b_new)
-                // side_a_new || side_b_new
+                rv_state_diff && (side_a_new || side_b_new)
             }
             Mode::ComboRv => {
                 // interesting if the combo of rv values across observers has not been seen before

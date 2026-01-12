@@ -4,15 +4,14 @@ use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleRestartingEventManager,
     executors::{forkserver::ForkserverExecutor, DiffExecutor},
-    feedback_and_fast, feedback_or_fast,
-    feedbacks::{MaxMapFeedback, StateInitializer},
+    feedback_and_fast,
+    feedback_or_fast,
+    // feedbacks::MaxMapFeedback,
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
-    schedulers::{
-        powersched::PowerSchedule, IndexesLenTimeMinimizerScheduler, StdWeightedScheduler,
-    },
-    stages::{CalibrationStage, StdPowerMutationalStage},
+    schedulers::QueueScheduler,
+    stages::mutational::StdMutationalStage,
     state::{HasCorpus, StdState},
 };
 // Note: we intentionally avoid MinMapFeedback here to keep concrete feedback types
@@ -36,7 +35,6 @@ static GLOBAL: MiMalloc = MiMalloc;
 mod driver;
 mod feedbacks;
 mod observers;
-mod stages;
 mod utils;
 
 use observers::ReturnValueObserver;
@@ -98,7 +96,6 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let num_edges: usize = crate::driver::constants::MAP_SIZE;
 
     // We'll allocate coverage observers (A, B) and a combined objective buffer.
-    use libafl::observers::CanTrack;
     use libafl::observers::HitcountsMapObserver;
     use libafl::observers::StdMapObserver;
 
@@ -239,9 +236,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             objective_ptr,
             objective_len,
         );
-        // Enable index tracking on the combined objective map so the minimizer scheduler
-        // operates on the same (A,B) coverage that drives map objectives.
-        objective_observer = HitcountsMapObserver::new(obs_obj).track_indices();
+        objective_observer = HitcountsMapObserver::new(obs_obj);
     }
 
     // Build coverage/return-value feedbacks. Support rv-mode == Single by constructing
@@ -309,11 +304,6 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         map_diff_obj_fb
     );
 
-    // A dedicated map feedback used only for CalibrationStage/power-schedule metadata.
-    // Construct it before moving `objective_observer` into the observers tuple.
-    let mut calibration_map_feedback =
-        MaxMapFeedback::with_name("calibration_map", &objective_observer);
-
     let (maybe_state, mut mgr) =
         match SimpleRestartingEventManager::launch(monitors, &mut shmem_provider) {
             Ok(res) => res,
@@ -349,9 +339,6 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
     });
 
-    // Initialize map-feedback metadata required by `CalibrationStage`.
-    calibration_map_feedback.init_state(&mut state)?;
-
     // Initialize named metadata for map observers so corpus/state resume and
     // scheduler heuristics that rely on observer metadata work correctly.
     // We create a temporary DiffrayFeedback instance and use its
@@ -366,38 +353,10 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Scheduler and fuzzer construction
-    // Use a weighted scheduler with power schedules (AFL++-style) to enable
-    // `StdPowerMutationalStage` and improve coverage exploration.
-    // `IndexesLenTimeMinimizerScheduler` requires index tracking enabled on the observer type.
-    // Use the combined `objective-edges` map (A+B) so minimization is consistent with diffray's
-    // differential map objective.
-    let minimizer_observer = objective_observer.clone();
-    let scheduler = IndexesLenTimeMinimizerScheduler::new(
-        &minimizer_observer,
-        StdWeightedScheduler::with_schedule(
-            &mut state,
-            &objective_observer.clone(),
-            Some(PowerSchedule::explore()),
-        ),
-    );
+    let scheduler = QueueScheduler::new();
 
-    // A fuzzer with feedbacks and a corpus scheduler.
-    // Note: `MapIndexesMetadata` is a singleton per testcase in LibAFL.
-    // Create a dedicated, named MapFeedback for the objective observer so
-    // it is responsible for producing `MapIndexesMetadata` (used by the
-    // `IndexesLenTimeMinimizerScheduler`). Initialize it now so loading
-    // initial seeds will attach per-testcase metadata.
-    let mut map_feedback_for_main =
-        MaxMapFeedback::with_name("objective_map_main", &objective_observer);
-    // Register named metadata for this feedback so `append_metadata` can add per-testcase entries.
-    map_feedback_for_main.init_state(&mut state)?;
-
-    // Combine the original diffray feedback with the map feedback so that
-    // `append_metadata` during evaluation will attach `MapIndexesMetadata`.
-    let main_feedback = feedback_and_fast!(feedback, map_feedback_for_main);
-
-    // Construct the fuzzer using the combined main feedback chain
-    let mut fuzzer = StdFuzzer::new(scheduler, main_feedback, objective);
+    // A fuzzer with feedbacks and a corpus scheduler
+    let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     // Build two Forkserver executors (A and B) and wrap them in a DiffExecutor
     // Reuse the existing shmem provider to reduce duplicate allocations/syscalls
@@ -761,23 +720,10 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     state.add_metadata(tokens);
     *state.start_time_mut() = current_time();
 
-    // Stage order:
-    // 1) CalibrationStage (sets exec_time/bitmap_size metadata)
-    // 2) DeterministicBytesStage (cheap AFL++-like deterministic mutations)
-    // 3) StdPowerMutationalStage (power-scheduled havoc)
-    let calibration = CalibrationStage::ignore_stability(&calibration_map_feedback);
-    // Deterministic stage samples positions across the full input length to avoid head-only bias.
-    // Cost is controlled via the number of sampled positions (not via an eval budget cap).
-    let det_max_positions = std::env::var("DIFFRAY_DET_MAX_POS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(128);
-    let deterministic =
-        crate::stages::deterministic::DeterministicBytesStage::new(det_max_positions);
-    let havoc_mutator = HavocScheduledMutator::new(havoc_mutations());
-    let power: StdPowerMutationalStage<_, _, _, _, _, _> =
-        StdPowerMutationalStage::new(havoc_mutator);
-    let mut stages = tuple_list!(calibration, deterministic, power);
+    // Setup a mutational stage using HavocScheduledMutator
+    let mutator = HavocScheduledMutator::new(havoc_mutations());
+    // Use a single mutational stage
+    let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
     if args.verbose > 0 {
         info("main", "Starting fuzzing...");

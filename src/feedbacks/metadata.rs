@@ -23,6 +23,7 @@ use libafl::events::EventWithStats;
 use libafl::monitors::stats::{AggregatorOps, UserStats, UserStatsValue};
 use libafl::state::HasExecutions;
 use libafl::Error;
+use libafl::HasMetadata;
 use libafl::HasNamedMetadata;
 use libafl_bolts::tuples::MatchNameRef;
 use std::borrow::Cow;
@@ -45,7 +46,7 @@ pub fn append_single_cov<C, EM, I, OT, S>(
     state: &mut S,
     _manager: &mut EM,
     observers: &OT,
-    _testcase: &mut Testcase<I>,
+    testcase: &mut Testcase<I>,
 ) -> Result<(), Error>
 where
     C: libafl::observers::CanTrack
@@ -325,6 +326,24 @@ where
 
         // stats modified in-place on stats_mut; nothing to assign back
 
+        // Attach indices metadata like MapFeedback (don't attach novelties here; handled once after match)
+        if C::INDICES {
+            // collect indices in a single pass without creating intermediate iterators
+            let mut indices = Vec::new();
+            indices.reserve(len / 8 + 1);
+            for (i, v_ref) in observer.as_iter().enumerate() {
+                if *v_ref != initial {
+                    indices.push(i);
+                }
+            }
+            let meta = libafl::feedbacks::MapIndexesMetadata::new(indices);
+            if testcase.try_add_metadata(meta).is_err() {
+                return Err(Error::key_exists(
+                    "MapIndexesMetadata is already attached to this testcase. You should not have more than one observer with tracking.",
+                ));
+            }
+        }
+
         // Fire UpdateUserStats using ever-seen covered value
         _manager.fire(
             state,
@@ -462,10 +481,8 @@ where
             "A_zero_vs_B_nonzero"
         } else if is_zero(rv_b) && !is_zero(rv_a) {
             "B_zero_vs_A_nonzero"
-        } else if is_zero(rv_a) && is_zero(rv_b) {
-            "both_zero"
         } else {
-            "both_nonzero"
+            "no_rv_state_diff"
         };
         append_metadata_debug_log(
             "metadata",

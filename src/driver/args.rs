@@ -7,7 +7,6 @@ pub enum RunMode {
     SingleCov,
     SingleRv,
     SinglePl,
-    #[value(name = "single-rv-cov")]
     SingleRvCov,
     ComboCov,
     ComboRv,
@@ -126,8 +125,8 @@ pub struct Args {
         help = "Path to the second implementation executable (used in forkserver mode)."
     )]
     pub prog_b: Option<PathBuf>,
-    /// Run mode: single-cov|single-rv|single-pl|single-rv-cov|combo-cov|combo-rv|combo-pl
-    #[arg(long = "mode", help = "Run mode: single-cov|single-rv|single-pl|single-rv-cov|combo-cov|combo-rv|combo-pl", default_value_t = RunMode::SingleCov)]
+    /// Run mode: single-cov|single-rv|single-pl|combo-cov|combo-rv|combo-pl
+    #[arg(long = "mode", help = "Run mode: single-cov|single-rv|single-pl|combo-cov|combo-rv|combo-pl", default_value_t = RunMode::SingleCov)]
     pub mode: RunMode,
 
     #[arg(

@@ -142,7 +142,7 @@ impl Bits {
     /// taking ownership. This allows hot-path callers to operate on the
     /// backing words directly without allocating or moving the Vec.
     #[inline]
-        pub fn from_vec_ref(words: &mut Vec<u64>) -> BitsMut<'_> {
+    pub fn from_vec_ref(words: &mut Vec<u64>) -> BitsMut<'_> {
         BitsMut {
             words: words.as_mut_slice(),
         }

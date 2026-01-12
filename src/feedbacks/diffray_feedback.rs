@@ -41,8 +41,8 @@ pub enum Mode {
     ComboCov,
     /// consider the tuple (rv1, rv2, ...) across observers and check if that combo appeared before
     ComboRv,
-    /// single return-value with path-aware novelty: check rv-state-diff and per-side (rv,path) novelty
-    SingleRvPath,
+    /// single return-value with coverage-aware novelty: check rv-state-diff and per-side (rv,path) novelty
+    SingleRvCov,
 }
 
 /// Per-observer configuration for DiffrayFeedback
@@ -225,8 +225,8 @@ where
         Self::new_with_mode(map_a, map_b, Mode::SingleRv, Some(rv_a), Some(rv_b))
     }
 
-    /// Construct a DiffrayFeedback for SingleRvPath mode (RV + per-side path).
-    pub fn new_single_rv_path(
+    /// Construct a DiffrayFeedback for SingleRvCov mode (RV + per-side path).
+    pub fn new_single_rv_cov(
         rv_a: &ReturnValueObserver,
         rv_b: &ReturnValueObserver,
         map_a: &C,
@@ -235,7 +235,7 @@ where
     where
         C: libafl_bolts::Named,
     {
-        Self::new_with_mode(map_a, map_b, Mode::SingleRvPath, Some(rv_a), Some(rv_b))
+        Self::new_with_mode(map_a, map_b, Mode::SingleRvCov, Some(rv_a), Some(rv_b))
     }
 
     /// Construct a DiffrayFeedback for two map observers in SinglePL mode.
@@ -464,7 +464,7 @@ where
                 // interesting if NOT all observed single RVs have been seen historically
                 !self.single_rv_seen_in_history(state, infos)
             }
-            Mode::SingleRvPath => {
+            Mode::SingleRvCov => {
                 // Build per-side path vectors and rv values (assume side 0 -> A, side 1 -> B)
                 let mut path_a: Vec<usize> = Vec::new();
                 let mut path_b: Vec<usize> = Vec::new();
@@ -486,8 +486,9 @@ where
 
                 // helper: Some(0) is zero-state; None is treated as non-zero per design
                 let is_zero = |v: Option<i32>| matches!(v, Some(0));
-                let rv_state_diff =
-                    (is_zero(rv_a) && !is_zero(rv_b)) || (is_zero(rv_b) && !is_zero(rv_a));
+                let _rv_state_diff_or_both_zero = (is_zero(rv_a) && !is_zero(rv_b))
+                    || (is_zero(rv_b) && !is_zero(rv_a))
+                    || (is_zero(rv_a) && is_zero(rv_b));
 
                 // check per-side whether (rv, path) was already seen
                 let side_a_new =
@@ -495,7 +496,8 @@ where
                 let side_b_new =
                     !crate::feedbacks::metadata::rv_path_seen_in_history(state, "B", rv_b, &path_b);
 
-                rv_state_diff && (side_a_new || side_b_new)
+                _rv_state_diff_or_both_zero && (side_a_new || side_b_new)
+                // side_a_new || side_b_new
             }
             Mode::ComboRv => {
                 // interesting if the combo of rv values across observers has not been seen before
@@ -734,9 +736,9 @@ where
                 // Persist single-RV history
                 self.append_single_rv::<S, OT>(state, observers)?;
             }
-            Mode::SingleRvPath => {
-                // Persist per-(rv,path) history for SingleRvPath mode
-                crate::feedbacks::metadata::append_single_rv_path(self, state, observers)?;
+            Mode::SingleRvCov => {
+                // Persist per-(rv,path) history for SingleRvCov mode
+                crate::feedbacks::metadata::append_single_rv_cov(self, state, observers)?;
             }
             Mode::ComboRv => {
                 // Persist combo-RV history

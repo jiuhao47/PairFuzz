@@ -23,7 +23,6 @@ use libafl::events::EventWithStats;
 use libafl::monitors::stats::{AggregatorOps, UserStats, UserStatsValue};
 use libafl::state::HasExecutions;
 use libafl::Error;
-use libafl::HasMetadata;
 use libafl::HasNamedMetadata;
 use libafl_bolts::tuples::MatchNameRef;
 use std::borrow::Cow;
@@ -46,7 +45,7 @@ pub fn append_single_cov<C, EM, I, OT, S>(
     state: &mut S,
     _manager: &mut EM,
     observers: &OT,
-    testcase: &mut Testcase<I>,
+    _testcase: &mut Testcase<I>,
 ) -> Result<(), Error>
 where
     C: libafl::observers::CanTrack
@@ -326,24 +325,6 @@ where
 
         // stats modified in-place on stats_mut; nothing to assign back
 
-        // Attach indices metadata like MapFeedback (don't attach novelties here; handled once after match)
-        if C::INDICES {
-            // collect indices in a single pass without creating intermediate iterators
-            let mut indices = Vec::new();
-            indices.reserve(len / 8 + 1);
-            for (i, v_ref) in observer.as_iter().enumerate() {
-                if *v_ref != initial {
-                    indices.push(i);
-                }
-            }
-            let meta = libafl::feedbacks::MapIndexesMetadata::new(indices);
-            if testcase.try_add_metadata(meta).is_err() {
-                return Err(Error::key_exists(
-                    "MapIndexesMetadata is already attached to this testcase. You should not have more than one observer with tracking.",
-                ));
-            }
-        }
-
         // Fire UpdateUserStats using ever-seen covered value
         _manager.fire(
             state,
@@ -375,7 +356,11 @@ pub fn rv_path_seen_in_history<S: HasNamedMetadata>(
         None => "None".to_string(),
     };
     let stats_name = format!("RvPaths({},{})", side, rv_str);
-    history_contains(state, &stats_name, &HistKey::Combo(vec![HistVal::Cov(path.clone())]))
+    history_contains(
+        state,
+        &stats_name,
+        &HistKey::Combo(vec![HistVal::Cov(path.clone())]),
+    )
 }
 
 /// Append the (rv, path) combo into history for the given side.
@@ -390,12 +375,16 @@ pub fn append_rv_path<S: HasNamedMetadata>(
         None => "None".to_string(),
     };
     let stats_name = format!("RvPaths({},{})", side, rv_str);
-    history_insert(state, &stats_name, &HistKey::Combo(vec![HistVal::Cov(path.clone())]))
+    history_insert(
+        state,
+        &stats_name,
+        &HistKey::Combo(vec![HistVal::Cov(path.clone())]),
+    )
 }
 
-/// Append SingleRvPath entries: compute per-side (rv, path) and insert when
-/// this execution meets the SingleRvPath interesting criteria.
-pub fn append_single_rv_path<C, S, OT>(
+/// Append SingleRvCov entries: compute per-side (rv, path) and insert when
+/// this execution meets the SingleRvCov interesting criteria.
+pub fn append_single_rv_cov<C, S, OT>(
     this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
     state: &mut S,
     observers: &OT,
@@ -437,20 +426,34 @@ where
     // Emit diagnostic summary so users can see rv values, path sizes, which side is new,
     // and the rv_state_diff direction (which side is zero vs non-zero).
     if crate::driver::env_var::env_bool_cached(crate::driver::env_var::APPEND_METADATA_DEBUG) {
-        let rv_a_str = match rv_a { Some(v) => v.to_string(), None => "None".to_string() };
-        let rv_b_str = match rv_b { Some(v) => v.to_string(), None => "None".to_string() };
-        let sample_a = if path_a.is_empty() { "[]".to_string() } else {
+        let rv_a_str = match rv_a {
+            Some(v) => v.to_string(),
+            None => "None".to_string(),
+        };
+        let rv_b_str = match rv_b {
+            Some(v) => v.to_string(),
+            None => "None".to_string(),
+        };
+        let sample_a = if path_a.is_empty() {
+            "[]".to_string()
+        } else {
             let mut s = String::new();
             for (i, v) in path_a.iter().take(16).enumerate() {
-                if i > 0 { s.push_str(","); }
+                if i > 0 {
+                    s.push_str(",");
+                }
                 s.push_str(&v.to_string());
             }
             format!("[{}]{}", s, if path_a.len() > 16 { "..." } else { "" })
         };
-        let sample_b = if path_b.is_empty() { "[]".to_string() } else {
+        let sample_b = if path_b.is_empty() {
+            "[]".to_string()
+        } else {
             let mut s = String::new();
             for (i, v) in path_b.iter().take(16).enumerate() {
-                if i > 0 { s.push_str(","); }
+                if i > 0 {
+                    s.push_str(",");
+                }
                 s.push_str(&v.to_string());
             }
             format!("[{}]{}", s, if path_b.len() > 16 { "..." } else { "" })
@@ -459,13 +462,15 @@ where
             "A_zero_vs_B_nonzero"
         } else if is_zero(rv_b) && !is_zero(rv_a) {
             "B_zero_vs_A_nonzero"
+        } else if is_zero(rv_a) && is_zero(rv_b) {
+            "both_zero"
         } else {
-            "no_rv_state_diff"
+            "both_nonzero"
         };
         append_metadata_debug_log(
             "metadata",
             &format!(
-                "append_single_rv_path: rv_a={} rv_b={} dir={} side_a_new={} side_b_new={} path_a_len={} sample_a={} path_b_len={} sample_b={}",
+                "append_single_rv_cov: rv_a={} rv_b={} dir={} side_a_new={} side_b_new={} path_a_len={} sample_a={} path_b_len={} sample_b={}",
                 rv_a_str,
                 rv_b_str,
                 dir,

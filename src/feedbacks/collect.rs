@@ -285,7 +285,7 @@ where
                 });
             }
         }
-        Mode::SingleRvPath => {
+        Mode::SingleRvCov => {
             for (idx, opt_h) in f.rv_refs.iter().enumerate() {
                 if opt_h.is_none() {
                     continue;

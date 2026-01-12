@@ -29,10 +29,32 @@ fi
 # bzip2 typically uses a simple Makefile
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 
 export CC CXX CFLAGS CXXFLAGS
+
+# Use an embedded Python script to perform robust in-place replacements.
+# The Python code reads environment variables and replaces lines like
+#    VAR=...
+# or VAR = ...
+# with `VAR = <value>` safely, avoiding sed delimiter/escaping issues.
+python3 - <<'PY'
+import os, re
+mf = 'Makefile'
+cc = os.environ.get('CC', '')
+cflags = os.environ.get('CFLAGS', '')
+cxx = os.environ.get('CXX', '')
+cxxflags = os.environ.get('CXXFLAGS', '')
+with open(mf, 'r', encoding='utf-8') as f:
+    s = f.read()
+s = re.sub(r'(?m)^\s*CC\s*=.*$', f'CC = {cc}', s)
+s = re.sub(r'(?m)^\s*CFLAGS\s*=.*$', f'CFLAGS = {cflags}', s)
+s = re.sub(r'(?m)^\s*CXX\s*=.*$', f'CXX = {cxx}', s)
+s = re.sub(r'(?m)^\s*CXXFLAGS\s*=.*$', f'CXXFLAGS = {cxxflags}', s)
+with open(mf, 'w', encoding='utf-8') as f:
+    f.write(s)
+PY
 
 # Build with the repository-provided CC wrapper
 make -j16

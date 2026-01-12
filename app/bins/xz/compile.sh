@@ -42,6 +42,16 @@ $CC_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_xz7z_libs/7z_program.c" \
   -I "../../build/xz7z/include" \
   -o "$TEMP_DIR/xz7z_program.o"
 
+echo "Compiling xz core..."
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_xz_libs/xz_core.cpp" \
+  -I "../../build/xz/$xz_hash/usr/local/include/" \
+  -o "$TEMP_DIR/xz_core.o"
+
+echo "Compiling xz7z core..."
+$CC_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_xz7z_libs/7z_core.c" \
+  -I "../../build/xz7z/include" \
+  -o "$TEMP_DIR/xz7z_core.o"
+
 # Step 2: link static libraries to object files to generate executables
 LINK_LIBS="-lm"
 
@@ -62,5 +72,20 @@ install -m 0755 "$TEMP_DIR/xz_executable" "../../bins/.bin/$name_suffix/xz"
 install -m 0755 "$TEMP_DIR/xz7z_executable" "../../bins/.bin/$name_suffix/xz7z"
 
 # Clean up
+# Step 4: build shared libraries (position-independent, bundle static deps)
+echo "Building shared library for xz..."
+$CXX_WRAPPER -shared -o "$TEMP_DIR/xz_shared.so" "$TEMP_DIR/xz_core.o" \
+  "../../build/xz/$xz_hash/usr/local/lib/liblzma.a" \
+  -Wl,-soname,libxz_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Building shared library for xz7z..."
+$CC_WRAPPER -shared -o "$TEMP_DIR/xz7z_shared.so" "$TEMP_DIR/xz7z_core.o" \
+  "../../build/xz7z/install/libxz7z.a" \
+  -Wl,-soname,libxz7z_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Installing shared libraries to bins/.bin/$name_suffix/"
+install -m 0755 "$TEMP_DIR/xz_shared.so" "../../bins/.bin/$name_suffix/xz_local.so"
+install -m 0755 "$TEMP_DIR/xz7z_shared.so" "../../bins/.bin/$name_suffix/xz7z_local.so"
+
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"

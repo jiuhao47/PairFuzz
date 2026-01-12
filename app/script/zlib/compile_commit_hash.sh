@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # old: 7751bd4
 # new: 09155ea
 
@@ -35,11 +35,11 @@ cd build
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fPIC -fsanitize=address"
+CXXFLAGS="-fPIC -fsanitize=address"
 
 # ../configure --disable-ifunc --disable-sandbox CC=$CC CXX=$CXX CFLAGS="-g -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls -fPIC" CXXFLAGS="-g -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls -fPIC"
-cmake .. -D CMAKE_C_COMPILER=$CC -D CMAKE_CXX_COMPILER=$CXX -DCMAKE_C_FLAGS=$CFLAGS -DCMAKE_CXX_FLAGS=$CXXFLAGS -DBUILD_SHARED_LIBS=OFF
+cmake .. -D CMAKE_C_COMPILER=$CC -D CMAKE_CXX_COMPILER=$CXX -DCMAKE_C_FLAGS="$CFLAGS" -DCMAKE_CXX_FLAGS="$CXXFLAGS" -DBUILD_SHARED_LIBS=OFF
 make -j8
 cd $ZLIB_INSTALL_PATH && mkdir -p $commit_hash
 cd $ZLIB_INSTALL_PATH/zlib_$commit_hash/build

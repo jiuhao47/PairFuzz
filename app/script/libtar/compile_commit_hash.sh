@@ -31,13 +31,13 @@ cd $libtar_BUILD_PATH/libtar_$commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 
 cd $libtar_BUILD_PATH/libtar_$commit_hash
 
 autoreconf --force --install
-./configure  CXX=$CXX CC=$CC CFLAGS=$CFLAGS CXXFLAGS=$CXXFLAGS
+./configure  CXX=$CXX CC=$CC CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
 
 make -j16
 

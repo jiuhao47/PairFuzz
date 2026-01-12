@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 ### version
 # oldest: a11c44317
 # newest: efc217633
@@ -7,7 +7,7 @@ commit_hash=$1
 
 DEFLATEON_ROOT_PATH=/home/xjy/fuzz/else/fuzz_project
 DEFLATE_BUILD_PATH=$DEFLATEON_ROOT_PATH/build
-DEFLATE_SRC_PATH=$DEFLATEON_ROOT_PATH/src/deflate
+DEFLATE_SRC_PATH=$DEFLATEON_ROOT_PATH/src/libdeflate
 DEFLATE_INSTALL_PATH=$DEFLATEON_ROOT_PATH/build
 DEFLATE_LIB_PATH=$DEFLATEON_ROOT_PATH/libs/build_deflate_libs/
 

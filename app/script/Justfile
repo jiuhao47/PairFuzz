@@ -1,6 +1,8 @@
 PROJECT_ROOT := "/home/dev/workspace"
 
-png: libpng libspng
+png: png_deps libpng libspng
+
+png_deps:	
 	cd ./zlib && \
 	./compile_commit_hash.sh dep
 
@@ -14,7 +16,9 @@ libspng:
 	./compile_commit_hash.sh 7295a4b5a && \
 	./compile_commit_hash.sh adc94393
 
-bmp: GM IM
+bmp: bmp_deps GM IM
+
+bmp_deps:
 	cd ./libxml2 && ./compile_commit_hash.sh dep
 	cd ./libpng && ./compile_commit_hash.sh dep
 	cd ./zlib && ./compile_commit_hash.sh dep
@@ -29,12 +33,13 @@ GM:
 	./compile_commit_hash.sh 17300
 
 IM:
+	#!/bin/bash
 	cd ./IM && \
-	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
-	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.71/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.71/install/bin/autoconf" \
 	./compile_commit_hash.sh 0729cc470 && \
-	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.69/install/bin:$PATH \
-	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.69/install/bin/autoconf \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin/autoconf" \
 	./compile_commit_hash.sh 4c717b784
 
 
@@ -50,7 +55,9 @@ mjson:
 	./compile_commit_hash.sh b766f34 && \
 	./compile_commit_hash.sh 6b0367
 
-xml: libxml2 expat
+xml: xml_deps libxml2 expat
+
+xml_deps:
 	cd ./xz && \
 	./compile_commit_hash.sh dep
 	cd ./zlib && \
@@ -59,8 +66,8 @@ xml: libxml2 expat
 libxml2:
 	#!/usr/bin/env bash
 	cd ./libxml2 && \
-	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin:$PATH \
-	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.71/install/bin/autoconf \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.71/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.71/install/bin/autoconf" \
 	./compile_commit_hash.sh 73514f2d && \ 
 	./compile_commit_hash.sh f8a8c1f 
 
@@ -76,12 +83,12 @@ libzlib:
 	./compile_commit_hash.sh 7751bd4 && \
 	./compile_commit_hash.sh 09155ea
 
-tar: libtar archive
-
 libdeflate:
 	cd ./libdeflate && \
 	./compile_commit_hash.sh a11c44317 && \
 	./compile_commit_hash.sh efc217633
+
+tar: libtar archive
 
 archive:
 	cd archive && \
@@ -92,7 +99,9 @@ libtar:
 	cd libtar && \
 	./compile_commit_hash.sh 6d0ab4c
 
-h264: ffmpeg openh264
+h264: h264_deps ffmpeg openh264
+
+h264_deps:
 	cd ./xz && \
 	./compile_commit_hash.sh dep
 	cd ./zlib && \
@@ -115,16 +124,19 @@ openh264:
 xz: xzxz xz7z
 
 xzxz:
+	#!/bin/bash
 	cd ./xz && \
-	PATH={{PROJECT_ROOT}}/app/tools/autoconf/2.69/install/bin:$PATH \
-	AUTOCONF={{PROJECT_ROOT}}/app/tools/autoconf/2.69/install/bin/autoconf \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin/autoconf" \
 	./compile_commit_hash.sh 15cf3f04 && \
 	./compile_commit_hash.sh 98f3cac1a
 
 xz7z:
 	cd ./xz7z && ./compile.sh
 
-ssl: openssl wolfssl
+ssl: ssl_deps openssl wolfssl
+
+ssl_deps:
 	cd ./zlib && \
 	./compile_commit_hash.sh dep
 

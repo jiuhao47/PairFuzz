@@ -37,10 +37,20 @@ $CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_archive_libs/archive_progra
   -I "../../build/archive/$archive_hash/usr/local/include/" \
   -o "$TEMP_DIR/archive_program.o"
 
+echo "Compiling archive core..."
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_archive_libs/archive_core.cpp" \
+  -I "../../build/archive/$archive_hash/usr/local/include/" \
+  -o "$TEMP_DIR/archive_core.o"
+
 echo "Compiling libtar program..."
 $CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_libtar_libs/libtar_program.cpp" \
   -I "../../build/libtar/$libtar_hash/usr/local/include" \
   -o "$TEMP_DIR/libtar_program.o"
+
+echo "Compiling libtar core..."
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_libtar_libs/libtar_core.cpp" \
+  -I "../../build/libtar/$libtar_hash/usr/local/include" \
+  -o "$TEMP_DIR/libtar_core.o"
 
 # Step 2: link static libraries to program objects to create executables
 LINK_LIBS="-lm"
@@ -60,6 +70,23 @@ echo "Installing executables to bins/.bin/$name_suffix..."
 mkdir -p "../../bins/.bin/$name_suffix"
 install -m 0755 "$TEMP_DIR/archive_executable" "../../bins/.bin/$name_suffix/archive"
 install -m 0755 "$TEMP_DIR/libtar_executable" "../../bins/.bin/$name_suffix/libtar"
+
+# Step 4: build shared library (position-independent, bundle static deps)
+echo "Building shared library for libtar..."
+$CXX_WRAPPER -shared -o "$TEMP_DIR/libtar_shared.so" "$TEMP_DIR/libtar_core.o" \
+  "../../build/libtar/$libtar_hash/usr/local/lib/libtar.a" \
+  -Wl,-soname,libtar_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Installing shared library to bins/.bin/$name_suffix/"
+install -m 0755 "$TEMP_DIR/libtar_shared.so" "../../bins/.bin/$name_suffix/libtar_local.so"
+
+echo "Building shared library for archive..."
+$CXX_WRAPPER -shared -o "$TEMP_DIR/archive_shared.so" "$TEMP_DIR/archive_core.o" \
+  "../../build/archive/$archive_hash/usr/local/lib/libarchive.a" \
+  -Wl,-soname,libarchive_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Installing shared library to bins/.bin/$name_suffix/"
+install -m 0755 "$TEMP_DIR/archive_shared.so" "../../bins/.bin/$name_suffix/archive_local.so"
 
 # Clean up
 echo "Cleaning up temporary files..."

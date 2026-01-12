@@ -39,8 +39,8 @@ cd $JPEG_BUILD_PATH/jpeg_$commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 
 ./configure CC="$CC" CXX="$CXX" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
 

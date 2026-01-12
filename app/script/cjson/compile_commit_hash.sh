@@ -28,8 +28,8 @@ git reset --hard $commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 
 # If the libafl wrapper compilers are not available, fall back to system compilers
 if [ ! -x "$CC" ]; then

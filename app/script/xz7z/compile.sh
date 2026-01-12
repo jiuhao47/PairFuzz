@@ -24,12 +24,12 @@ cp $XZ7Z_LIB_PATH/Makefile.build ./src_to_build/Makefile
 cd $XZ7Z_BUILD_PATH/xz7z/src_to_build/
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 mkdir -p $XZ7Z_BUILD_PATH/install
 mkdir -p $XZ7Z_BUILD_PATH/include
 make clean
-make all CC=$CC CXX=$CXX CFLAGS=$CFLAGS COMMIT_HASH=$commit_hash
+make all CC=$CC CXX=$CXX CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" COMMIT_HASH=$commit_hash
 cp $XZ7Z_BUILD_PATH/xz7z/src_to_build/libxz7z_.a $XZ7Z_BUILD_PATH/install/libxz7z.a
 cp -r $XZ7Z_SRC_PATH/* $XZ7Z_BUILD_PATH/include/
 rm -rf $XZ7Z_BUILD_PATH/xz7z

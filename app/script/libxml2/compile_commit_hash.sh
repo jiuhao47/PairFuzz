@@ -13,7 +13,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 APP_PATH="${SCRIPT_DIR}/../.."
 XML2_BUILD_PATH=$APP_PATH/build/xml2
-XML2_SRC_PATH=$APP_PATH/src/xml2
+XML2_SRC_PATH=$APP_PATH/src/libxml2
 XML2_INSTALL_PATH=$APP_PATH/build/xml2
 XML2_LIB_PATH=$APP_PATH/libs/build_xml2_libs/
 
@@ -31,8 +31,8 @@ fi
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 
 cd $XML2_BUILD_PATH/xml2_$commit_hash
 ./autogen.sh

@@ -41,6 +41,16 @@ $CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_expat_libs/expat_program.cp
   -I "../../build/expat/$expat_hash/usr/local/include/" \
   -o "$TEMP_DIR/expat_program.o"
 
+echo "Compiling libxml2 core..."
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_xml2_libs/libxml2_core.cc" \
+  -I "../../build/xml2/$libxml2_hash/usr/local/include/libxml2/" \
+  -o "$TEMP_DIR/libxml2_core.o"
+
+echo "Compiling expat core..."
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_expat_libs/expat_core.cpp" \
+  -I "../../build/expat/$expat_hash/usr/local/include/" \
+  -o "$TEMP_DIR/expat_core.o"
+
 # Step 2: link static libraries to object files to generate executables
 # Start with some common libs; if additional libs are required they should be added here
 EXTRA_LIBS=(
@@ -67,6 +77,23 @@ echo "Installing executables to bins/.bin/$name_suffix..."
 mkdir -p "../../bins/.bin/$name_suffix"
 install -m 0755 "$TEMP_DIR/libxml2_executable" "../../bins/.bin/$name_suffix/xml2"
 install -m 0755 "$TEMP_DIR/libexpat_executable" "../../bins/.bin/$name_suffix/expat"
+
+# Step 4: build shared libraries (position-independent, bundle static deps)
+echo "Building shared library for libxml2..."
+$CXX_WRAPPER -shared -o "$TEMP_DIR/libxml2_shared.so" "$TEMP_DIR/libxml2_core.o" \
+  "../../build/xml2/$libxml2_hash/usr/local/lib/libxml2.a" \
+  "${EXTRA_LIBS[@]}" \
+  -Wl,-soname,libxml2_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Building shared library for expat..."
+$CXX_WRAPPER -shared -o "$TEMP_DIR/libexpat_shared.so" "$TEMP_DIR/expat_core.o" \
+  "../../build/expat/$expat_hash/usr/local/lib/libexpat.a" \
+  "${EXTRA_LIBS[@]}" \
+  -Wl,-soname,libexpat_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Installing shared libraries to bins/.bin/$name_suffix/"
+install -m 0755 "$TEMP_DIR/libxml2_shared.so" "../../bins/.bin/$name_suffix/xml2_local.so"
+install -m 0755 "$TEMP_DIR/libexpat_shared.so" "../../bins/.bin/$name_suffix/expat_local.so"
 
 # Clean up
 echo "Cleaning up temporary files..."

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 ### version
 # oldest: a11c44317
 # newest: efc217633
@@ -16,7 +16,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 APP_PATH="${SCRIPT_DIR}/../.."
 DEFLATE_BUILD_PATH=$APP_PATH/build/deflate
-DEFLATE_SRC_PATH=$APP_PATH/src/deflate
+DEFLATE_SRC_PATH=$APP_PATH/src/libdeflate
 DEFLATE_INSTALL_PATH=$APP_PATH/build/deflate
 DEFLATE_LIB_PATH=$APP_PATH/libs/build_deflate_libs/
 
@@ -27,7 +27,7 @@ rm -rf "$DEFLATE_BUILD_PATH/deflate_$commit_hash" && rm -rf "$DEFLATE_INSTALL_PA
 cp -r "$DEFLATE_SRC_PATH" "$DEFLATE_BUILD_PATH/deflate_$commit_hash"
 cd "$DEFLATE_BUILD_PATH/deflate_$commit_hash"
 git reset --hard "$commit_hash"
-python3 "$APP_PATH/script/deflate/patch_checksum.py" "$DEFLATE_BUILD_PATH/deflate_$commit_hash"
+python3 "$APP_PATH/script/libdeflate/patch_checksum.py" "$DEFLATE_BUILD_PATH/deflate_$commit_hash"
 
 # Try cmake-based build first. If the inputs for cmake are not present, fall back to the old make-based build.
 # We consider CMake usable when a top-level CMakeLists.txt exists.
@@ -38,7 +38,7 @@ if [ -f "CMakeLists.txt" ] || [ -f "../CMakeLists.txt" ]; then
 
   CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
   CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-  CFLAGS="-fsanitize=address"
+  CFLAGS="-fsanitize=address -fPIC"
   CXXFLAGS=$CFLAGS
 
 
@@ -60,12 +60,12 @@ else
   # Choose sensible CC/CXX: prefer system clang if available; otherwise fall back to libafl wrappers
   CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
   CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-  CFLAGS="-fsanitize=address"
+  CFLAGS="-fsanitize=address -fPIC"
   CXXFLAGS=$CFLAGS
 
   # run legacy make-based build from the source root
   cd "$DEFLATE_BUILD_PATH/deflate_$commit_hash"
-  make -j8 CC="$CC" CXX="$CXX" CFLAGS=$CFLAGS CXXFLAGS=$CXXFLAGS BUILD_SHARED_LIBRARY=yes
+  make -j8 CC="$CC" CXX="$CXX" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" BUILD_SHARED_LIBRARY=yes
 
   # attempt install if supported by the project's Makefile
   mkdir -p "$DEFLATE_INSTALL_PATH/$commit_hash/usr/local/"

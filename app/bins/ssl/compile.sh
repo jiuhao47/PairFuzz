@@ -38,7 +38,7 @@ $CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_openssl_libs/openssl_progra
   -o "$TEMP_DIR/openssl_program.o"
 
 echo "Compiling wolfSSL program..."
-$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_wolfssl_libs/wolfssl_program.cpp" \
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS -DOPENSSL_EXTRA "../../libs/build_wolfssl_libs/wolfssl_program.cpp" \
   -I "../../build/wolfssl/$wolfssl_hash/usr/local/include/" \
   -o "$TEMP_DIR/wolfssl_program.o"
 
@@ -53,7 +53,7 @@ $CXX_WRAPPER $COMMON_LINK_FLAGS "$TEMP_DIR/openssl_program.o" \
   -o "$TEMP_DIR/openssl_executable" $LINK_LIBS
 
 echo "Linking wolfSSL executable..."
-$CXX_WRAPPER $COMMON_LINK_FLAGS "$TEMP_DIR/wolfssl_program.o" \
+$CXX_WRAPPER $COMMON_LINK_FLAGS -DOPENSSL_EXTRA "$TEMP_DIR/wolfssl_program.o" \
   "../../build/wolfssl/$wolfssl_hash/usr/local/lib/libwolfssl.a" \
   "../../build/zlib/dep/usr/local/lib/libz.a" \
   -o "$TEMP_DIR/wolfssl_executable" $LINK_LIBS

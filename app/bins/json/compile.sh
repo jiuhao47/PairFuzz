@@ -81,7 +81,42 @@ mkdir -p "../../bins/.bin/$name_suffix"
 install -m 0755 "$TEMP_DIR/mjson_executable" "../../bins/.bin/$name_suffix/mjson"
 install -m 0755 "$TEMP_DIR/cjson_executable" "../../bins/.bin/$name_suffix/cjson"
 
-# Clean up
+# Step 4: Compile core implementation files (no main) for building shared libs
+echo "Compiling mjson core..."
+$CC_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_mjson_libs/mjson_core.c" \
+  -I "../../build/mjson/$mjson_hash/usr/local/include/" \
+  -o "$TEMP_DIR/mjson_core.o"
+
+echo "Compiling cjson core..."
+$CC_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_cjson_libs/cjson_core.c" \
+  -I "../../build/cjson/$cjson_hash/usr/local/include/" -I "../../build/cjson/$cjson_hash/usr/local/include/cjson" \
+  -o "$TEMP_DIR/cjson_core.o"
+
+# Step 5: Build shared libraries (position-independent, bundle static deps if available)
+echo "Building shared library for mjson..."
+if [ -f "$MJSON_A" ]; then
+  $CC_WRAPPER -shared -o "$TEMP_DIR/libmjson_shared.so" "$TEMP_DIR/mjson_core.o" \
+    "$MJSON_A" -Wl,-soname,libmjson_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+else
+  echo "Warning: $MJSON_A not found — building shared library without static archive"
+  $CC_WRAPPER -shared -o "$TEMP_DIR/libmjson_shared.so" "$TEMP_DIR/mjson_core.o" \
+    -Wl,-soname,libmjson_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+fi
+
+echo "Building shared library for cjson..."
+if [ -f "$CJSON_A" ]; then
+  $CC_WRAPPER -shared -o "$TEMP_DIR/libcjson_shared.so" "$TEMP_DIR/cjson_core.o" \
+    "$CJSON_A" -Wl,-soname,libcjson_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+else
+  echo "Warning: $CJSON_A not found — building shared library without static archive"
+  $CC_WRAPPER -shared -o "$TEMP_DIR/libcjson_shared.so" "$TEMP_DIR/cjson_core.o" \
+    -Wl,-soname,libcjson_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+fi
+
+echo "Installing shared libraries to bins/.bin/$name_suffix/"
+install -m 0755 "$TEMP_DIR/libmjson_shared.so" "../../bins/.bin/$name_suffix/mjson_local.so"
+install -m 0755 "$TEMP_DIR/libcjson_shared.so" "../../bins/.bin/$name_suffix/cjson_local.so"
+
+# Step 6: Clean up
 echo "Cleaning up temporary files..."
 rm -rf "$TEMP_DIR"
-echo "Linking libdeflate executable..."

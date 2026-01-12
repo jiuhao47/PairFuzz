@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+
 # - libIM_newest.so: 0729cc470
 # - libIM_oldest.so: 4c717b784
 commit_hash=$1
@@ -23,8 +24,8 @@ cp -r $IM_SRC_PATH/IM $IM_BUILD_PATH/IM_$commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 cd $IM_BUILD_PATH/IM_$commit_hash
 git reset --hard $commit_hash
 

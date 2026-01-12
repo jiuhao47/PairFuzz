@@ -31,19 +31,21 @@ fi
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 
 # Create an out/build directory for CMake
 mkdir -p out && cd out
 
 # Configure with CMake, telling it to use our CC/CXX wrappers and install to the per-commit prefix
+# enable static
 cmake -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX="$BROTLI_INSTALL_PATH/$commit_hash" \
+      -DCMAKE_INSTALL_PREFIX="$BROTLI_INSTALL_PATH/$commit_hash/usr/local" \
       -DCMAKE_C_COMPILER="$CC" \
       -DCMAKE_CXX_COMPILER="$CXX" \
       -DCMAKE_C_FLAGS="$CFLAGS" \
       -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+      -DBUILD_SHARED_LIBS=OFF \
       ..
 
 # Build (parallel) and install

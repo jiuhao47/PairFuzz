@@ -18,8 +18,8 @@ cp -r $GM_SRC_PATH/GM $GM_BUILD_PATH/GM_$commit_hash
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fsanitize=address -fPIC"
+CXXFLAGS="-fsanitize=address -fPIC"
 cd $GM_BUILD_PATH/GM_$commit_hash
 
 

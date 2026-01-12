@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 commit_hash=$1
 
@@ -11,7 +11,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 APP_PATH="${SCRIPT_DIR}/../.."
 PNG_BUILD_PATH=$APP_PATH/build/png
-PNG_SRC_PATH=$APP_PATH/src/png
+PNG_SRC_PATH=$APP_PATH/src/libpng
 PNG_INSTALL_PATH=$APP_PATH/build/png
 PNG_LIB_PATH=$APP_PATH/libs/build_png_libs/
 
@@ -29,8 +29,8 @@ fi
 
 CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
 CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
-CFLAGS="-fsanitize=address"
-CXXFLAGS="-fsanitize=address"
+CFLAGS="-fPIC -fsanitize=address"
+CXXFLAGS="-fPIC -fsanitize=address"
 
 # ./configure --disable-static --enable-shared CC="$CC" CXX="$CXX" CFLAGS="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls" CXXFLAGS="-g -fPIC -fsanitize=address,fuzzer-no-link -fsanitize-coverage=edge,indirect-calls"
 # ./configure --disable-static --enable-shared CC="$CC" CXX="$CXX" 

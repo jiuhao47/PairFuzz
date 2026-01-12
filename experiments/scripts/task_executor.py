@@ -883,11 +883,25 @@ class TaskExecutor:
                             continue
                     resolved_params[pk] = pv
 
-                # fill params using resolved mapping
-                try:
-                    filled = raw_cmd.format(**resolved_params)
-                except Exception:
-                    filled = raw_cmd
+                # Detect CPU placeholder fields (allow several common names).
+                from string import Formatter
+
+                fmt = Formatter()
+                placeholder_field = None
+                for _literal, fname, _format_spec, _conversion in fmt.parse(raw_cmd):
+                    if not fname:
+                        continue
+                    # match fields that start with double underscore, e.g.
+                    # __CPU_ID, __cpu, __cpu_id (case-insensitive after prefix)
+                    if isinstance(fname, str) and fname.startswith("__"):
+                        core = fname.lstrip("_").lower()
+                        if core in ("cpu_id", "cpu"):
+                            placeholder_field = fname
+                            break
+
+                # NOTE: we postpone actual string formatting until after CPU
+                # allocation so that a dynamically allocated CPU id can be
+                # injected into the command string.
 
                 # prepare optional cpu affinity prefix
                 cpu_prefix = ""
@@ -983,6 +997,39 @@ class TaskExecutor:
                             spec = str(s.cpus)
                     # use taskset and run under bash -lc to ensure children inherit
                     cpu_prefix = f'taskset -c {spec} bash -lc "'
+
+                # If a CPU placeholder was detected earlier, ensure it is filled
+                # from the computed affinity (when s.cpus was provided) or
+                # allocate one now when s.cpus was not specified.
+                try:
+                    placeholder = placeholder_field
+                except NameError:
+                    placeholder = None
+
+                if placeholder and placeholder not in resolved_params:
+                    # if we have an explicit affinity list, use its first cpu
+                    if affinity_cpus:
+                        resolved_params[placeholder] = str(int(affinity_cpus[0]))
+                    else:
+                        # if no explicit affinity requested, allocate one CPU
+                        # from the assessor pool for this run
+                        chosen = _allocate_cpus(1)
+                        if chosen is None:
+                            sub_res["failed"] = True
+                            sub_res["error"] = (
+                                f"Unable to allocate CPU for placeholder {placeholder}; allocation conflict or none available."
+                            )
+                            return sub_res
+                        affinity_cpus = [int(chosen[0])]
+                        spec = ",".join(str(x) for x in affinity_cpus)
+                        cpu_prefix = f'taskset -c {spec} bash -lc "'
+                        resolved_params[placeholder] = str(int(affinity_cpus[0]))
+
+                # Now that CPU allocation (if any) is done, perform format
+                try:
+                    filled = raw_cmd.format(**resolved_params)
+                except Exception:
+                    filled = raw_cmd
 
                 out_log = sub_dir / "stdout.log"
                 err_log = sub_dir / "stderr.log"

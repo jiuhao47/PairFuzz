@@ -157,11 +157,23 @@ case "$command" in
     done
 
     echo "Running on $host: image=$IMAGE name=$NAME host_port=$PORT"
-    ssh "$host" "docker volume inspect ${TARGET_VOL} >/dev/null 2>&1 || docker volume create ${TARGET_VOL} || true"
-    ssh "$host" "docker volume inspect ${RUN_VOL} >/dev/null 2>&1 || docker volume create ${RUN_VOL} || true"
-    ssh "$host" "docker volume inspect ${CARGO_VOL} >/dev/null 2>&1 || docker volume create ${CARGO_VOL} || true"
 
-    VOL_STR="-v ${TARGET_VOL}:/workspace/target -v ${RUN_VOL}:/workspace/runs -v ${CARGO_VOL}:/root/.cargo"
+    # Only create and mount default volumes if they are explicitly set and not 'none'.
+    # This allows callers to skip mounting the default volumes by passing
+    # --target-volume none --run-volume none (or by setting the value to empty).
+    VOL_STR=""
+    if [ -n "$TARGET_VOL" ] && [ "$TARGET_VOL" != "none" ]; then
+      ssh "$host" "docker volume inspect ${TARGET_VOL} >/dev/null 2>&1 || docker volume create ${TARGET_VOL} || true"
+      VOL_STR="$VOL_STR -v ${TARGET_VOL}:/workspace/target"
+    fi
+    if [ -n "$RUN_VOL" ] && [ "$RUN_VOL" != "none" ]; then
+      ssh "$host" "docker volume inspect ${RUN_VOL} >/dev/null 2>&1 || docker volume create ${RUN_VOL} || true"
+      VOL_STR="$VOL_STR -v ${RUN_VOL}:/workspace/runs"
+    fi
+    if [ -n "$CARGO_VOL" ] && [ "$CARGO_VOL" != "none" ]; then
+      ssh "$host" "docker volume inspect ${CARGO_VOL} >/dev/null 2>&1 || docker volume create ${CARGO_VOL} || true"
+      VOL_STR="$VOL_STR -v ${CARGO_VOL}:/root/.cargo"
+    fi
     if [ ${#VOLUME_ARGS[@]} -gt 0 ]; then
       for ((i=0;i<${#VOLUME_ARGS[@]};i+=2)); do
         arg_path=${VOLUME_ARGS[i+1]}
@@ -170,7 +182,7 @@ case "$command" in
       done
     fi
 
-    REMOTE_CMD="docker rm -f $NAME >/dev/null 2>&1 || true && docker run -d --name $NAME --restart unless-stopped -p ${PORT}:2222 ${VOL_STR} --env SSH_PORT=2222 --env START_SSHD=1 --privileged=false --user root ${IMAGE}"
+    REMOTE_CMD="docker rm -f $NAME >/dev/null 2>&1 || true && docker run -d --name $NAME --restart unless-stopped -p ${PORT}:2222 ${VOL_STR} --env SSH_PORT=2222 --env START_SSHD=1 --privileged --user root ${IMAGE}"
 
     ENV_STR=""
     if [ ${#ENV_ARGS[@]} -gt 0 ]; then
@@ -186,7 +198,7 @@ case "$command" in
       ENV_STR="$ENV_STR --env HOST_UID=$LOCAL_UID --env HOST_GID=$LOCAL_GID"
     fi
 
-    REMOTE_CMD="docker rm -f $NAME >/dev/null 2>&1 || true && docker run -d --name $NAME --restart unless-stopped -p ${PORT}:2222 ${VOL_STR} ${ENV_STR} --env SSH_PORT=2222 --env START_SSHD=1 --privileged=false --user root ${IMAGE}"
+    REMOTE_CMD="docker rm -f $NAME >/dev/null 2>&1 || true && docker run -d --name $NAME --restart unless-stopped -p ${PORT}:2222 ${VOL_STR} ${ENV_STR} --env SSH_PORT=2222 --env START_SSHD=1 --privileged --user root ${IMAGE}"
 
     ssh "$host" "$REMOTE_CMD"
     echo "Started container $NAME on $host:$PORT"

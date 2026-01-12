@@ -1,0 +1,71 @@
+LOCATEFIX_ROOT := "/home/user/workspace/diffray/LocateFix"
+
+RUN_FOLDER := LOCATEFIX_ROOT / "run"
+
+cjson file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/cjson/build/174c62902c68e9fc7d5028b54666b4fd3630a30b/app/test_cjson {{file}}
+    {{RUN_FOLDER}}/mjson/build/b766f343bf68b8ea89889055acbf8aef820e2b71/app/test_mjson {{file}}
+    exit 0
+
+mjson file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/cjson/build/12c4bf1986c288950a3d06da757109a6aa1ece38/app/test_cjson {{file}}
+    {{RUN_FOLDER}}/mjson/build/6b0367553549b23ec816dcbe185ce5fcf5b0f496/app/test_mjson {{file}}
+    exit 0
+
+libpng file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/libpng/build/5905484c757b9691fe4925b6ef220af0dc7476f6/app/test_libpng {{file}}
+    {{RUN_FOLDER}}/libspng/build/adc94393dbeddf9e027d1b2dfff7c1bab975224e/app/test_libspng {{file}}
+    exit 0
+
+libspng file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/libpng/build/134ab615b617f548e822d8857f1cfc0525aefeba/app/test_libpng {{file}}
+    {{RUN_FOLDER}}/libspng/build/7295a4b5a417de85b4266259e9f030135a2f070e/app/test_libspng {{file}}
+    exit 0
+
+zlib file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/zlib/build/7751bd4c715ea8478113e34b49b5a794a4642e8e/app/test_zlib {{file}}
+    {{RUN_FOLDER}}/libdeflate/build/efc21763392b1feeab4943b1da89f087b6d0797a/app/test_libdeflate {{file}}
+    exit 0
+
+libdeflate file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/zlib/build/09155eaa2f9270dc4ed1fa13e2b4b2613e6e4851/app/test_zlib {{file}}
+    {{RUN_FOLDER}}/libdeflate/build/a11c44317b05515d34dc0fbc2ef6415c795db568/app/test_libdeflate {{file}}  
+    exit 0
+
+IM file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/IM/build/4c717b784c656dd9022447534e992d30786377c5/app/test_IM {{file}}
+    {{RUN_FOLDER}}/GM/build/45cce7492a0d18c6d5979385b2674259f0180caf/app/test_GM {{file}}
+    exit 0
+
+GM file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/IM/build/0729cc47063624f7edc586e5fc2b0c80436ebb90/app/test_IM {{file}}
+    {{RUN_FOLDER}}/GM/build/2fb87e7100b6a4a441e55a43fba783322abb0daa/app/test_GM {{file}}
+    exit 0
+
+libxml2 file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/libxml2/build/f8a8c1f59db355b46962577e7b74f1a1e8149dc6/app/test_libxml2 {{file}}
+    {{RUN_FOLDER}}/expat/build/07108642fe51b1b618f47c15e60a2bb478b20be9/app/test_expat {{file}}
+    exit 0
+
+expat file:
+    #!/bin/bash
+    {{RUN_FOLDER}}/libxml2/build/73514f2d2ec2a5507cc28ee67b918153352f0486/app/test_libxml2 {{file}}
+    {{RUN_FOLDER}}/expat/build/ac2b235d3cea96ed105bbfc0052ae9b79e8ccb78/app/test_expat {{file}}
+    exit 0
+
+# xz file:
+#     #!/bin/bash
+#     exit 0
+
+# archive file:
+#     #!/bin/bash
+#     exit 0

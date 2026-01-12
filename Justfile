@@ -48,10 +48,10 @@ docker_load remote_host="kaichen_server":
 	./docker/deploy.sh load {{remote_host}}:/home/jiangjy/download/diffray_compile.tar.gz
 
 docker_start remote_host="kaichen_server":
-	./docker/deploy.sh run {{remote_host}} --image diffray:latest --name jiangjy-diffray --port 27001 --volume /home/jiangjy/workshop/diffray-task:/root/diffray-task
+	./docker/deploy.sh run {{remote_host}} --image diffray:latest --name jiangjy-aflplusplus --port 27002 --volume /home/jiangjy/workshop/diffray-task:/root/diffray-task --target-volume none --run-volume none --cargo-volume cargo_cache
 
 docker_add_key remote_host="kaichen_server":
-	./docker/deploy.sh add-key {{remote_host}} jiangjy-diffray ~/.ssh/id_rsa.pub
+	./docker/deploy.sh add-key {{remote_host}} jiangjy-aflplusplus ~/.ssh/id_rsa.pub
 
 scp_fuzzer remote_host="diffray_container":
 	scp {{FUZZER}} {{remote_host}}:/root/diffray-task/fuzzer/{{FUZZER_NAME}}

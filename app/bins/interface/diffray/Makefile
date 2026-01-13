@@ -36,6 +36,7 @@ DEPS := $(OBJS:.o=.d)
 CXXFLAGS ?=
 CXXFLAGS += -std=c++17 -O2 -g -fno-omit-frame-pointer -fsanitize=address
 CXXFLAGS += -I$(SCRIPT_DIR)/include
+CXXFLAGS += -I$(abspath $(SCRIPT_DIR)/../../../../AFLplusplus)/include
 CXXFLAGS += -MMD -MP
 
 LDFLAGS ?=

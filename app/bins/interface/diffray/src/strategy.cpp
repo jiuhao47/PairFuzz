@@ -1,5 +1,6 @@
 #include "diffray/strategy.h"
 
+#include "debug.h"
 #include "diffray/hash.h"
 #include "diffray/mode.h"
 

@@ -4,6 +4,7 @@
 #include "diffray/hash.h"
 #include "diffray/mode.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -49,6 +50,11 @@ public:
     const std::uint32_t bb = bucketize_count(map_b.nonzero_count);
     out_map.touch(0xA11CE000u ^ ba);
     out_map.touch(0xB11CE000u ^ bb);
+    SAYF("Derived nonzero_count: A=%zu (bucket=%u, hash=%016llx), B=%zu (bucket=%u, hash=%016llx)\n",
+         map_a.nonzero_count, ba,
+         static_cast<unsigned long long>(map_a.hash64),
+         map_b.nonzero_count, bb,
+         static_cast<unsigned long long>(map_b.hash64));
     out_map.finalize();
   }
 };
@@ -61,6 +67,13 @@ public:
     const std::uint64_t ba = bucketize_count(map_a.nonzero_count);
     const std::uint64_t bb = bucketize_count(map_b.nonzero_count);
     out_map.touch_pair(0xC01A0000ULL ^ ba, 0xC01B0000ULL ^ bb);
+    SAYF("Derived nonzero_count(combo): A=%zu (bucket=%llu, hash=%016llx), B=%zu (bucket=%llu, hash=%016llx)\n",
+         map_a.nonzero_count,
+         static_cast<unsigned long long>(ba),
+         static_cast<unsigned long long>(map_a.hash64),
+         map_b.nonzero_count,
+         static_cast<unsigned long long>(bb),
+         static_cast<unsigned long long>(map_b.hash64));
     out_map.finalize();
   }
 };

@@ -31,6 +31,8 @@ public:
   void finalize();
 
 private:
+  void refresh_from_runtime();
+
   std::uint8_t *ptr_ = nullptr;
   std::size_t size_ = 0;
 };

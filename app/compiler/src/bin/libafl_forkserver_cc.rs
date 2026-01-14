@@ -1,6 +1,8 @@
 use std::env;
+use std::io::Write;
 
 use libafl_cc::{ClangWrapper, CompilerWrapper, ToolWrapper};
+use tempfile::NamedTempFile;
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
@@ -31,16 +33,16 @@ pub fn main() {
         // a tiny header that declares the C symbols implemented in the compiler
         // crate (rv_shm.rs) and force-include it so C/C++ targets can call them.
         // Using a temp header avoids fragile -D quoting on the command line.
-        let tmp_dir = std::env::temp_dir();
-        let tmp_header_path =
-            tmp_dir.join(format!("diff_ray_rv_shm_decl_{}.h", std::process::id()));
+        // Create a NamedTempFile so it's automatically removed when dropped.
+        let mut tmpfile: NamedTempFile = NamedTempFile::new().expect("failed to create temp file");
+        let tmp_header_path = tmpfile.path().to_path_buf();
         let header_contents = if is_cpp {
             "#ifdef __cplusplus\nextern \"C\" {\n#endif\n#include <stddef.h>\n#include <stdint.h>\nvoid select_rv_shm_env(const char **out_id, const char **out_size);\nvoid write_return_value_to_shm(const char *env_id, const char *env_size, int32_t result);\n#ifdef __cplusplus\n}\n#endif\n"
         } else {
             "#include <stddef.h>\n#include <stdint.h>\nvoid select_rv_shm_env(const char **out_id, const char **out_size);\nvoid write_return_value_to_shm(const char *env_id, const char *env_size, int32_t result);\n"
         };
-        // Write header file (best-effort, ignore errors here and let compiler fail later if necessary)
-        let _ = std::fs::write(&tmp_header_path, header_contents);
+        // Write header contents into the NamedTempFile (best-effort)
+        let _ = tmpfile.write_all(header_contents.as_bytes());
 
         if let Some(code) = cc
             .cpp(is_cpp)
@@ -80,6 +82,7 @@ pub fn main() {
         {
             std::process::exit(code);
         }
+        // tmpfile is dropped here when it goes out of scope, removing the temp file
     } else {
         panic!("LibAFL CC: No Arguments given");
     }

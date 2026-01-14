@@ -12,6 +12,7 @@ libafl_targets = { path = "../../LibAFL/crates/libafl_targets", features = [
     "pointer_maps",
 ] }
 libc = "0.2"
+tempfile = "3"
 [[bin]]
 name = "libafl_cc"
 path = "src/bin/libafl_cc.rs"

@@ -82,14 +82,18 @@ static void cleanup_old_tmp_dirs(const char *tmp_parent,
     struct stat st;
     if (stat(full, &st) != 0)
       continue;
-    if (!S_ISDIR(st.st_mode))
-      continue;
     if ((now - st.st_mtime) < age)
       continue;
 
-    // attempt to remove recursively; ignore errors
-    remove_directory_recursive(full, 0);
-    rmdir(full);
+    if (S_ISDIR(st.st_mode)) {
+      // attempt to remove directory recursively; ignore errors
+      remove_directory_recursive(full, 0);
+      rmdir(full);
+    } else {
+      // remove files (and other non-directory entries) matching the prefixes
+      // e.g., Magick may create temporary files named like "magick-..."
+      unlink(full);
+    }
   }
   closedir(d);
 }
@@ -101,7 +105,7 @@ class ScopedTempDir {
 public:
   ScopedTempDir() : tmpdir_path_{}, old_tmp_{}, old_magick_tmp_{} {
     // cleanup old leftover tmp dirs on first ScopedTempDir creation
-    cleanup_old_tmp_dirs("/tmp", 300);
+    cleanup_old_tmp_dirs("/tmp", 5);
     // build a less-colliding template using pid and nanosecond timestamp
     struct timespec _ts;
     clock_gettime(CLOCK_REALTIME, &_ts);

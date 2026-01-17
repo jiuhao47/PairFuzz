@@ -142,7 +142,7 @@ class ScopedTempDir {
 public:
   ScopedTempDir() : tmpdir_path_() {
     // cleanup old leftover tmp dirs on first ScopedTempDir creation
-    cleanup_old_tmp_dirs("/tmp", 300);
+    cleanup_old_tmp_dirs("/tmp", 5);
     const char *base = getenv("DIFFRAY_TMP");
     if (!base)
       base = getenv("XDG_RUNTIME_DIR");

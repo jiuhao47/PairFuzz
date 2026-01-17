@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -e
-commit_hash=$1
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 

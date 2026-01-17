@@ -1,0 +1,80 @@
+set -euo pipefail
+
+# Usage: compile.sh <libpng_hash> <libspng_hash> <name_suffix>
+if [ "$#" -ne 3 ]; then
+  echo "Usage: $0 <libpng_hash> <libspng_hash> <name_suffix>"
+  exit 1
+fi
+
+export PATH="/opt/clang+llvm-11.0.0/bin:$PATH"
+# check if clang version is 11
+CLANG_VERSION=$(clang --version | head -n 1 | awk '{print $4}' | cut -d. -f1)
+if [ "$CLANG_VERSION" -ne 11 ]; then
+  echo "Error: clang version 11 is required. Current version is $CLANG_VERSION"
+  exit 1
+fi
+
+libpng_hash=$1
+libspng_hash=$2
+name_suffix=$3
+
+# Create a temporary build directory and ensure cleanup on exit
+TEMP_DIR=$(mktemp -d "temp_differential.XXXX")
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+
+# Compiler wrappers (fall back to system compilers if wrappers missing)
+CC_WRAPPER="../../../AFL/afl-clang-fast"
+CXX_WRAPPER="../../../AFL/afl-clang-fast++"
+if [ ! -x "$CC_WRAPPER" ]; then
+  echo "Error: required wrapper '$CC_WRAPPER' not found or not executable"
+  exit 1
+fi
+if [ ! -x "$CXX_WRAPPER" ]; then
+  echo "Error: required wrapper '$CXX_WRAPPER' not found or not executable"
+  exit 1
+fi
+
+# Common flags and include dirs
+COMMON_COMPILE_FLAGS="-fPIC -fsanitize=address -c"
+COMMON_LINK_FLAGS="-fsanitize=address"
+
+
+# Step 1: Compile program files to object files
+echo "Compiling libpng program..."
+
+# Also compile the core implementation separately (no main) for building the shared lib
+echo "Compiling libpng core..."
+$CXX_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_png_libs/libpng_core.cc" \
+  -I "../../build/png_afl/$libpng_hash/usr/local/include/" \
+  -o "$TEMP_DIR/libpng_core.o"
+
+echo "Compiling libspng core..."
+$CC_WRAPPER $COMMON_COMPILE_FLAGS "../../libs/build_spng_libs/libspng_core.c" \
+  -I "../../build/spng_afl/$libspng_hash/usr/local/include" \
+  -o "$TEMP_DIR/libspng_core.o"
+
+# Step 2: link static libraries to object files to generate executables
+LINK_LIBS="-lm"
+
+
+# Step 4: build shared libraries (position-independent, bundle static deps)
+echo "Building shared library for libpng..."
+## Use the core object (without main) when building the shared library
+$CXX_WRAPPER -shared -o "$TEMP_DIR/libpng_shared.so" "$TEMP_DIR/libpng_core.o" \
+  "../../build/png_afl/$libpng_hash/usr/local/lib/libpng.a" \
+  "../../build/zlib/dep/usr/local/lib/libz.a" \
+  -Wl,-soname,libpng_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Building shared library for libspng..."
+$CC_WRAPPER -shared -o "$TEMP_DIR/libspng_shared.so" "$TEMP_DIR/libspng_core.o" \
+  "../../build/spng_afl/$libspng_hash/usr/local/lib/libspng_static.a" \
+  "../../build/zlib/dep/usr/local/lib/libz.a" \
+  -Wl,-soname,libspng_local.so -Wl,-rpath,'$ORIGIN' $COMMON_LINK_FLAGS
+
+echo "Installing shared libraries to bins/.bin/$name_suffix/"
+install -m 0755 "$TEMP_DIR/libpng_shared.so" "../../bins/.bin/$name_suffix/libpng_local_afl.so"
+install -m 0755 "$TEMP_DIR/libspng_shared.so" "../../bins/.bin/$name_suffix/libspng_local_afl.so"
+
+# Step 5: Clean up
+echo "Cleaning up temporary files..."
+rm -rf "$TEMP_DIR"

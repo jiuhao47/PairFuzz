@@ -11,10 +11,20 @@ libpng:
 	./compile_commit_hash.sh 134ab615 && \
 	./compile_commit_hash.sh 5905484c7
 
+libpng_afl:
+	cd ./libpng && \
+	./compile_commit_hash_afl.sh 134ab615 && \
+	./compile_commit_hash_afl.sh 5905484c7
+
 libspng:
 	cd ./libspng && \
 	./compile_commit_hash.sh 7295a4b5a && \
 	./compile_commit_hash.sh adc94393
+
+libspng_afl:
+	cd ./libspng && \
+	./compile_commit_hash_afl.sh 7295a4b5a && \
+	./compile_commit_hash_afl.sh adc94393
 
 bmp: bmp_deps GM IM
 
@@ -32,6 +42,11 @@ GM:
 	./compile_commit_hash.sh 14303 && \
 	./compile_commit_hash.sh 17300
 
+GM_afl:
+	cd ./GM && \
+	./compile_commit_hash_afl.sh 14303 && \
+	./compile_commit_hash_afl.sh 17300
+
 IM:
 	#!/bin/bash
 	cd ./IM && \
@@ -42,6 +57,16 @@ IM:
 	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin/autoconf" \
 	./compile_commit_hash.sh 4c717b784
 
+IM_afl:
+	#!/bin/bash
+	cd ./IM && \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.71/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.71/install/bin/autoconf" \
+	./compile_commit_hash_afl.sh 0729cc470 && \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin/autoconf" \
+	./compile_commit_hash_afl.sh 4c717b784
+
 
 json: cjson mjson
 
@@ -50,10 +75,20 @@ cjson:
 	./compile_commit_hash.sh 174c629 && \
 	./compile_commit_hash.sh 12c4bf1
 
+cjson_afl:
+	cd ./cjson && \
+	./compile_commit_hash_afl.sh 174c629 && \
+	./compile_commit_hash_afl.sh 12c4bf1
+
 mjson:
 	cd ./mjson && \
 	./compile_commit_hash.sh b766f34 && \
 	./compile_commit_hash.sh 6b0367
+
+mjson_afl:
+	cd ./mjson && \
+	./compile_commit_hash_afl.sh b766f34 && \
+	./compile_commit_hash_afl.sh 6b0367
 
 xml: xml_deps libxml2 expat
 
@@ -71,10 +106,23 @@ libxml2:
 	./compile_commit_hash.sh 73514f2d && \ 
 	./compile_commit_hash.sh f8a8c1f 
 
+libxml2_afl:
+	#!/usr/bin/env bash
+	cd ./libxml2 && \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin/autoconf" \
+	./compile_commit_hash_afl.sh 73514f2d && \ 
+	./compile_commit_hash_afl.sh f8a8c1f
+
 expat:
 	cd ./expat && \
 	./compile_commit_hash.sh ac2b235 && \
 	./compile_commit_hash.sh 07108642 
+
+expat_afl:
+	cd ./expat && \
+	./compile_commit_hash_afl.sh ac2b235 && \
+	./compile_commit_hash_afl.sh 07108642
 
 zlib: libzlib libdeflate
 
@@ -83,10 +131,20 @@ libzlib:
 	./compile_commit_hash.sh 7751bd4 && \
 	./compile_commit_hash.sh 09155ea
 
+libzlib_afl:
+	cd ./zlib && \
+	./compile_commit_hash_afl.sh 7751bd4 && \
+	./compile_commit_hash_afl.sh 09155ea
+
 libdeflate:
 	cd ./libdeflate && \
 	./compile_commit_hash.sh a11c44317 && \
 	./compile_commit_hash.sh efc217633
+
+libdeflate_afl:
+	cd ./libdeflate && \
+	./compile_commit_hash_afl.sh a11c44317 && \
+	./compile_commit_hash_afl.sh efc217633
 
 tar: libtar archive
 
@@ -95,9 +153,19 @@ archive:
 	./compile_commit_hash.sh f8a34abf && \
 	./compile_commit_hash.sh 614110e
 
+archive_afl:
+	cd archive && \
+	./compile_commit_hash_afl.sh f8a34abf && \
+	./compile_commit_hash_afl.sh 614110e
+
 libtar:
 	cd libtar && \
 	./compile_commit_hash.sh 6d0ab4c
+
+libtar_afl:
+	cd libtar && \
+	./compile_commit_hash_afl.sh 6d0ab4c
+	
 
 h264: h264_deps ffmpeg openh264
 
@@ -131,8 +199,19 @@ xzxz:
 	./compile_commit_hash.sh 15cf3f04 && \
 	./compile_commit_hash.sh 98f3cac1a
 
+xzxz_afl:
+	#!/bin/bash
+	cd ./xz && \
+	PATH="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin:$PATH" \
+	AUTOCONF="{{PROJECT_ROOT}}/app/tools/autoconf_in_docker/2.69/install/bin/autoconf" \
+	./compile_commit_hash_afl.sh 15cf3f04 && \
+	./compile_commit_hash_afl.sh 98f3cac1a
+
 xz7z:
 	cd ./xz7z && ./compile.sh
+
+xz7z_afl:
+	cd ./xz7z && ./compile_afl.sh
 
 ssl: ssl_deps openssl wolfssl
 

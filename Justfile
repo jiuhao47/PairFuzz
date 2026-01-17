@@ -26,12 +26,12 @@ run app=APP: (fuzzer app) (pre_run app)
 	{{FUZZER}} -vvv -o run/diffs -i run/seeds/ --corpus run/corpus/ -l ./run/log/ --cov-mode none --rv-mode single --prog-a "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libpng" --prog-b "/home/user/workspace/workshop/diffray/app/bins/.bin/libspng/libspng"
 
 run_directly app=APP: (pre_run app)
-	{{FUZZER}} -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-rv-cov --prog-a "/home/user/workspace/diffray/app/bins/.bin/libpng/libpng" --prog-b "/home/user/workspace/diffray/app/bins/.bin/libpng/libspng" --persistent-mode auto --simple-monitor auto
+	{{FUZZER}} -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-cov --prog-a "/home/user/workspace/diffray/app/bins/.bin/cjson/cjson" --prog-b "/home/user/workspace/diffray/app/bins/.bin/cjson/mjson" --persistent-mode auto --simple-monitor auto
 
 pre_run app=APP: 
 	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
 	# cp /home/user/workspace/workshop/diffray/misc/ssl/* run/seeds/
-	cp ./app/corpus/png/* run/seeds/
+	cp ./app/corpus/json/* run/seeds/
 	# cp /home/user/workspace/diffray/AFLplusplus/quick/run/out/default/queue/id* run/seeds/
 	# cp /home/user/workspace/diffray/misc/corpus_tmp/fuzz-corpora/x509/* run/seeds/
 
@@ -47,11 +47,11 @@ docker_transfer remote_host="kaichen_server":
 docker_load remote_host="kaichen_server":
 	./docker/deploy.sh load {{remote_host}}:/home/jiangjy/download/diffray_compile.tar.gz
 
-docker_start remote_host="kaichen_server":
-	./docker/deploy.sh run {{remote_host}} --image diffray:latest --name jiangjy-aflplusplus --port 27002 --volume /home/jiangjy/workshop/diffray-task:/root/diffray-task --target-volume none --run-volume none --cargo-volume cargo_cache
+docker_start remote_host="Chengshuaibing":
+	./docker/deploy.sh run {{remote_host}} --image diffray:latest --name jiangjy-diffray --port 27001 --volume /home/ChengShuaiBing/software/diffray-task:/root/diffray-task --target-volume none --run-volume none --cargo-volume cargo_cache
 
-docker_add_key remote_host="kaichen_server":
-	./docker/deploy.sh add-key {{remote_host}} jiangjy-aflplusplus ~/.ssh/id_rsa.pub
+docker_add_key remote_host="Chengshuaibing":
+	./docker/deploy.sh add-key {{remote_host}} jiangjy-diffray ~/.ssh/id_rsa.pub
 
 scp_fuzzer remote_host="diffray_container":
 	scp {{FUZZER}} {{remote_host}}:/root/diffray-task/fuzzer/{{FUZZER_NAME}}
@@ -64,12 +64,28 @@ recompile_app app:
     cd {{APP_FOLDER}}/bins/{{app}} && ./gen.sh
 
 
+run_docker_diffray:
+	# keep running in background
+	docker run -d \
+	  -v "$PWD":/home/dev/workspace \
+	  -w /home/dev/workspace \
+	  --net=host \
+	  --privileged \
+	  --user root \
+	  -e START_SSHD=1 \
+	  --name diffray_container \
+	  diffray:latest
+
+
 edocker:
+	docker exec -it diffray_container /bin/bash
+
+edocker_afl:
 	docker run --rm -it \
 	  -v "$PWD":/home/dev/workspace \
 	  -w /home/dev/workspace \
 	  --net=host \
-	  diffray:latest
+	  fuzzguard:latest /bin/bash
 
 profile: clean pre_run
 	RUSTFLAGS="-C debuginfo=2" cargo build --profile=release

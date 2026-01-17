@@ -8,3 +8,15 @@
 [submodule "AFLplusplus"]
 	path = AFLplusplus
 	url = https://github.com/jiuhao47/AFLplusplus
+[submodule "MOpt-AFL"]
+	path = MOpt-AFL
+	url = https://github.com/puppet-meteor/MOpt-AFL
+[submodule "AFL"]
+	path = AFL
+	url = http://github.com/google/AFL
+[submodule "honggfuzz"]
+	path = honggfuzz
+	url = https://github.com/google/honggfuzz
+[submodule "aflfast"]
+	path = aflfast
+	url = https://github.com/mboehme/aflfast

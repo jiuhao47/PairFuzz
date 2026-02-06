@@ -41,8 +41,8 @@ else
 fi
 
 
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 

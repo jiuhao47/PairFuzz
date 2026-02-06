@@ -36,8 +36,8 @@ elif [ "$NAME_SUFFIX" == "libafl_fuzz" ]; then
   CC_WRAPPER="../../compiler/target/release/libafl_forkserver_cc"
   CXX_WRAPPER="../../compiler/target/release/libafl_forkserver_cxx"
 elif [ "$NAME_SUFFIX" == "afl" ]; then
-  CC_WRAPPER="../../../AFL/afl-clang-fast"
-  CXX_WRAPPER="../../../AFL/afl-clang-fast++"
+  CC_WRAPPER="../../../fuzzers/AFL/afl-clang-fast"
+  CXX_WRAPPER="../../../fuzzers/AFL/afl-clang-fast++"
 else
   echo "Error: unknown name_suffix '$NAME_SUFFIX'"
   exit 1

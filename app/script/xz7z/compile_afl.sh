@@ -34,8 +34,8 @@ cp $XZ7Z_LIB_PATH/Makefile.build ./src_to_build/Makefile
 
 
 cd $XZ7Z_BUILD_PATH/xz7z/src_to_build/
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 mkdir -p $XZ7Z_BUILD_PATH/install

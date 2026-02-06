@@ -8,6 +8,8 @@ pub enum RunMode {
     SingleRv,
     SinglePl,
     SingleRvCov,
+    /// Replay coverage for a directory of inputs (no fuzz loop)
+    ReplayCov,
     ComboCov,
     ComboRv,
     ComboPl,
@@ -20,6 +22,7 @@ impl std::fmt::Display for RunMode {
             RunMode::SingleRv => write!(f, "single-rv"),
             RunMode::SinglePl => write!(f, "single-pl"),
             RunMode::SingleRvCov => write!(f, "single-rv-cov"),
+            RunMode::ReplayCov => write!(f, "replay-cov"),
             RunMode::ComboCov => write!(f, "combo-cov"),
             RunMode::ComboRv => write!(f, "combo-rv"),
             RunMode::ComboPl => write!(f, "combo-pl"),

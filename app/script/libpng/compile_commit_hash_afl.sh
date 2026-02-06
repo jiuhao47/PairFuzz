@@ -39,8 +39,8 @@ fi
 
 
 
-CC="${SCRIPT_DIR}/../../compiler/target/release/libafl_cc"
-CXX="${SCRIPT_DIR}/../../compiler/target/release/libafl_cxx"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fPIC -fsanitize=address"
 CXXFLAGS="-fPIC -fsanitize=address"
 

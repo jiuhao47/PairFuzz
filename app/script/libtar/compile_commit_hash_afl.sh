@@ -41,8 +41,8 @@ cp -r $libtar_SRC_PATH $libtar_BUILD_PATH/libtar_$commit_hash
 cd $libtar_BUILD_PATH/libtar_$commit_hash
 # git reset --hard $commit_hash
 
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 

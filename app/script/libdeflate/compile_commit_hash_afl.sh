@@ -48,8 +48,8 @@ if [ -f "CMakeLists.txt" ] || [ -f "../CMakeLists.txt" ]; then
   mkdir -p build
   cd build
 
-  CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-  CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+  CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+  CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
   CFLAGS="-fsanitize=address -fPIC"
   CXXFLAGS=$CFLAGS
 
@@ -70,8 +70,8 @@ else
   echo "CMake files not found — falling back to legacy make build"
 
   # Choose sensible CC/CXX: prefer system clang if available; otherwise fall back to libafl wrappers
-  CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-  CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+  CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+  CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
   CFLAGS="-fsanitize=address -fPIC"
   CXXFLAGS=$CFLAGS
 

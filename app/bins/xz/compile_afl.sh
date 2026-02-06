@@ -23,8 +23,8 @@ TEMP_DIR=$(mktemp -d "temp_differential.XXXX")
 trap 'rm -rf "${TEMP_DIR}"' EXIT
 
 # Compiler wrappers
-CC_WRAPPER="../../../AFL/afl-clang-fast"
-CXX_WRAPPER="../../../AFL/afl-clang-fast++"
+CC_WRAPPER="../../../fuzzers/AFL/afl-clang-fast"
+CXX_WRAPPER="../../../fuzzers/AFL/afl-clang-fast++"
 if [ ! -x "$CC_WRAPPER" ]; then
   echo "Error: required wrapper '$CC_WRAPPER' not found or not executable"
   exit 1

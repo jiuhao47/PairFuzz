@@ -40,8 +40,8 @@ cd $archive_BUILD_PATH/archive_$commit_hash
 git reset --hard $commit_hash
 python3 $SCRIPT_DIR/patch_checksum.py $archive_BUILD_PATH/archive_$commit_hash
 
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 

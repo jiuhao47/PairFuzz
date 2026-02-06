@@ -34,8 +34,8 @@ rm -rf $IM_BUILD_PATH/IM_$commit_hash && rm -rf $IM_INSTALL_PATH/$commit_hash
 cp -r $IM_SRC_PATH/IM $IM_BUILD_PATH/IM_$commit_hash
 
 
-CC="${SCRIPT_DIR}/../../../AFLplusplus/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFLplusplus/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFLplusplus/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFLplusplus/afl-clang-fast++" # because AFL compiler fail to compile IM
 # CC="/home/dev/workspace/AFL/afl-clang-fast"
 # CXX="/home/dev/workspace/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"

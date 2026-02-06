@@ -28,6 +28,9 @@ run app=APP: (fuzzer app) (pre_run app)
 run_directly app=APP: (pre_run app)
 	{{FUZZER}} -vv -o run/diffs -i run/seeds/ -l ./run/log/ --mode single-cov --prog-a "/home/user/workspace/diffray/app/bins/.bin/cjson/cjson" --prog-b "/home/user/workspace/diffray/app/bins/.bin/cjson/mjson" --persistent-mode auto --simple-monitor auto
 
+replay app=APP: (pre_run app)
+	{{FUZZER}} -vv -o run/diffs -i /home/user/workspace/diffray/LocateFix/data/collected/by_program/png/aflplusplus/rep_01_20260114T065840Z_long_fuzz/queue -l ./run/log/ --mode replay-cov --prog-a "/home/user/workspace/diffray/app/bins/.bin/libpng/libpng" --prog-b "/home/user/workspace/diffray/app/bins/.bin/libpng/libspng" --persistent-mode auto --simple-monitor auto 
+
 pre_run app=APP: 
 	rm -rf ./run/ && rm -rf .cur_input_* && mkdir -p run && mkdir -p run/seeds && mkdir -p run/log
 	# cp /home/user/workspace/workshop/diffray/misc/ssl/* run/seeds/

@@ -37,8 +37,8 @@ cd $SPNG_BUILD_PATH/spng_$commit_hash
 git reset --hard $commit_hash
 
 
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fPIC -fsanitize=address"
 CXXFLAGS="-fPIC -fsanitize=address"
 

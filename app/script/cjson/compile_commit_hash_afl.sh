@@ -38,8 +38,8 @@ cd $CJSON_BUILD_PATH/cjson_$commit_hash
 git reset --hard $commit_hash
 
 
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 

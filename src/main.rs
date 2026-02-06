@@ -1,5 +1,7 @@
 use clap::Parser;
+use libafl::events::{AwaitRestartSafe, SendExiting};
 use libafl::monitors::OnDiskJsonMonitor;
+use libafl::ExecutesInput;
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleRestartingEventManager,
@@ -17,13 +19,21 @@ use libafl::{
 // Note: we intentionally avoid MinMapFeedback here to keep concrete feedback types
 // identical across branches; we emulate Min via inverted owned map.
 use libafl::common::HasMetadata;
+use libafl::executors::HasObservers;
 use libafl::executors::StdChildArgs;
+use libafl::observers::MapObserver;
 use libafl::state::HasStartTime;
 use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+use libafl_bolts::tuples::MatchNameRef;
+use libafl_bolts::AsIter;
 use libafl_bolts::StdTargetArgs;
 use libafl_bolts::{current_time, nonzero, rands::StdRand, tuples::tuple_list};
 use mimalloc::MiMalloc;
+use serde_json::json;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf, time::Duration};
 
 // driver::constants now holds shared constants (see src/driver/constants.rs)
@@ -291,6 +301,14 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 &map_observer_b,
             )
         }
+        crate::driver::args::RunMode::ReplayCov => {
+            // Replay mode uses the same coverage-only feedback for now;
+            // the execution driver will handle replay semantics later.
+            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_cov(
+                &map_observer_a,
+                &map_observer_b,
+            )
+        }
     };
 
     // Build objectives: diff objective (based on return values) and map objective
@@ -356,7 +374,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let scheduler = QueueScheduler::new();
 
     // A fuzzer with feedbacks and a corpus scheduler
-    let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
+    // Clone `feedback` here so we can retain an owned copy for replay collection later.
+    let mut fuzzer = StdFuzzer::new(scheduler, feedback.clone(), objective);
 
     // Build two Forkserver executors (A and B) and wrap them in a DiffExecutor
     // Reuse the existing shmem provider to reduce duplicate allocations/syscalls
@@ -724,6 +743,191 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let mutator = HavocScheduledMutator::new(havoc_mutations());
     // Use a single mutational stage
     let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+
+    if args.mode == crate::driver::args::RunMode::ReplayCov {
+        // Replay mode: enumerate files in `input_dir`, sort by birth time,
+        // execute each input once (using fuzzer.execute_input) and append
+        // a JSONL record compatible with `fuzzer_stats.json` for each run.
+        if let Some(input_dir) = &args.input_dir {
+            if !input_dir.exists() || !input_dir.is_dir() {
+                error(
+                    "main",
+                    &format!(
+                        "Replay mode: specified input path is not a directory: {:?}",
+                        input_dir
+                    ),
+                );
+                std::process::exit(1);
+            }
+
+            // Collect files (non-recursive) with best-effort birth time
+            let mut files: Vec<(PathBuf, f64)> = Vec::new();
+            for entry in
+                fs::read_dir(input_dir).unwrap_or_else(|e| panic!("read_dir failed: {}", e))
+            {
+                if let Ok(ent) = entry {
+                    let p = ent.path();
+                    if !p.is_file() {
+                        continue;
+                    }
+                    let md = match fs::metadata(&p) {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+                    // Best-effort: prefer modified() (mtime) which is reliable on this FS,
+                    // fallback to created(), else now(). Using modified() avoids cases
+                    // where created() returns a constant/invalid value.
+                    let st = md
+                        .modified()
+                        .or_else(|_| md.created())
+                        .unwrap_or_else(|_| SystemTime::now());
+                    let secs = st
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_else(|_| Duration::from_secs(0))
+                        .as_secs_f64();
+                    files.push((p, secs));
+                }
+            }
+            if files.is_empty() {
+                info("main", "ReplayCov: no input files found in directory");
+                return Ok(());
+            }
+
+            // Sort by birth time (ascending), tie-break by path
+            files.sort_by(|a, b| {
+                match a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal) {
+                    std::cmp::Ordering::Equal => a.0.cmp(&b.0),
+                    ord => ord,
+                }
+            });
+
+            let t0 = files.first().map(|f| f.1).unwrap_or(0.0);
+
+            // Prepare JSON log path (same as monitor uses)
+            let json_log_path = args
+                .log_dir
+                .as_ref()
+                .map(|d| d.join("fuzzer_stats.json"))
+                .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
+
+            // Ensure parent dir exists
+            if let Some(parent) = json_log_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            // Initialize running union maps for each feedback map so we can
+            // report a non-decreasing global coverage value (union of seen hits).
+            // For each map referenced by the feedback, create a union buffer
+            // pre-filled with the observer's `initial()` value so comparisons
+            // to detect non-initial entries work correctly.
+            let mut union_maps: Vec<Vec<u8>> = Vec::new();
+            for handle in feedback.map_refs.iter() {
+                if let Some(obs) = differential_executor.observers().get(handle) {
+                    let initial = obs.initial();
+                    let initial_u8: u8 = initial.into();
+                    union_maps.push(vec![initial_u8; num_edges]);
+                } else {
+                    // fallback: zero-initialized if observer missing
+                    union_maps.push(vec![0u8; num_edges]);
+                }
+            }
+
+            // Iterate and execute
+            let mut seen = 0usize;
+            for (idx, (path, birth)) in files.into_iter().enumerate() {
+                // read file
+                let bytes = match fs::read(&path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn(
+                            "main",
+                            &format!("Skipping unreadable file {:?}: {}", path, e),
+                        );
+                        continue;
+                    }
+                };
+                // Build input and execute
+                let input = libafl::inputs::BytesInput::from(bytes.as_slice());
+                match fuzzer.execute_input(&mut state, &mut differential_executor, &mut mgr, &input)
+                {
+                    Ok(_exit) => {
+                        // after execution, update running-union for each map and
+                        // compute union non-initial counts. This produces a
+                        // non-decreasing coverage metric over replayed inputs.
+                        let mut user_stats = serde_json::Map::new();
+                        let num_edges_usize = num_edges as u64;
+                        for (midx, handle) in feedback.map_refs.iter().enumerate() {
+                            if let Some(obs) = differential_executor.observers().get(handle) {
+                                let initial = obs.initial();
+                                let initial_u8: u8 = initial.into();
+                                // update union buffer with this execution's observations
+                                for (i, item_ref) in obs.as_iter().enumerate() {
+                                    let cur: u8 = (*item_ref).into();
+                                    // take max so any non-initial value is preserved
+                                    union_maps[midx][i] = union_maps[midx][i].max(cur);
+                                }
+
+                                // count union non-initial entries
+                                let union_cnt: u64 = union_maps[midx]
+                                    .iter()
+                                    .filter(|&&v| v != initial_u8)
+                                    .count()
+                                    as u64;
+
+                                // name from feedback
+                                let name = feedback
+                                    .names
+                                    .get(midx)
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| format!("map-{}", midx));
+                                // report Max to indicate this is a running/global count
+                                let ratio = json!({"aggregator_op":"Max","value":{"Ratio":[union_cnt, num_edges_usize]}});
+                                user_stats.insert(name, ratio);
+                            }
+                        }
+
+                        // Compose JSONL record
+                        let rel_secs = birth - t0;
+                        let rec = json!({
+                            "client_stats": {"0": {"corpus_size": idx + 1, "enabled": true, "executions": idx + 1, "user_stats": user_stats}},
+                            "clients": 1,
+                            "corpus": idx + 1,
+                            "executions": idx + 1,
+                            "run_time": {"secs": rel_secs}
+                        });
+
+                        // append to file
+                        let mut f = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&json_log_path)
+                            .unwrap_or_else(|e| panic!("failed open json log: {}", e));
+                        writeln!(f, "{}", rec.to_string()).ok();
+                        seen += 1;
+                    }
+                    Err(e) => {
+                        warn("main", &format!("Execution error for {:?}: {}", path, e));
+                    }
+                }
+            }
+
+            info("main", &format!("ReplayCov: processed {} inputs", seen));
+            // Ensure the event manager can perform shutdown actions (e.g., flush monitors,
+            // notify restarter). This prevents background monitor/restarter state from
+            // keeping the process alive after replaying inputs.
+            if let Err(e) = mgr.on_shutdown() {
+                warn("main", &format!("Error during manager shutdown: {}", e));
+            }
+            // Also allow the manager to finalize any restart-safety work
+            // (no-op for SimpleRestartingEventManager but kept for completeness).
+            mgr.await_restart_safe();
+
+            return Ok(());
+        } else {
+            error("main", "ReplayCov mode requires --input <dir>");
+            std::process::exit(1);
+        }
+    }
 
     if args.verbose > 0 {
         info("main", "Starting fuzzing...");

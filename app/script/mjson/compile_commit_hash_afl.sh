@@ -35,8 +35,8 @@ cd "$MJSON_BUILD_PATH/mjson_$commit_hash"
 git reset --hard "$commit_hash"
 
 # compilers and flags (ASan enabled by default)
-CC="$SCRIPT_DIR/../../../AFL/afl-clang-fast"
-CXX="$SCRIPT_DIR/../../../AFL/afl-clang-fast++"
+CC="$SCRIPT_DIR/../../../fuzzers/AFL/afl-clang-fast"
+CXX="$SCRIPT_DIR/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 

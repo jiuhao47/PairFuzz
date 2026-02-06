@@ -23,8 +23,8 @@ mkdir -p $GM_BUILD_PATH/
 rm -rf $GM_BUILD_PATH/GM_$commit_hash && rm -rf $GM_INSTALL_PATH/$commit_hash
 cp -r $GM_SRC_PATH/GM $GM_BUILD_PATH/GM_$commit_hash
 
-CC="${SCRIPT_DIR}/../../../AFL/afl-clang-fast"
-CXX="${SCRIPT_DIR}/../../../AFL/afl-clang-fast++"
+CC="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast"
+CXX="${SCRIPT_DIR}/../../../fuzzers/AFL/afl-clang-fast++"
 CFLAGS="-fsanitize=address -fPIC"
 CXXFLAGS="-fsanitize=address -fPIC"
 cd $GM_BUILD_PATH/GM_$commit_hash

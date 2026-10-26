@@ -1,5 +1,4 @@
 use libafl::events::{AwaitRestartSafe, SendExiting};
-use libafl::monitors::OnDiskJsonMonitor;
 use libafl::ExecutesInput;
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
@@ -30,7 +29,6 @@ use libafl_bolts::{current_time, nonzero, rands::StdRand, tuples::tuple_list};
 use serde_json::json;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf, time::Duration};
 
@@ -75,55 +73,11 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut rv_exec_observer_a = ReturnValueObserver::new("first_return");
     let mut rv_exec_observer_b = ReturnValueObserver::new("second_return");
 
-    // Monitoring setup: how stats are displayed/recorded.
-    // (previously had an always-on predicate here; replaced by a controlled predicate)
-
-    let monitors = {
-        // Place the fuzzer JSON stats inside the log directory if provided.
-        let json_log_path = args
-            .log_dir
-            .as_ref()
-            .map(|d| d.join("fuzzer_stats.json"))
-            .unwrap_or_else(|| PathBuf::from("fuzzer_stats.json"));
-        // JSON monitor: 15s heartbeat and skip writes caused by new testcase/objective.
-        // We implement the predicate as a plain function that uses an atomic to
-        // store the last write time (seconds) so the predicate can be a function
-        // pointer (which implements Debug) and won't capture a closure type.
-        static LAST_JSON_WRITE: AtomicU64 = AtomicU64::new(0);
-        static JSON_HEARTBEAT_SECS: AtomicU64 = AtomicU64::new(15);
-
-        // Store configured heartbeat from CLI into the atomic so the predicate
-        // can read it. `args` is in scope here.
-        JSON_HEARTBEAT_SECS.store(args.json_heartbeat_secs, Ordering::Relaxed);
-
-        fn json_monitor_predicate(
-            _client_stats_manager: &mut libafl::monitors::stats::ClientStatsManager,
-        ) -> bool {
-            let now = current_time().as_secs();
-            let last = LAST_JSON_WRITE.load(Ordering::Relaxed);
-            let heartbeat = JSON_HEARTBEAT_SECS.load(Ordering::Relaxed);
-            // heartbeat interval
-            if now.saturating_sub(last) < heartbeat {
-                return false;
-            }
-
-            LAST_JSON_WRITE.store(now, Ordering::Relaxed);
-            true
-        }
-
-        let json_mon = OnDiskJsonMonitor::new(
-            json_log_path,
-            json_monitor_predicate as fn(&mut libafl::monitors::stats::ClientStatsManager) -> bool,
-        );
-        // Also include a simple stdout monitor; controlled by the CLI flag `--no-simple-monitor`.
-        let enable_simple = args.simple_monitor_enabled();
-        let simple_mon = libafl::monitors::SimpleMonitor::new(move |s| {
-            if enable_simple {
-                println!("{s}")
-            }
-        });
-        tuple_list!(json_mon, simple_mon)
-    };
+    let monitors = crate::driver::monitor::build_monitors(
+        args.log_dir.as_deref(),
+        args.json_heartbeat_secs,
+        args.simple_monitor_enabled(),
+    );
 
     // Event manager: supports restarting and may provide a restored State
     let mut shmem_provider = StdShMemProvider::new().expect("failed to create shmem provider");

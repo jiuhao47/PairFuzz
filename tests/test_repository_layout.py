@@ -24,8 +24,22 @@ class RepositoryLayoutTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, main)
 
-    def test_upgrade_checkpoint_keeps_legacy_algorithm(self):
+    def test_runtime_selects_clients_but_does_not_build_pipeline(self):
+        client = ROOT / "src" / "driver" / "client.rs"
+        pipeline = ROOT / "src" / "driver" / "pipeline.rs"
+        self.assertTrue(client.is_file())
+        self.assertTrue(pipeline.is_file())
         runtime = (ROOT / "src" / "driver" / "runtime.rs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("run_legacy_client", runtime)
+        self.assertIn("run_fast_client", runtime)
+        for token in ("ForkserverExecutor", "StdState", "StdMOptMutator", "fuzz_loop"):
+            with self.subTest(forbidden=token):
+                self.assertNotIn(token, runtime)
+
+    def test_legacy_client_keeps_upgrade_checkpoint_algorithm(self):
+        client = (ROOT / "src" / "driver" / "client.rs").read_text(
             encoding="utf-8"
         )
         for token in (
@@ -35,10 +49,10 @@ class RepositoryLayoutTests(unittest.TestCase):
             "SimpleRestartingEventManager",
         ):
             with self.subTest(required=token):
-                self.assertIn(token, runtime)
+                self.assertIn(token, client)
         for token in ("StdMOptMutator", "CentralizedLauncher", "CachedOnDiskCorpus"):
             with self.subTest(forbidden=token):
-                self.assertNotIn(token, runtime)
+                self.assertNotIn(token, client)
 
     def test_compiler_checkpoint_keeps_normal_instrumentation_abi(self):
         manifest = (ROOT / "app" / "compiler" / "Cargo.toml").read_text(

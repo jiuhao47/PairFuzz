@@ -18,3 +18,8 @@ benchmark/libspng
 .cur_input_*
 
 AFLplusplus
+
+# Local competition tools and generated artifacts.
+.tools/
+.superpowers/
+examples/contest/*.o

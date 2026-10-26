@@ -85,5 +85,37 @@ class VendorVerifierTests(unittest.TestCase):
                 demo.verify_vendor_manifest(root)
 
 
+class TargetContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.demo = load_demo()
+        cls.demo.build()
+
+    def test_shared_object_parser_contract(self):
+        cases = [
+            (b'{"x":1}', [0, 0]),
+            (b'  {"x":[true,null]}\n', [0, 0]),
+            (b'[]', [1, 1]),
+            (b'null', [1, 1]),
+            (b'{"x":1}junk', [1, 1]),
+            (b'{"x":1}\x00', [1, 1]),
+            (b'', [100, 100]),
+        ]
+        for data, expected in cases:
+            with self.subTest(data=data):
+                self.assertEqual(self.demo.results(data), expected)
+
+    def test_starting_seeds_are_not_already_differential(self):
+        seeds = ROOT / "examples" / "real-json" / "seeds"
+        for seed in sorted(seeds.iterdir()):
+            with self.subTest(seed=seed.name):
+                left, right = self.demo.results(seed.read_bytes())
+                self.assertEqual(left, right)
+
+    def test_known_invalid_escape_is_a_real_parser_difference(self):
+        known = ROOT / "examples" / "real-json" / "known-difference.json"
+        self.assertEqual(self.demo.results(known.read_bytes()), [1, 0])
+
+
 if __name__ == "__main__":
     unittest.main()

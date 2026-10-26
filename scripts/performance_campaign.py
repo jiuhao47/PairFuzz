@@ -488,7 +488,7 @@ def run_bounded(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     launched = ["taskset", "--cpu-list", str(cpu), *command]
     started = time.monotonic()
-    process_cpu: dict[int, float] = {}
+    peak_cpu_seconds = 0.0
     peak_rss_kb = 0
     term_sent = False
     kill_sent = False
@@ -504,10 +504,9 @@ def run_bounded(
             start_new_session=True,
         )
         while True:
-            peak_rss_kb = max(
-                peak_rss_kb,
-                _sample_process_group(process.pid, process_cpu),
-            )
+            sample_rss_kb, sample_cpu_seconds = _sample_process_group(process.pid)
+            peak_rss_kb = max(peak_rss_kb, sample_rss_kb)
+            peak_cpu_seconds = max(peak_cpu_seconds, sample_cpu_seconds)
             status = process.poll()
             elapsed = time.monotonic() - started
             if status is not None:
@@ -521,10 +520,9 @@ def run_bounded(
             term_sent = _signal_group(process.pid, signal.SIGTERM)
             grace_deadline = time.monotonic() + 0.25
             while _group_exists(process.pid) and time.monotonic() < grace_deadline:
-                peak_rss_kb = max(
-                    peak_rss_kb,
-                    _sample_process_group(process.pid, process_cpu),
-                )
+                sample_rss_kb, sample_cpu_seconds = _sample_process_group(process.pid)
+                peak_rss_kb = max(peak_rss_kb, sample_rss_kb)
+                peak_cpu_seconds = max(peak_cpu_seconds, sample_cpu_seconds)
                 time.sleep(0.01)
             if _group_exists(process.pid):
                 kill_sent = _signal_group(process.pid, signal.SIGKILL)
@@ -548,7 +546,7 @@ def run_bounded(
         term_sent=term_sent,
         kill_sent=kill_sent,
         wall_seconds=wall_seconds,
-        cpu_seconds=sum(process_cpu.values()),
+        cpu_seconds=peak_cpu_seconds,
         peak_rss_kb=peak_rss_kb,
     )
 
@@ -581,23 +579,22 @@ def _group_has_live_processes(process_group: int) -> bool:
     return False
 
 
-def _sample_process_group(process_group: int, process_cpu: dict[int, float]) -> int:
+def _sample_process_group(process_group: int) -> tuple[int, float]:
     ticks = os.sysconf("SC_CLK_TCK")
     page_kb = os.sysconf("SC_PAGE_SIZE") // 1024
     rss_kb = 0
+    cpu_seconds = 0.0
     for stat_path in Path("/proc").glob("[0-9]*/stat"):
         try:
             raw = stat_path.read_text(encoding="ascii")
             fields = raw[raw.rfind(")") + 2 :].split()
             if int(fields[2]) != process_group:
                 continue
-            pid = int(stat_path.parent.name)
-            cpu_seconds = (int(fields[11]) + int(fields[12])) / ticks
-            process_cpu[pid] = max(process_cpu.get(pid, 0.0), cpu_seconds)
+            cpu_seconds += sum(int(fields[index]) for index in (11, 12, 13, 14)) / ticks
             rss_kb += max(0, int(fields[21])) * page_kb
         except (FileNotFoundError, ProcessLookupError):
             continue
-    return rss_kb
+    return rss_kb, cpu_seconds
 
 
 def capture_environment(

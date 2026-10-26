@@ -196,6 +196,30 @@ class ProcessRunnerTests(unittest.TestCase):
             self.assertTrue(record.term_sent)
             self.assertFalse(self._pid_exists(int(pid_path.read_text())))
 
+    def test_bounded_runner_counts_reaped_descendant_cpu_time(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = (
+                "import time; end=time.process_time()+0.02; "
+                "exec('while time.process_time() < end: pass')"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                f"[subprocess.run([sys.executable, '-c', {child!r}]) for _ in range(20)]; "
+                "time.sleep(60)"
+            )
+            record = campaign.run_bounded(
+                [sys.executable, "-c", parent],
+                cwd=root,
+                env=os.environ.copy(),
+                duration=0.8,
+                cpu=self._available_cpu(),
+                log_path=root / "cpu.log",
+            )
+
+            self.assertGreater(record.cpu_seconds, 0.3)
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
     def test_bounded_runner_kills_stubborn_descendant(self):
         campaign = load_campaign_module()

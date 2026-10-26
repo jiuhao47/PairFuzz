@@ -79,9 +79,8 @@ impl DifferentialSignatureSetMetadata {
         self.accepted.insert(signature)
     }
 
-    #[must_use]
-    pub fn contains(&self, signature: &DifferentialSignature) -> bool {
-        self.accepted.contains(signature)
+    pub(crate) fn accepted(&self) -> &HashSet<DifferentialSignature> {
+        &self.accepted
     }
 }
 

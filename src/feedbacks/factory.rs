@@ -1,6 +1,9 @@
 use crate::{
     driver::args::RunMode,
-    feedbacks::{diffray_feedback::DiffrayFeedback, CrashObjective, DiffObjective},
+    feedbacks::{
+        differential_objective::DifferentialObjective, diffray_feedback::DiffrayFeedback,
+        CrashObjective, DiffObjective,
+    },
     observers::ReturnValueObserver,
 };
 use libafl::{
@@ -30,6 +33,18 @@ where
         RunMode::ComboCov => DiffrayFeedback::new_combo_cov(map_a, map_b),
         RunMode::SingleCov | RunMode::ReplayCov => DiffrayFeedback::new_single_cov(map_a, map_b),
     }
+}
+
+pub(crate) fn build_fast_objective<C>(
+    map_a: &C,
+    map_b: &C,
+    rv_a: &ReturnValueObserver,
+    rv_b: &ReturnValueObserver,
+) -> DifferentialObjective<C>
+where
+    C: Named,
+{
+    DifferentialObjective::new(map_a, map_b, rv_a, rv_b)
 }
 
 pub(crate) type Objective<C> =
@@ -112,5 +127,24 @@ mod tests {
 
         assert!(name.starts_with("Fast AND (Fast OR ("));
         assert!(crash < diff && diff < map);
+    }
+
+    #[test]
+    fn fast_objective_factory_uses_atomic_objective() {
+        let map_a = HitcountsMapObserver::new(StdMapObserver::differential_owned(
+            "first-edges",
+            vec![0u8; 8],
+        ));
+        let map_b = HitcountsMapObserver::new(StdMapObserver::differential_owned(
+            "second-edges",
+            vec![0u8; 8],
+        ));
+        let rv_a = ReturnValueObserver::new("first_return");
+        let rv_b = ReturnValueObserver::new("second_return");
+
+        let objective =
+            crate::driver::pipeline::build_direct_objective(&map_a, &map_b, &rv_a, &rv_b);
+
+        assert_eq!(objective.name().as_ref(), "DifferentialObjective");
     }
 }

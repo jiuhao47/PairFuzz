@@ -2,9 +2,12 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,6 +126,121 @@ class CampaignManifestTests(unittest.TestCase):
                 temporary.cleanup()
 
         return TemporaryManifest()
+
+
+class ProcessRunnerTests(unittest.TestCase):
+    def test_clean_environment_removes_fuzzer_shared_memory_variables(self):
+        campaign = load_campaign_module()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "__AFL_SHM_ID": "stale-afl",
+                "__DIFFRAY_SHM_ID": "stale-diffray",
+                "DIFFRAY_KEEP": "visible",
+            },
+            clear=False,
+        ):
+            environment = campaign.clean_environment(ROOT)
+
+        self.assertNotIn("__AFL_SHM_ID", environment)
+        self.assertNotIn("__DIFFRAY_SHM_ID", environment)
+        self.assertEqual(environment["DIFFRAY_KEEP"], "visible")
+        self.assertEqual(environment["CARGO_TARGET_DIR"], str(ROOT / "target"))
+
+    def test_bounded_runner_records_early_exit(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = campaign.run_bounded(
+                [
+                    sys.executable,
+                    "-c",
+                    "print('evidence-before-exit', flush=True); raise SystemExit(7)",
+                ],
+                cwd=root,
+                env=os.environ.copy(),
+                duration=2.0,
+                cpu=self._available_cpu(),
+                log_path=root / "early.log",
+            )
+
+            self.assertTrue(record.completed_early)
+            self.assertFalse(record.timed_out)
+            self.assertEqual(record.exit_code, 7)
+            self.assertGreaterEqual(record.wall_seconds, 0)
+            self.assertEqual(
+                (root / "early.log").read_text().strip(), "evidence-before-exit"
+            )
+
+    def test_bounded_runner_terminates_process_group(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pid_path = root / "pid"
+            program = (
+                "import os,pathlib,time; "
+                f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            record = campaign.run_bounded(
+                [sys.executable, "-c", program],
+                cwd=root,
+                env=os.environ.copy(),
+                duration=0.2,
+                cpu=self._available_cpu(),
+                log_path=root / "timeout.log",
+            )
+
+            self.assertTrue(record.timed_out)
+            self.assertFalse(record.completed_early)
+            self.assertTrue(record.term_sent)
+            self.assertFalse(self._pid_exists(int(pid_path.read_text())))
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
+    def test_bounded_runner_kills_stubborn_descendant(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child_pid_path = root / "child-pid"
+            child = (
+                "import os,pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(child_pid_path)!r}).write_text(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                "time.sleep(60)"
+            )
+            record = campaign.run_bounded(
+                [sys.executable, "-c", parent],
+                cwd=root,
+                env=os.environ.copy(),
+                duration=0.2,
+                cpu=self._available_cpu(),
+                log_path=root / "stubborn.log",
+            )
+
+            child_pid = int(child_pid_path.read_text())
+            self.assertTrue(record.term_sent)
+            self.assertTrue(record.kill_sent)
+            self.assertFalse(self._pid_exists(child_pid))
+
+    @staticmethod
+    def _available_cpu():
+        return min(os.sched_getaffinity(0))
+
+    @staticmethod
+    def _pid_exists(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        stat = Path(f"/proc/{pid}/stat")
+        if stat.is_file() and stat.read_text().split()[2] == "Z":
+            return False
+        return True
 
 
 if __name__ == "__main__":

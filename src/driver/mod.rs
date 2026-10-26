@@ -6,6 +6,7 @@ pub mod env_var;
 pub mod fast_client;
 pub mod monitor;
 pub mod pipeline;
+pub mod random;
 pub mod replay;
 pub mod runtime;
 pub mod target;

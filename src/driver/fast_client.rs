@@ -9,7 +9,7 @@ use libafl::{
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     inputs::BytesInput,
-    mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
+    mutators::{havoc_mutations, tokens_mutations, HavocScheduledMutator, StdMOptMutator, Tokens},
     observers::{CanTrack, HitcountsMapObserver, StdMapObserver, TimeObserver},
     schedulers::{
         powersched::PowerSchedule, IndexesLenTimeMinimizerScheduler, StdWeightedScheduler,
@@ -26,14 +26,14 @@ use libafl_bolts::{
     current_time, nonzero,
     rands::StdRand,
     shmem::{ShMemProvider, StdShMemProvider},
-    tuples::tuple_list,
+    tuples::{tuple_list, Merge},
 };
 
 use crate::{
     driver::{
-        args::{Args, ScheduleChoice},
+        args::{Args, MutatorChoice, ScheduleChoice},
         client::normalize_fuzz_result,
-        pipeline::ClientIdentity,
+        pipeline::{ClientIdentity, FastMutationalStage},
         target::{build_executor, names, TargetRole, TargetSpec},
     },
     observers::ReturnValueObserver,
@@ -96,6 +96,7 @@ pub(crate) fn run_fast_client(
         &rv_observer_a,
         &rv_observer_b,
     );
+    let scheduler_observer_a = map_observer_a.clone();
 
     let monitors = crate::driver::monitor::build_monitors(
         args.log_dir.as_deref(),
@@ -108,25 +109,6 @@ pub(crate) fn run_fast_client(
             Err(libafl::Error::ShuttingDown) => return Ok(()),
             Err(error) => return Err(Box::new(error)),
         };
-
-    let mut state = maybe_state.unwrap_or_else(|| {
-        StdState::new(
-            StdRand::with_seed(identity.rng_seed),
-            CachedOnDiskCorpus::<BytesInput>::new(&paths.queue, 1000).unwrap(),
-            OnDiskCorpus::<BytesInput>::new(&paths.solutions).unwrap(),
-            &mut feedback,
-            &mut objective,
-        )
-        .unwrap()
-    });
-
-    let schedule = match args.schedule {
-        ScheduleChoice::Explore => PowerSchedule::explore(),
-        ScheduleChoice::Fast => PowerSchedule::fast(),
-    };
-    let weighted = StdWeightedScheduler::with_schedule(&mut state, &map_observer_a, Some(schedule));
-    let scheduler = IndexesLenTimeMinimizerScheduler::new(&map_observer_a, weighted);
-    let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     let mut rv_shmem_a = None;
     let mut rv_shmem_b = None;
@@ -146,7 +128,7 @@ pub(crate) fn run_fast_client(
             )?,
         );
     }
-    let mut tokens = libafl::mutators::Tokens::new();
+    let mut tokens = Tokens::new().add_from_files(&args.dicts)?;
     let executor_a = build_executor(
         TargetSpec {
             role: TargetRole::A,
@@ -183,6 +165,25 @@ pub(crate) fn run_fast_client(
     );
     let mut differential_executor =
         DiffExecutor::new(executor_a, executor_b, tuple_list!(time_observer));
+
+    let mut state = maybe_state.unwrap_or_else(|| {
+        StdState::new(
+            StdRand::with_seed(identity.rng_seed),
+            CachedOnDiskCorpus::<BytesInput>::new(&paths.queue, 1000).unwrap(),
+            OnDiskCorpus::<BytesInput>::new(&paths.solutions).unwrap(),
+            &mut feedback,
+            &mut objective,
+        )
+        .unwrap()
+    });
+    let schedule = match args.schedule {
+        ScheduleChoice::Explore => PowerSchedule::explore(),
+        ScheduleChoice::Fast => PowerSchedule::fast(),
+    };
+    let weighted =
+        StdWeightedScheduler::with_schedule(&mut state, &scheduler_observer_a, Some(schedule));
+    let scheduler = IndexesLenTimeMinimizerScheduler::new(&scheduler_observer_a, weighted);
+    let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     let mut generator = RandPrintablesGenerator::new(nonzero!(32));
     if state.must_load_initial_inputs() {
@@ -221,15 +222,24 @@ pub(crate) fn run_fast_client(
         .exec_timeout(args.timeout_ms)
         .target_mode("differential-forkserver".to_owned())
         .build()?;
-    let mutation = HavocScheduledMutator::new(havoc_mutations());
-    let mutation = TimeTrackingStageWrapper::<FuzzTime, _, _>::new(StdPowerMutationalStage::<
-        _,
-        _,
-        BytesInput,
-        _,
-        _,
-        _,
-    >::new(mutation));
+    let mutation = match args.mutator {
+        MutatorChoice::Havoc => {
+            FastMutationalStage::Havoc(StdPowerMutationalStage::<_, _, BytesInput, _, _, _>::new(
+                HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations())),
+            ))
+        }
+        MutatorChoice::MOpt => {
+            FastMutationalStage::MOpt(StdPowerMutationalStage::<_, _, BytesInput, _, _, _>::new(
+                StdMOptMutator::new(
+                    &mut state,
+                    havoc_mutations().merge(tokens_mutations()),
+                    7,
+                    5,
+                )?,
+            ))
+        }
+    };
+    let mutation = TimeTrackingStageWrapper::<FuzzTime, _, _>::new(mutation);
     let mut stages = tuple_list!(calibration, mutation, stats);
 
     normalize_fuzz_result(fuzzer.fuzz_loop(

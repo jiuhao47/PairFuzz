@@ -6,8 +6,8 @@ use crate::driver::{
 };
 
 pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let identity = ClientIdentity::single_client(&args);
     if pipeline::fast_client_requested(&args) {
+        let identity = ClientIdentity::single_client(&args);
         run_fast_client(&args, identity)
     } else {
         run_legacy_client(&args)

@@ -22,10 +22,27 @@ pub(crate) struct ClientIdentity {
 
 impl ClientIdentity {
     pub(crate) fn single_client(args: &Args) -> Self {
+        let campaign_seed = args
+            .campaign_seed
+            .unwrap_or_else(libafl_bolts::current_nanos);
+        let rng_seed = crate::driver::random::derive_client_seed(campaign_seed, 0, 0);
+        crate::utils::logging::info(
+            "main",
+            &format!(
+                "campaign_seed={} ({}) derived_client_seed={}",
+                campaign_seed,
+                if args.campaign_seed.is_some() {
+                    "configured"
+                } else {
+                    "generated"
+                },
+                rng_seed
+            ),
+        );
         Self {
             stable_index: 0,
             core_id: None,
-            rng_seed: 0,
+            rng_seed,
             output_dir: args.output_dir.clone(),
         }
     }
@@ -41,6 +58,70 @@ impl ClientIdentity {
             plot: client.join("plot_data"),
         }
     }
+}
+
+pub(crate) enum FastMutationalStage<H, M> {
+    Havoc(H),
+    MOpt(M),
+}
+
+impl<E, EM, H, M, S, Z> libafl::stages::Stage<E, EM, S, Z> for FastMutationalStage<H, M>
+where
+    H: libafl::stages::Stage<E, EM, S, Z>,
+    M: libafl::stages::Stage<E, EM, S, Z>,
+{
+    fn perform(
+        &mut self,
+        fuzzer: &mut Z,
+        executor: &mut E,
+        state: &mut S,
+        manager: &mut EM,
+    ) -> Result<(), libafl::Error> {
+        match self {
+            Self::Havoc(stage) => stage.perform(fuzzer, executor, state, manager),
+            Self::MOpt(stage) => stage.perform(fuzzer, executor, state, manager),
+        }
+    }
+}
+
+impl<H, M, S> libafl::stages::Restartable<S> for FastMutationalStage<H, M>
+where
+    H: libafl::stages::Restartable<S>,
+    M: libafl::stages::Restartable<S>,
+{
+    fn should_restart(&mut self, state: &mut S) -> Result<bool, libafl::Error> {
+        match self {
+            Self::Havoc(stage) => stage.should_restart(state),
+            Self::MOpt(stage) => stage.should_restart(state),
+        }
+    }
+
+    fn clear_progress(&mut self, state: &mut S) -> Result<(), libafl::Error> {
+        match self {
+            Self::Havoc(stage) => stage.clear_progress(state),
+            Self::MOpt(stage) => stage.clear_progress(state),
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FastStageKind {
+    Calibration,
+    I2S,
+    PowerMutation,
+    Stats,
+    CandidateReplay,
+}
+
+#[cfg(test)]
+fn fast_stage_order(include_i2s: bool) -> Vec<FastStageKind> {
+    let mut order = vec![FastStageKind::Calibration];
+    if include_i2s {
+        order.push(FastStageKind::I2S);
+    }
+    order.extend([FastStageKind::PowerMutation, FastStageKind::Stats]);
+    order
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +219,22 @@ mod fast_pipeline_tests {
         assert!(result.interesting);
         assert_eq!(result.map_indexes_metadata, 1);
         assert_eq!(result.tracked_indexes, 0);
+    }
+
+    #[test]
+    fn fast_stage_order_is_calibration_then_optional_i2s_then_power_then_stats() {
+        use super::FastStageKind::{Calibration, CandidateReplay, PowerMutation, Stats, I2S};
+
+        assert_eq!(
+            super::fast_stage_order(false),
+            vec![Calibration, PowerMutation, Stats]
+        );
+        assert_eq!(
+            super::fast_stage_order(true),
+            vec![Calibration, I2S, PowerMutation, Stats]
+        );
+        assert!(!super::fast_stage_order(false).contains(&CandidateReplay));
+        assert!(!super::fast_stage_order(true).contains(&CandidateReplay));
     }
 }
 

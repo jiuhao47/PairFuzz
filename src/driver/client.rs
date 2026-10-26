@@ -453,6 +453,12 @@ pub(crate) fn log_working_state(args: &Args) {
     info("main", &format!("args.mode: {}", args.mode));
     info("main", &format!("args.pipeline: {:?}", args.pipeline));
     info("main", &format!("args.schedule: {:?}", args.schedule));
+    info("main", &format!("args.mutator: {:?}", args.mutator));
+    info(
+        "main",
+        &format!("args.campaign_seed: {:?}", args.campaign_seed),
+    );
+    info("main", &format!("args.dicts: {:?}", args.dicts));
     info(
         "main",
         &format!("args.stats_interval_secs: {}", args.stats_interval_secs),

@@ -68,6 +68,13 @@ pub enum ScheduleChoice {
     Fast,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum MutatorChoice {
+    Havoc,
+    #[value(name = "mopt")]
+    MOpt,
+}
+
 impl std::fmt::Display for SimpleMonitorMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -161,6 +168,15 @@ pub struct Args {
     /// AFL-style weighted power schedule used by the fast pipeline.
     #[arg(long, value_enum, default_value_t = ScheduleChoice::Explore)]
     pub schedule: ScheduleChoice,
+    /// Mutation scheduler used by the fast pipeline.
+    #[arg(long, value_enum, default_value_t = MutatorChoice::Havoc)]
+    pub mutator: MutatorChoice,
+    /// Campaign seed used to derive a stable, client-specific RNG stream.
+    #[arg(long)]
+    pub campaign_seed: Option<u64>,
+    /// AFL-compatible dictionary file. May be supplied more than once.
+    #[arg(long = "dict", action = clap::ArgAction::Append)]
+    pub dicts: Vec<PathBuf>,
     /// Interval between AFL-compatible statistics updates.
     #[arg(long, default_value_t = 15u64)]
     pub stats_interval_secs: u64,
@@ -169,7 +185,7 @@ pub struct Args {
 
 #[cfg(test)]
 mod fast_pipeline_tests {
-    use super::{Args, PipelineChoice, ScheduleChoice};
+    use super::{Args, MutatorChoice, PipelineChoice, ScheduleChoice};
     use clap::Parser;
 
     #[test]
@@ -186,6 +202,14 @@ mod fast_pipeline_tests {
         assert_eq!(explore.unwrap().schedule, ScheduleChoice::Explore);
         let fast = Args::try_parse_from(["diffray", "--schedule", "fast"]);
         assert_eq!(fast.unwrap().schedule, ScheduleChoice::Fast);
+    }
+
+    #[test]
+    fn mutator_choices_parse() {
+        let havoc = Args::try_parse_from(["diffray"]);
+        assert_eq!(havoc.unwrap().mutator, MutatorChoice::Havoc);
+        let mopt = Args::try_parse_from(["diffray", "--mutator", "mopt"]);
+        assert_eq!(mopt.unwrap().mutator, MutatorChoice::MOpt);
     }
 }
 

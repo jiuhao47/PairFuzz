@@ -7,6 +7,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepositoryLayoutTests(unittest.TestCase):
+    def test_rust_entrypoint_is_thin_and_runtime_is_separate(self):
+        runtime = ROOT / "src" / "driver" / "runtime.rs"
+        self.assertTrue(runtime.is_file())
+
+        main = (ROOT / "src" / "main.rs").read_text(encoding="utf-8")
+        self.assertLessEqual(len(main.splitlines()), 80)
+        for token in (
+            "ForkserverExecutor",
+            "DiffExecutor",
+            "StdState",
+            "fuzz_loop",
+            "ReplayCov",
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, main)
+
     def test_required_competition_paths_exist(self):
         required = (
             "src/main.rs",

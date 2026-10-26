@@ -30,6 +30,8 @@ fn normalize_fuzz_result<T>(result: Result<T, libafl::Error>) -> Result<(), liba
 
 #[expect(clippy::too_many_lines)]
 pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    crate::feedbacks::signature::register_metadata_types();
+
     // Ensure output directory exists
     if let Err(e) = fs::create_dir_all(&args.output_dir) {
         error(

@@ -83,6 +83,8 @@ where
     S: HasExecutions,
 {
     fn pre_exec(&mut self, _state: &mut S, _input: &I) -> Result<(), Error> {
+        self.last_value = None;
+        self.last_exit_kind = None;
         Ok(())
     }
 
@@ -191,5 +193,23 @@ mod tests {
         let mut state = DummyState::new();
         obs.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
         assert_eq!(obs.last_value(), Some(value));
+    }
+
+    #[test]
+    fn observer_clears_previous_value_before_each_execution() {
+        use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+
+        let mut provider = StdShMemProvider::new().unwrap();
+        let mut shm = provider.new_shmem(4).unwrap();
+        shm[..4].copy_from_slice(&7_i32.to_ne_bytes());
+        let mut obs = ReturnValueObserver::new("rv");
+        obs.set_shmem(shm);
+        let mut state = DummyState::new();
+        obs.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
+        assert_eq!(obs.last_value(), Some(7));
+
+        obs.pre_exec(&mut state, &()).unwrap();
+
+        assert_eq!(obs.last_value(), None);
     }
 }

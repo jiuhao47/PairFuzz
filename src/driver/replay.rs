@@ -1,58 +1,180 @@
 use crate::{
     feedbacks::diffray_feedback::DiffrayFeedback,
+    feedbacks::signature::{compute_signature, DifferentialSignature, ExitClass},
+    observers::ReturnValueObserver,
     utils::logging::{error, info, warn},
 };
 use libafl::{
     events::{AwaitRestartSafe, SendExiting},
-    executors::HasObservers,
+    executors::{DiffExitKind, ExitKind, HasObservers},
     inputs::BytesInput,
     observers::MapObserver,
     ExecutesInput,
 };
-use libafl_bolts::{tuples::MatchNameRef, AsIter};
+use libafl_bolts::{
+    tuples::{Handle, MatchNameRef},
+    AsIter,
+};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::{
+    borrow::Cow,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
-pub(crate) fn timestamp_seconds(time: SystemTime) -> f64 {
-    time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
+const SIGNATURE_REPETITIONS: usize = 3;
+
+#[derive(Debug, Serialize)]
+struct SignatureReplayRecord {
+    path: String,
+    signatures: Vec<String>,
+    return_pairs: Vec<[Option<i32>; 2]>,
+    stable: bool,
+    differential: bool,
+    discovery_elapsed_nanos: Option<u64>,
 }
 
-pub(crate) fn collect_replay_files(input_dir: &Path) -> std::io::Result<Vec<(PathBuf, f64)>> {
+pub(crate) fn collect_replay_files(input_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in fs::read_dir(input_dir)? {
         let Ok(entry) = entry else {
             continue;
         };
         let path = entry.path();
-        if !path.is_file() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !path.is_file() || name.starts_with('.') || name.ends_with(".metadata") {
             continue;
         }
-        let Ok(metadata) = fs::metadata(&path) else {
-            continue;
-        };
-        let time = metadata
-            .modified()
-            .or_else(|_| metadata.created())
-            .unwrap_or_else(|_| SystemTime::now());
-        files.push((path, timestamp_seconds(time)));
+        files.push(path);
     }
     Ok(files)
 }
 
-pub(crate) fn sort_replay_files(files: &mut [(PathBuf, f64)]) {
-    files.sort_by(
-        |a, b| match a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal) {
-            std::cmp::Ordering::Equal => a.0.cmp(&b.0),
-            ordering => ordering,
-        },
-    );
+pub(crate) fn sort_replay_files(files: &mut [PathBuf]) {
+    files.sort();
+}
+
+fn exit_class(kind: DiffExitKind) -> ExitClass {
+    match kind {
+        DiffExitKind::Ok => ExitClass::Ok,
+        DiffExitKind::Crash => ExitClass::Crash,
+        DiffExitKind::Timeout => ExitClass::Timeout,
+        DiffExitKind::Oom => ExitClass::Oom,
+        DiffExitKind::Diff => ExitClass::Other,
+    }
+}
+
+fn exit_class_pair(kind: ExitKind) -> (ExitClass, ExitClass) {
+    match kind {
+        ExitKind::Diff { primary, secondary } => (exit_class(primary), exit_class(secondary)),
+        ExitKind::Ok => (ExitClass::Ok, ExitClass::Ok),
+        ExitKind::Crash => (ExitClass::Crash, ExitClass::Crash),
+        ExitKind::Timeout => (ExitClass::Timeout, ExitClass::Timeout),
+        ExitKind::Oom => (ExitClass::Oom, ExitClass::Oom),
+    }
+}
+
+fn semantic_difference(
+    exit_a: ExitClass,
+    exit_b: ExitClass,
+    rv_a: Option<i32>,
+    rv_b: Option<i32>,
+) -> bool {
+    exit_a != exit_b || rv_a.map(|value| value == 0) != rv_b.map(|value| value == 0)
+}
+
+fn persisted_elapsed_nanos(path: &Path) -> Option<u64> {
+    let direct = path.with_file_name(format!("{}.metadata", path.file_name()?.to_string_lossy()));
+    let hidden = path.with_file_name(format!(".{}.metadata", path.file_name()?.to_string_lossy()));
+    let collision_prefix = format!(".{}_", path.file_name()?.to_string_lossy());
+    let mut candidates = vec![direct, hidden];
+    if let Some(parent) = path.parent() {
+        if let Ok(entries) = fs::read_dir(parent) {
+            candidates.extend(
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|candidate| {
+                        candidate
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                name.starts_with(&collision_prefix) && name.ends_with(".metadata")
+                            })
+                    }),
+            );
+        }
+    }
+
+    fn find_nanos(value: &Value) -> Option<u64> {
+        match value {
+            Value::Object(object) => object
+                .get("nanos")
+                .and_then(Value::as_u64)
+                .or_else(|| object.values().find_map(find_nanos)),
+            Value::Array(values) => values.iter().find_map(find_nanos),
+            _ => None,
+        }
+    }
+
+    candidates.into_iter().find_map(|candidate| {
+        let payload: Value = serde_json::from_slice(&fs::read(candidate).ok()?).ok()?;
+        find_nanos(&payload)
+    })
+}
+
+fn signature_observation<C, EX>(
+    feedback: &DiffrayFeedback<C>,
+    executor: &EX,
+    exit_kind: ExitKind,
+) -> Option<(DifferentialSignature, [Option<i32>; 2], bool)>
+where
+    C: MapObserver + for<'it> AsIter<'it, Item = C::Entry>,
+    C::Entry: Into<u8> + Copy,
+    EX: HasObservers,
+    EX::Observers: MatchNameRef,
+{
+    let observers = executor.observers();
+    let map_a = observers.get(feedback.map_refs.first()?)?;
+    let map_b = observers.get(feedback.map_refs.get(1)?)?;
+    let bytes_a: Vec<u8> = map_a.as_iter().map(|value| (*value).into()).collect();
+    let bytes_b: Vec<u8> = map_b.as_iter().map(|value| (*value).into()).collect();
+    let rv_a_handle = Handle::<ReturnValueObserver>::new(Cow::Borrowed("first_return"));
+    let rv_b_handle = Handle::<ReturnValueObserver>::new(Cow::Borrowed("second_return"));
+    let rv_a = observers
+        .get(&rv_a_handle)
+        .and_then(ReturnValueObserver::last_value);
+    let rv_b = observers
+        .get(&rv_b_handle)
+        .and_then(ReturnValueObserver::last_value);
+    let (exit_a, exit_b) = exit_class_pair(exit_kind);
+    Some((
+        compute_signature(exit_a, exit_b, rv_a, rv_b, &bytes_a, &bytes_b),
+        [rv_a, rv_b],
+        semantic_difference(exit_a, exit_b, rv_a, rv_b),
+    ))
+}
+
+fn reset_replay_maps<C, EX>(
+    feedback: &DiffrayFeedback<C>,
+    executor: &mut EX,
+) -> Result<(), libafl::Error>
+where
+    C: MapObserver,
+    EX: HasObservers,
+    EX::Observers: MatchNameRef,
+{
+    let mut observers = executor.observers_mut();
+    for handle in &feedback.map_refs {
+        if let Some(observer) = observers.get_mut(handle) {
+            observer.reset_map()?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn replay_record(
@@ -111,7 +233,7 @@ where
     }
 
     sort_replay_files(&mut files);
-    let initial_time = files.first().map(|file| file.1).unwrap_or(0.0);
+    let replay_started = Instant::now();
     let json_log_path = crate::driver::monitor::json_log_path(log_dir);
     if let Some(parent) = json_log_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -128,7 +250,8 @@ where
     }
 
     let mut seen = 0usize;
-    for (index, (path, timestamp)) in files.into_iter().enumerate() {
+    let mut signature_records = Vec::new();
+    for (index, path) in files.into_iter().enumerate() {
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -140,50 +263,108 @@ where
             }
         };
         let input = BytesInput::from(bytes.as_slice());
-        match fuzzer.execute_input(state, executor, manager, &input) {
-            Ok(_) => {
-                let mut user_stats = Map::new();
-                let num_edges = num_edges as u64;
-                for (map_index, handle) in feedback.map_refs.iter().enumerate() {
-                    if let Some(observer) = executor.observers().get(handle) {
-                        let initial: u8 = observer.initial().into();
-                        for (index, item) in observer.as_iter().enumerate() {
-                            let current: u8 = (*item).into();
-                            union_maps[map_index][index] =
-                                union_maps[map_index][index].max(current);
-                        }
-
-                        let union_count = union_maps[map_index]
-                            .iter()
-                            .filter(|&&value| value != initial)
-                            .count() as u64;
-                        let name = feedback
-                            .names
-                            .get(map_index)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| format!("map-{map_index}"));
-                        let ratio = json!({
-                            "aggregator_op": "Max",
-                            "value": {"Ratio": [union_count, num_edges]}
-                        });
-                        user_stats.insert(name, ratio);
+        let mut signatures = Vec::with_capacity(SIGNATURE_REPETITIONS);
+        let mut return_pairs = Vec::with_capacity(SIGNATURE_REPETITIONS);
+        let mut differential_outcomes = Vec::with_capacity(SIGNATURE_REPETITIONS);
+        let mut last_execution_succeeded = false;
+        for _ in 0..SIGNATURE_REPETITIONS {
+            reset_replay_maps(feedback, executor)?;
+            match fuzzer.execute_input(state, executor, manager, &input) {
+                Ok(exit_kind) => {
+                    last_execution_succeeded = true;
+                    if let Some((signature, return_pair, differential)) =
+                        signature_observation(feedback, executor, exit_kind)
+                    {
+                        signatures.push(signature.to_hex());
+                        return_pairs.push(return_pair);
+                        differential_outcomes.push(differential);
                     }
                 }
-
-                let record = replay_record(index, timestamp - initial_time, user_stats);
-                let mut file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&json_log_path)
-                    .unwrap_or_else(|err| panic!("failed open json log: {err}"));
-                writeln!(file, "{record}").ok();
-                seen += 1;
+                Err(err) => {
+                    warn("main", &format!("Execution error for {:?}: {}", path, err));
+                    last_execution_succeeded = false;
+                    break;
+                }
             }
-            Err(err) => warn("main", &format!("Execution error for {:?}: {}", path, err)),
         }
+
+        if last_execution_succeeded {
+            let mut user_stats = Map::new();
+            let num_edges = num_edges as u64;
+            for (map_index, handle) in feedback.map_refs.iter().enumerate() {
+                if let Some(observer) = executor.observers().get(handle) {
+                    let initial: u8 = observer.initial().into();
+                    for (index, item) in observer.as_iter().enumerate() {
+                        let current: u8 = (*item).into();
+                        union_maps[map_index][index] = union_maps[map_index][index].max(current);
+                    }
+
+                    let union_count = union_maps[map_index]
+                        .iter()
+                        .filter(|&&value| value != initial)
+                        .count() as u64;
+                    let name = feedback
+                        .names
+                        .get(map_index)
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| format!("map-{map_index}"));
+                    let ratio = json!({
+                        "aggregator_op": "Max",
+                        "value": {"Ratio": [union_count, num_edges]}
+                    });
+                    user_stats.insert(name, ratio);
+                }
+            }
+
+            let record = replay_record(index, replay_started.elapsed().as_secs_f64(), user_stats);
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&json_log_path)
+                .unwrap_or_else(|err| panic!("failed open json log: {err}"));
+            writeln!(file, "{record}").ok();
+            seen += 1;
+        }
+
+        let stable = signatures.len() == SIGNATURE_REPETITIONS
+            && signatures.windows(2).all(|pair| pair[0] == pair[1])
+            && return_pairs.windows(2).all(|pair| pair[0] == pair[1])
+            && differential_outcomes
+                .windows(2)
+                .all(|pair| pair[0] == pair[1]);
+        let differential = stable && differential_outcomes.first() == Some(&true);
+        signature_records.push(SignatureReplayRecord {
+            path: path.to_string_lossy().into_owned(),
+            signatures,
+            return_pairs,
+            stable,
+            differential,
+            discovery_elapsed_nanos: persisted_elapsed_nanos(&path),
+        });
     }
 
-    info("main", &format!("ReplayCov: processed {seen} inputs"));
+    let signature_index_path = log_dir
+        .unwrap_or_else(|| Path::new("."))
+        .join("replay-signatures.json");
+    if let Some(parent) = signature_index_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(
+        &signature_index_path,
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": 1,
+            "signature_version": 1,
+            "records": signature_records,
+        }))?,
+    )?;
+
+    info(
+        "main",
+        &format!(
+            "ReplayCov: processed {seen} inputs; signatures: {:?}",
+            signature_index_path
+        ),
+    );
     if let Err(err) = manager.on_shutdown() {
         warn("main", &format!("Error during manager shutdown: {err}"));
     }
@@ -193,32 +374,24 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_replay_files, replay_record, sort_replay_files, timestamp_seconds};
+    use super::{collect_replay_files, replay_record, sort_replay_files};
     use serde_json::{json, Map};
     use std::{
         fs,
         path::PathBuf,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[test]
-    fn timestamp_before_epoch_is_zero() {
-        assert_eq!(timestamp_seconds(UNIX_EPOCH - Duration::from_secs(1)), 0.0);
-    }
-
-    #[test]
-    fn sort_replay_files_orders_timestamp_then_path() {
-        let mut files = vec![
-            (PathBuf::from("z"), 1.0),
-            (PathBuf::from("b"), 0.5),
-            (PathBuf::from("a"), 1.0),
-        ];
+    fn sort_replay_files_orders_by_path() {
+        let mut files = vec![PathBuf::from("z"), PathBuf::from("b"), PathBuf::from("a")];
 
         sort_replay_files(&mut files);
 
-        assert_eq!(files[0], (PathBuf::from("b"), 0.5));
-        assert_eq!(files[1], (PathBuf::from("a"), 1.0));
-        assert_eq!(files[2], (PathBuf::from("z"), 1.0));
+        assert_eq!(
+            files,
+            [PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("z")]
+        );
     }
 
     #[test]
@@ -252,12 +425,14 @@ mod tests {
         let nested = root.join("nested");
         fs::create_dir_all(&nested).unwrap();
         fs::write(root.join("direct"), b"direct").unwrap();
+        fs::write(root.join(".lock"), b"lock").unwrap();
+        fs::write(root.join("direct.metadata"), b"metadata").unwrap();
         fs::write(nested.join("ignored"), b"nested").unwrap();
 
         let result = collect_replay_files(&root).unwrap();
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].0, root.join("direct"));
+        assert_eq!(result[0], root.join("direct"));
         fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -31,6 +31,7 @@ bindgen = "0.71.1"
 cc = "1.2.47"      # aligned with LibAFL workspace
 
 [dependencies]
+blake3 = "1.8.2"
 libafl = { path = "./LibAFL/crates/libafl", features = ["track_hit_feedbacks"] }
 libafl_bolts = { path = "./LibAFL/crates/libafl_bolts" }
 libafl_targets = { path = "./LibAFL/crates/libafl_targets", features = [

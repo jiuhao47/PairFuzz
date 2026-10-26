@@ -268,6 +268,45 @@ class ProcessRunnerTests(unittest.TestCase):
 
 
 class AggregationTests(unittest.TestCase):
+    def test_signature_aggregation_collapses_distinct_witnesses_and_reports_unstable(self):
+        campaign = load_campaign_module()
+        records = [
+            campaign.ReplayRecord(
+                sha256="bytes-a",
+                paths=("a",),
+                return_pairs=((0, 1),) * 3,
+                signatures=("v1-same",) * 3,
+                stable=True,
+                differential=True,
+                discovery_elapsed_nanos=10,
+            ),
+            campaign.ReplayRecord(
+                sha256="bytes-b",
+                paths=("b",),
+                return_pairs=((0, 1),) * 3,
+                signatures=("v1-same",) * 3,
+                stable=True,
+                differential=True,
+                discovery_elapsed_nanos=20,
+            ),
+            campaign.ReplayRecord(
+                sha256="bytes-c",
+                paths=("c",),
+                return_pairs=((0, 1), (0, 0), (0, 1)),
+                signatures=("v1-a", "v1-b", "v1-a"),
+                stable=False,
+                differential=False,
+                discovery_elapsed_nanos=30,
+            ),
+        ]
+
+        metrics = campaign.summarize_replays(records)
+
+        self.assertEqual(metrics["stable_nonduplicate_differences"], 1)
+        self.assertEqual(metrics["signature_duplicates"], 1)
+        self.assertEqual(metrics["unstable_solutions"], 1)
+        self.assertEqual(metrics["time_to_first_nanos"], 10)
+
     def test_upgrade_only_label_reuses_the_single_pinned_mode(self):
         campaign = load_campaign_module()
         manifest = campaign.CampaignManifest.load(MANIFEST)
@@ -333,7 +372,9 @@ class AggregationTests(unittest.TestCase):
             baseline = summary["configurations"]["baseline"]
             self.assertEqual(baseline["stable_nonduplicate_differences"], 0)
             self.assertEqual(baseline["trial_count"], 1)
-            self.assertEqual(summary["behavioral_signature"], "pending-v1-coverage-replay")
+            self.assertEqual(
+                summary["behavioral_signature"], "diffray-v1-blake3-coverage"
+            )
             self.assertEqual(baseline["trials"][0]["raw_directory"], str(paths.root))
             self.assertEqual(baseline["trials"][0]["fuzzer_log"], str(paths.fuzzer_log))
 
@@ -394,6 +435,70 @@ class AggregationTests(unittest.TestCase):
 
 
 class EvidenceCompatibilityTests(unittest.TestCase):
+    def test_backfill_signatures_preserves_environment_and_updates_v1_metrics(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trial = root / "trial"
+            differences = trial / "diffs"
+            differences.mkdir(parents=True)
+            solution = differences / "solution"
+            solution.write_bytes(b"difference")
+            evidence = root / "evidence.json"
+            environment = {
+                "corpus_sha256": "fixed-corpus",
+                "target_sha256": {"a": "hash-a", "b": "hash-b"},
+            }
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "environment": environment,
+                        "results": {
+                            "rng_seed_controlled": False,
+                            "configurations": {
+                                "baseline": {
+                                    "allocated_cpu_hours": 0.5,
+                                    "trials": [
+                                        {
+                                            "raw_directory": str(trial),
+                                            "stable_nonduplicate_differences": 1,
+                                            "unstable_solutions": 0,
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            replay = {
+                str(solution): {
+                    "path": str(solution),
+                    "signatures": ["same"] * 3,
+                    "return_pairs": [[1, 0]] * 3,
+                    "stable": True,
+                    "differential": True,
+                    "discovery_elapsed_nanos": None,
+                }
+            }
+
+            with mock.patch.object(
+                campaign, "generate_signature_index", return_value=replay
+            ):
+                campaign.backfill_signatures([evidence])
+
+            updated = json.loads(evidence.read_text(encoding="utf-8"))
+            self.assertEqual(updated["environment"], environment)
+            self.assertFalse(updated["results"]["rng_seed_controlled"])
+            metrics = updated["results"]["configurations"]["baseline"]
+            self.assertEqual(metrics["stable_nonduplicate_differences"], 1)
+            self.assertEqual(metrics["signature_duplicates"], 0)
+            self.assertEqual(
+                updated["results"]["behavioral_signature"],
+                "diffray-v1-blake3-coverage",
+            )
+
     def test_validate_sidecars_replays_every_referenced_solution(self):
         campaign = load_campaign_module()
         with tempfile.TemporaryDirectory() as directory:

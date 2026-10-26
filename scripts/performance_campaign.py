@@ -13,6 +13,7 @@ import platform
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -239,7 +240,15 @@ class TrialPaths:
 class ReplayRecord:
     """Three-way reproduction outcome for one unique raw input."""
 
-    __slots__ = ("sha256", "paths", "return_pairs", "stable", "differential")
+    __slots__ = (
+        "sha256",
+        "paths",
+        "return_pairs",
+        "signatures",
+        "stable",
+        "differential",
+        "discovery_elapsed_nanos",
+    )
 
     def __init__(
         self,
@@ -249,20 +258,27 @@ class ReplayRecord:
         return_pairs: tuple[tuple[int, int], ...],
         stable: bool,
         differential: bool,
+        signatures: tuple[str, ...] = (),
+        discovery_elapsed_nanos: int | None = None,
     ) -> None:
         self.sha256 = sha256
         self.paths = paths
         self.return_pairs = return_pairs
+        self.signatures = signatures
         self.stable = stable
         self.differential = differential
+        self.discovery_elapsed_nanos = discovery_elapsed_nanos
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "sha256": self.sha256,
             "paths": list(self.paths),
             "return_pairs": [list(pair) for pair in self.return_pairs],
+            "signatures": list(self.signatures),
+            "signature": self.signatures[0] if self.stable and self.signatures else None,
             "stable": self.stable,
             "differential": self.differential,
+            "discovery_elapsed_nanos": self.discovery_elapsed_nanos,
         }
 
 
@@ -281,6 +297,8 @@ class TrialRecord:
         "stable_nonduplicate_differences",
         "unstable_solutions",
         "byte_duplicates",
+        "signature_duplicates",
+        "time_to_first_nanos",
         "rng_seed_controlled",
     )
 
@@ -299,6 +317,8 @@ class TrialRecord:
         unstable_solutions: int,
         byte_duplicates: int,
         rng_seed_controlled: bool,
+        signature_duplicates: int = 0,
+        time_to_first_nanos: int | None = None,
     ) -> None:
         self.configuration = configuration
         self.trial_index = trial_index
@@ -311,6 +331,8 @@ class TrialRecord:
         self.stable_nonduplicate_differences = stable_nonduplicate_differences
         self.unstable_solutions = unstable_solutions
         self.byte_duplicates = byte_duplicates
+        self.signature_duplicates = signature_duplicates
+        self.time_to_first_nanos = time_to_first_nanos
         self.rng_seed_controlled = rng_seed_controlled
 
     def as_dict(self) -> dict[str, Any]:
@@ -329,6 +351,8 @@ class TrialRecord:
             "stable_nonduplicate_differences": self.stable_nonduplicate_differences,
             "unstable_solutions": self.unstable_solutions,
             "byte_duplicates": self.byte_duplicates,
+            "signature_duplicates": self.signature_duplicates,
+            "time_to_first_nanos": self.time_to_first_nanos,
             "rng_seed_controlled": self.rng_seed_controlled,
         }
 
@@ -411,7 +435,9 @@ def create_trial(root: Path, configuration: str, trial_index: int) -> TrialPaths
 
 
 def replay_raw_solutions(
-    solution_dir: Path, repetitions: int = 3
+    solution_dir: Path,
+    repetitions: int = 3,
+    signature_index: dict[str, dict[str, Any]] | None = None,
 ) -> list[ReplayRecord]:
     if type(repetitions) is not int or repetitions < 3:
         raise ValueError("repetitions must be an integer of at least three")
@@ -430,12 +456,22 @@ def replay_raw_solutions(
 
     records = []
     for digest, paths in sorted(by_hash.items()):
-        data = paths[0].read_bytes()
-        outcomes = tuple(tuple(real_json_results(data)) for _ in range(repetitions))
-        if any(len(pair) != 2 for pair in outcomes):
-            raise RuntimeError("real JSON replay must return exactly two statuses")
-        stable = len(set(outcomes)) == 1
-        differential = stable and outcomes[0][0] != outcomes[0][1]
+        indexed = None if signature_index is None else signature_index.get(str(paths[0]))
+        if indexed is None:
+            data = paths[0].read_bytes()
+            outcomes = tuple(tuple(real_json_results(data)) for _ in range(repetitions))
+            if any(len(pair) != 2 for pair in outcomes):
+                raise RuntimeError("real JSON replay must return exactly two statuses")
+            signatures: tuple[str, ...] = ()
+            stable = len(set(outcomes)) == 1
+            differential = stable and outcomes[0][0] != outcomes[0][1]
+            discovery_elapsed_nanos = None
+        else:
+            outcomes = tuple(tuple(pair) for pair in indexed["return_pairs"])
+            signatures = tuple(indexed["signatures"])
+            stable = bool(indexed["stable"])
+            differential = bool(indexed["differential"])
+            discovery_elapsed_nanos = indexed.get("discovery_elapsed_nanos")
         records.append(
             ReplayRecord(
                 sha256=digest,
@@ -443,9 +479,99 @@ def replay_raw_solutions(
                 return_pairs=outcomes,
                 stable=stable,
                 differential=differential,
+                signatures=signatures,
+                discovery_elapsed_nanos=discovery_elapsed_nanos,
             )
         )
     return records
+
+
+def summarize_replays(records: list[ReplayRecord]) -> dict[str, Any]:
+    stable_records = [
+        record for record in records if record.stable and record.differential
+    ]
+    signatures = {
+        record.signatures[0]
+        for record in stable_records
+        if record.signatures
+    }
+    if signatures:
+        stable_nonduplicate = len(signatures)
+        signature_duplicates = len(stable_records) - stable_nonduplicate
+    else:
+        stable_nonduplicate = len(stable_records)
+        signature_duplicates = 0
+    elapsed = [
+        record.discovery_elapsed_nanos
+        for record in stable_records
+        if record.discovery_elapsed_nanos is not None
+    ]
+    return {
+        "stable_nonduplicate_differences": stable_nonduplicate,
+        "signature_duplicates": signature_duplicates,
+        "unstable_solutions": sum(not record.stable for record in records),
+        "time_to_first_nanos": min(elapsed) if elapsed else None,
+    }
+
+
+def generate_signature_index(
+    repository_root: Path,
+    solution_dir: Path,
+    target_a: Path,
+    target_b: Path,
+) -> dict[str, dict[str, Any]]:
+    if not solution_dir.is_dir():
+        return {}
+    fuzzer = repository_root / "target" / "debug" / "diffray"
+    if not fuzzer.is_file():
+        raise RuntimeError(f"DiffRay replay binary is missing: {fuzzer}")
+    with tempfile.TemporaryDirectory(
+        prefix="signature-replay-", dir=solution_dir.parent
+    ) as temporary:
+        replay_root = Path(temporary)
+        replay_log = replay_root / "log"
+        command = [
+            str(fuzzer),
+            "--mode",
+            "replay-cov",
+            "-i",
+            str(solution_dir.resolve()),
+            "-o",
+            str(replay_root / "discarded-solutions"),
+            "-l",
+            str(replay_log),
+            "--prog-a",
+            str(target_a.resolve()),
+            "--prog-b",
+            str(target_b.resolve()),
+            "--persistent-mode",
+            "disabled",
+            "--simple-monitor",
+            "disabled",
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=repository_root,
+            env=clean_environment(repository_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=max(60, 20 * len(tuple(solution_dir.iterdir()))),
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "signature replay failed "
+                f"({completed.returncode}): {completed.stdout[-4000:]!r}"
+            )
+        index_path = replay_log / "replay-signatures.json"
+        if not index_path.is_file():
+            raise RuntimeError(f"signature replay did not produce {index_path}")
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    if payload.get("signature_version") != 1 or not isinstance(
+        payload.get("records"), list
+    ):
+        raise RuntimeError("unsupported signature replay index")
+    return {record["path"]: record for record in payload["records"]}
 
 
 def aggregate_trials(records: list[TrialRecord]) -> dict[str, Any]:
@@ -475,12 +601,23 @@ def aggregate_trials(records: list[TrialRecord]) -> dict[str, Any]:
                 record.unstable_solutions for record in selected
             ),
             "byte_duplicates": sum(record.byte_duplicates for record in selected),
+            "signature_duplicates": sum(
+                record.signature_duplicates for record in selected
+            ),
+            "time_to_first_nanos": min(
+                (
+                    record.time_to_first_nanos
+                    for record in selected
+                    if record.time_to_first_nanos is not None
+                ),
+                default=None,
+            ),
             "peak_rss_kb": max(record.peak_rss_kb for record in selected),
             "trials": [record.as_dict() for record in selected],
         }
     return {
         "schema_version": 1,
-        "behavioral_signature": "pending-v1-coverage-replay",
+        "behavioral_signature": "diffray-v1-blake3-coverage",
         "configurations": configurations,
     }
 
@@ -789,7 +926,14 @@ def _run_trial(
             f"campaign process exited early ({process.exit_code}); evidence: {paths.root}"
         )
 
-    replays = replay_raw_solutions(paths.differences)
+    signature_index = generate_signature_index(
+        manifest.repository_root,
+        paths.differences,
+        manifest.target_a,
+        manifest.target_b,
+    )
+    replays = replay_raw_solutions(paths.differences, signature_index=signature_index)
+    replay_metrics = summarize_replays(replays)
     record = TrialRecord(
         configuration=configuration,
         trial_index=trial_index,
@@ -799,11 +943,13 @@ def _run_trial(
         executions=_execution_count(paths.event_log),
         cpu_seconds=process.cpu_seconds,
         peak_rss_kb=process.peak_rss_kb,
-        stable_nonduplicate_differences=sum(
-            replay.stable and replay.differential for replay in replays
-        ),
-        unstable_solutions=sum(not replay.stable for replay in replays),
+        stable_nonduplicate_differences=replay_metrics[
+            "stable_nonduplicate_differences"
+        ],
+        unstable_solutions=replay_metrics["unstable_solutions"],
         byte_duplicates=sum(len(replay.paths) - 1 for replay in replays),
+        signature_duplicates=replay_metrics["signature_duplicates"],
+        time_to_first_nanos=replay_metrics["time_to_first_nanos"],
         rng_seed_controlled=manifest.rng_seed_controlled,
     )
     _write_json(
@@ -922,6 +1068,8 @@ def aggregate_campaign(campaign_root: Path) -> dict[str, Any]:
                 ],
                 unstable_solutions=item["unstable_solutions"],
                 byte_duplicates=item["byte_duplicates"],
+                signature_duplicates=item.get("signature_duplicates", 0),
+                time_to_first_nanos=item.get("time_to_first_nanos"),
                 rng_seed_controlled=item["rng_seed_controlled"],
             )
         )
@@ -989,6 +1137,83 @@ def validate_sidecars(evidence_path: Path) -> dict[str, Any]:
         "evidence": str(evidence_path.resolve()),
         "validated_solutions": validated,
     }
+
+
+def backfill_signatures(evidence_paths: list[Path]) -> list[dict[str, Any]]:
+    repository_root = Path(__file__).resolve().parents[1]
+    target_a = repository_root / "target" / "real-json" / "cjson_target"
+    target_b = repository_root / "target" / "real-json" / "mjson_target"
+    reports = []
+    for evidence_path in evidence_paths:
+        evidence_path = evidence_path.resolve()
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        configurations = evidence["results"]["configurations"]
+        replayed_inputs = 0
+        for configuration in configurations.values():
+            for trial in configuration["trials"]:
+                trial_root = Path(trial["raw_directory"])
+                differences = trial_root / "diffs"
+                signature_index = generate_signature_index(
+                    repository_root, differences, target_a, target_b
+                )
+                replays = replay_raw_solutions(
+                    differences, signature_index=signature_index
+                )
+                metrics = summarize_replays(replays)
+                replayed_inputs += len(replays)
+                replay_index_path = trial_root / "signature-replay-v1.json"
+                _write_json(
+                    replay_index_path,
+                    {
+                        "schema_version": 1,
+                        "signature_version": 1,
+                        "replays": [record.as_dict() for record in replays],
+                    },
+                )
+                trial.update(metrics)
+                trial["signature_replay_index"] = str(replay_index_path)
+
+            configuration["stable_nonduplicate_differences"] = sum(
+                trial["stable_nonduplicate_differences"]
+                for trial in configuration["trials"]
+            )
+            configuration["unstable_solutions"] = sum(
+                trial["unstable_solutions"] for trial in configuration["trials"]
+            )
+            configuration["signature_duplicates"] = sum(
+                trial["signature_duplicates"] for trial in configuration["trials"]
+            )
+            configuration["time_to_first_nanos"] = min(
+                (
+                    trial["time_to_first_nanos"]
+                    for trial in configuration["trials"]
+                    if trial["time_to_first_nanos"] is not None
+                ),
+                default=None,
+            )
+            allocated = configuration["allocated_cpu_hours"]
+            configuration["stable_nonduplicate_differences_per_cpu_hour"] = (
+                configuration["stable_nonduplicate_differences"] / allocated
+            )
+
+        evidence["results"][
+            "behavioral_signature"
+        ] = "diffray-v1-blake3-coverage"
+        evidence["signature_backfill"] = {
+            "schema_version": 1,
+            "signature_version": 1,
+            "three_run_replay": True,
+            "replayed_inputs": replayed_inputs,
+            "legacy_discovery_elapsed_available": False,
+        }
+        _write_json(evidence_path, evidence)
+        reports.append(
+            {
+                "evidence": str(evidence_path),
+                "replayed_inputs": replayed_inputs,
+            }
+        )
+    return reports
 
 
 def _named_target_hashes(environment: dict[str, Any]) -> dict[str, str]:
@@ -1104,6 +1329,11 @@ def main() -> None:
     )
     compare_parser.add_argument("baseline", type=Path)
     compare_parser.add_argument("candidate", type=Path)
+    backfill_parser = commands.add_parser(
+        "backfill-signatures",
+        help="replay preserved checkpoints and add v1 behavioral signatures",
+    )
+    backfill_parser.add_argument("--evidence", nargs="+", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "run":
@@ -1131,6 +1361,9 @@ def main() -> None:
             args.baseline.resolve(), args.candidate.resolve()
         )
         print(json.dumps(comparison, indent=2, sort_keys=True))
+    elif args.command == "backfill-signatures":
+        reports = backfill_signatures(args.evidence)
+        print(json.dumps(reports, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

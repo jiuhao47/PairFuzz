@@ -1,9 +1,0 @@
-all:
-	mkdir -p output/
-	find . -name '*.c' -print0 | \
-		xargs -0 -n1 sh -c 'b=$$(basename "$$1"); $(CC) $(CFLAGS) -Wimplicit-function-declaration -c "$$1" -o "output/$${b}.o"' _
-	ar rcs output/libxz7z_$(COMMIT_HASH).a output/*.o
-	cp output/libxz7z_$(COMMIT_HASH).a ./
-
-clean:
-	rm -f output/*.o

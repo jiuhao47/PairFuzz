@@ -1,1 +1,0 @@
-/home/user/workspace/diffray/app/bins/.bin/replay/replay_program --prog-a=/home/user/workspace/diffray/app/bins/.bin/libpng/libpng_local.so --func-a=libpng_parse --prog-b=/home/user/workspace/diffray/app/bins/.bin/libpng/libspng_local.so --func-b=libspng_parse /home/user/workspace/diffray/LocateFix/data/ground_truth/png/libpng/diff_0_0_24_47fca5f81a792defe672c3e2b3644ddea2d0ba70

@@ -1,7 +1,0 @@
-PROJECT_PATH := '.'
-APP := 'libpng'
-TIMEOUT := '5'
-
-reorg_project app=APP:
-    cd {{PROJECT_PATH}} && python3 benchmark/reorg_builds.py --project {{APP}} --link-bugs --apply-physical --confirm
-

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "libraries": [
+    {
+      "name": "cJSON",
+      "version": "1.7.19",
+      "tag": "v1.7.19",
+      "commit": "c859b25da02955fef659d658b8f324b5cde87be3",
+      "source_url": "https://github.com/DaveGamble/cJSON",
+      "files": {
+        "third_party/cjson/cJSON.c": "298581a04a36c0165da4b0aade235c23088cb2faa58651d720ea2f3706ed0b0d",
+        "third_party/cjson/cJSON.h": "25b0145150d500498e4d209cec69c18c42cf818bffcc54690be3b895a2a16dee",
+        "third_party/cjson/LICENSE": "a36dda207c36db5818729c54e7ad4e8b0c6fba847491ba64f372c1a2037b6d5c"
+      }
+    },
+    {
+      "name": "mjson",
+      "version": "1.2.7",
+      "tag": "1.2.7",
+      "commit": "032a2eaca1a989e56d88218f2a3cb91a68afebe8",
+      "source_url": "https://github.com/cesanta/mjson",
+      "files": {
+        "third_party/mjson/mjson.c": "c50a6a9eb1eb7a2c09c4404104f360508904ec406f51ca6cf5a5b6a8d3335fe6",
+        "third_party/mjson/mjson.h": "dfd2c916535df35abbb0084a6010e45354f7e79213163f3b7ad452a8f330c1d0",
+        "third_party/mjson/LICENSE": "545f4864f010b72db317943d4685f818a3978b78b484d37e2b9fbce8c199ef66"
+      }
+    }
+  ]
+}

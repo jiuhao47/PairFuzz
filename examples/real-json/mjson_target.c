@@ -11,10 +11,6 @@
 DIFFRAY_INIT();
 #endif
 
-static int is_json_space(uint8_t byte) {
-    return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r';
-}
-
 int mjson_parse(const uint8_t *data, size_t size) {
     if (size == 0) {
         return 100;
@@ -24,7 +20,7 @@ int mjson_parse(const uint8_t *data, size_t size) {
     }
 
     size_t first = 0;
-    while (first < size && is_json_space(data[first])) {
+    while (first < size && is_json_whitespace(data[first])) {
         first++;
     }
     if (first == size || data[first] != '{') {
@@ -36,7 +32,7 @@ int mjson_parse(const uint8_t *data, size_t size) {
         return 1;
     }
     for (size_t index = (size_t)consumed; index < size; index++) {
-        if (!is_json_space(data[index])) {
+        if (!is_json_whitespace(data[index])) {
             return 1;
         }
     }

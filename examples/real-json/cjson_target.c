@@ -18,6 +18,14 @@ int cjson_parse(const uint8_t *data, size_t size) {
         return 1;
     }
 
+    size_t first = 0;
+    while (first < size && is_json_whitespace(data[first])) {
+        first++;
+    }
+    if (first == size || data[first] != '{') {
+        return 1;
+    }
+
     char *input = (char *)malloc(size + 1U);
     if (input == NULL) {
         return 1;
@@ -26,8 +34,20 @@ int cjson_parse(const uint8_t *data, size_t size) {
     input[size] = '\0';
 
     const char *end = NULL;
-    cJSON *root = cJSON_ParseWithLengthOpts(input, size + 1U, &end, 1);
-    int result = root != NULL && cJSON_IsObject(root) ? 0 : 1;
+    cJSON *root = cJSON_ParseWithLengthOpts(input, size + 1U, &end, 0);
+    int result = 1;
+    if (root != NULL && cJSON_IsObject(root) && end != NULL && end >= input) {
+        size_t consumed = (size_t)(end - input);
+        if (consumed <= size) {
+            result = 0;
+            for (size_t index = consumed; index < size; index++) {
+                if (!is_json_whitespace((uint8_t)input[index])) {
+                    result = 1;
+                    break;
+                }
+            }
+        }
+    }
     cJSON_Delete(root);
     free(input);
     return result;

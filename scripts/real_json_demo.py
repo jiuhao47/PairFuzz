@@ -90,6 +90,8 @@ def validate_metadata(path: Path, expected: tuple[int, int]) -> dict:
         if candidate.is_file()
         and candidate.name.startswith(collision_prefix)
         and candidate.name.endswith(".metadata")
+        and candidate.name[len(collision_prefix) : -len(".metadata")].isascii()
+        and candidate.name[len(collision_prefix) : -len(".metadata")].isdigit()
     )
     candidates = [candidate for candidate in (direct, hidden) if candidate.is_file()]
     candidates.extend(collision_sidecars)
@@ -108,8 +110,16 @@ def validate_metadata(path: Path, expected: tuple[int, int]) -> dict:
             if not isinstance(entry, list) or len(entry) < 2 or not isinstance(entry[1], dict):
                 continue
             record = entry[1]
-            pair = (record.get("rv_a"), record.get("rv_b"))
-            if isinstance(record.get("note"), str) and record["note"] and pair == expected:
+            rv_a = record.get("rv_a")
+            rv_b = record.get("rv_b")
+            pair = (rv_a, rv_b)
+            if (
+                isinstance(record.get("note"), str)
+                and record["note"]
+                and type(rv_a) is int
+                and type(rv_b) is int
+                and pair == expected
+            ):
                 return record
     detail = "; ".join(errors) if errors else "no matching return-value record"
     raise MetadataError(f"metadata for {path} does not match {expected}: {detail}")
@@ -145,6 +155,9 @@ def verify() -> None:
         (b'[]', [1, 1]),
         (b'null', [1, 1]),
         (b'{"x":1}junk', [1, 1]),
+        (b'{"x":1}\x0b', [1, 1]),
+        (b'{"x":1}\x0c', [1, 1]),
+        (b'\x0b{"x":1}', [1, 1]),
         (b'{"x":1}\x00', [1, 1]),
         (b'', [100, 100]),
     ]
@@ -213,6 +226,8 @@ def stop_group(process) -> None:
     try:
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
+        pass
+    finally:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:

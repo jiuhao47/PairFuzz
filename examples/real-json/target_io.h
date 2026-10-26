@@ -9,6 +9,10 @@
 
 typedef int (*diffray_parse_fn)(const uint8_t *data, size_t size);
 
+static int is_json_whitespace(uint8_t byte) {
+    return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r';
+}
+
 static int run_standalone(diffray_parse_fn parse) {
     uint8_t *data = (uint8_t *)malloc(DIFFRAY_REAL_JSON_MAX_INPUT + 1U);
     if (data == NULL) {

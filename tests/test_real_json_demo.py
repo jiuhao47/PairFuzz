@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -105,6 +106,9 @@ class TargetContractTests(unittest.TestCase):
             (b'[]', [1, 1]),
             (b'null', [1, 1]),
             (b'{"x":1}junk', [1, 1]),
+            (b'{"x":1}\x0b', [1, 1]),
+            (b'{"x":1}\x0c', [1, 1]),
+            (b'\x0b{"x":1}', [1, 1]),
             (b'{"x":1}\x00', [1, 1]),
             (b'', [100, 100]),
         ]
@@ -199,11 +203,24 @@ class WorkflowTests(unittest.TestCase):
             for payload in (
                 self._metadata(note=None),
                 self._metadata(rv_a=0, rv_b=1),
+                self._metadata(rv_a=True, rv_b=False),
+                self._metadata(rv_a=1.0, rv_b=0.0),
             ):
                 with self.subTest(payload=payload):
                     sidecar.write_text(json.dumps(payload), encoding="utf-8")
                     with self.assertRaises(RuntimeError):
                         self.demo.validate_metadata(saved, (1, 0))
+
+    def test_metadata_rejects_a_non_numeric_collision_suffix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / "difference"
+            saved.write_bytes(b'{"x":"\\q"}')
+            unrelated = saved.parent / f".{saved.name}_other.metadata"
+            unrelated.write_text(
+                json.dumps(self._metadata()), encoding="utf-8"
+            )
+            with self.assertRaises(RuntimeError):
+                self.demo.validate_metadata(saved, (1, 0))
 
     def test_metadata_returns_the_matching_record(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -244,6 +261,42 @@ class WorkflowTests(unittest.TestCase):
             [mock.call(1234, signal.SIGTERM), mock.call(1234, signal.SIGKILL)],
         )
         self.assertEqual(process.wait_count, 2)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process groups")
+    def test_stop_group_kills_a_child_after_the_leader_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            leader = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                process_group=0,
+            )
+            child = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import pathlib, signal, sys, time; "
+                        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                        "pathlib.Path(sys.argv[1]).write_text('ready'); "
+                        "time.sleep(30)"
+                    ),
+                    str(ready),
+                ],
+                process_group=leader.pid,
+            )
+            try:
+                for _ in range(100):
+                    if ready.is_file():
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(ready.is_file(), "child did not become ready")
+                self.demo.stop_group(leader)
+                self.assertEqual(child.wait(timeout=1), -signal.SIGKILL)
+            finally:
+                for process in (leader, child):
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
 
 
 class DocumentationTests(unittest.TestCase):

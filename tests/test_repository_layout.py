@@ -178,6 +178,11 @@ class RepositoryLayoutTests(unittest.TestCase):
             "third_party/",
             "docs/contest/",
             "LibAFL/",
+            "driver/runtime.rs",
+            "driver/monitor.rs",
+            "driver/target.rs",
+            "driver/replay.rs",
+            "feedbacks/factory.rs",
         )
         for path in retained:
             with self.subTest(path=path):

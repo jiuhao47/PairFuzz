@@ -4,10 +4,13 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +21,10 @@ BIN = ROOT / "target" / "real-json"
 
 class ManifestError(RuntimeError):
     """The vendored-source manifest is missing, malformed or stale."""
+
+
+class MetadataError(RuntimeError):
+    """A saved differential input has missing or inconsistent metadata."""
 
 
 def environment() -> dict[str, str]:
@@ -73,6 +80,41 @@ def verify_vendor_manifest(root: Path) -> None:
                 )
 
 
+def validate_metadata(path: Path, expected: tuple[int, int]) -> dict:
+    direct = Path(f"{path}.metadata")
+    hidden = path.parent / f".{path.name}.metadata"
+    collision_prefix = f".{path.name}_"
+    collision_sidecars = sorted(
+        candidate
+        for candidate in path.parent.iterdir()
+        if candidate.is_file()
+        and candidate.name.startswith(collision_prefix)
+        and candidate.name.endswith(".metadata")
+    )
+    candidates = [candidate for candidate in (direct, hidden) if candidate.is_file()]
+    candidates.extend(collision_sidecars)
+    if not candidates:
+        raise MetadataError(f"no metadata sidecar found for {path}")
+
+    errors = []
+    for sidecar in candidates:
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+            records = payload["metadata"]["map"].values()
+        except (OSError, json.JSONDecodeError, KeyError, AttributeError) as error:
+            errors.append(f"{sidecar.name}: {error}")
+            continue
+        for entry in records:
+            if not isinstance(entry, list) or len(entry) < 2 or not isinstance(entry[1], dict):
+                continue
+            record = entry[1]
+            pair = (record.get("rv_a"), record.get("rv_b"))
+            if isinstance(record.get("note"), str) and record["note"] and pair == expected:
+                return record
+    detail = "; ".join(errors) if errors else "no matching return-value record"
+    raise MetadataError(f"metadata for {path} does not match {expected}: {detail}")
+
+
 def results(data: bytes) -> list[int]:
     pair = []
     for name in ("cjson_target", "mjson_target"):
@@ -111,7 +153,9 @@ def verify() -> None:
         if actual != expected:
             raise RuntimeError(f"input {data[:80]!r}: expected {expected}, got {actual}")
 
-    seeds = sorted((DEMO / "seeds").iterdir())
+    seeds = sorted((DEMO / "seeds").iterdir()) + sorted(
+        (DEMO / "campaign-seeds").iterdir()
+    )
     for seed in seeds:
         left, right = results(seed.read_bytes())
         if left != right:
@@ -154,12 +198,156 @@ def build() -> None:
     verify()
 
 
+def positive_seconds(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("duration must be a finite positive number")
+    return seconds
+
+
+def stop_group(process) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def wait_for_campaign(process, seconds: float) -> None:
+    try:
+        status = process.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return
+    raise RuntimeError(f"fuzzer exited early ({status})")
+
+
+def replay(path: Path) -> None:
+    data = path.read_bytes()
+    pair = results(data)
+    print(f"Input: {path}\nBytes: {data[:120]!r}\ncJSON={pair[0]}, mjson={pair[1]}")
+    if pair[0] == pair[1]:
+        raise RuntimeError("input does not reproduce a parser difference")
+    print("PASS: real parser difference reproduced")
+
+
+def _version_summary() -> list[dict[str, str]]:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    return [
+        {
+            "name": library["name"],
+            "version": library["version"],
+            "commit": library["commit"],
+        }
+        for library in manifest["libraries"]
+    ]
+
+
+def run(seconds: float, mode: str) -> Path:
+    verify()
+    fuzzer = ROOT / "target" / "debug" / "diffray"
+    if not fuzzer.is_file():
+        raise RuntimeError("DiffRay is missing; run the build command first")
+
+    parent = ROOT / "run" / "real-json"
+    parent.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="campaign-", dir=parent))
+    log = directory / "fuzzer.log"
+    command = [
+        str(fuzzer),
+        "-v",
+        "--mode",
+        mode,
+        "-i",
+        str(DEMO / "campaign-seeds"),
+        "-o",
+        str(directory / "diffs"),
+        "-l",
+        str(directory / "log"),
+        "--prog-a",
+        str(BIN / "cjson_target"),
+        "--prog-b",
+        str(BIN / "mjson_target"),
+        "--persistent-mode",
+        "disabled",
+        "--simple-monitor",
+        "enabled",
+        "--json-heartbeat-secs",
+        "1",
+    ]
+    print(f"Fuzzing real parsers for {seconds:g}s; output: {directory}", flush=True)
+    with log.open("wb") as output:
+        process = subprocess.Popen(
+            command,
+            cwd=directory,
+            env=environment(),
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            wait_for_campaign(process, seconds)
+        finally:
+            stop_group(process)
+
+    saved = []
+    differences = directory / "diffs"
+    candidates = sorted(differences.iterdir()) if differences.exists() else []
+    for path in candidates:
+        if not path.is_file() or path.name.startswith(".") or path.suffix == ".metadata":
+            continue
+        pair = results(path.read_bytes())
+        if pair[0] == pair[1]:
+            continue
+        validate_metadata(path, (pair[0], pair[1]))
+        saved.append(path)
+
+    report = {
+        "libraries": _version_summary(),
+        "mode": mode,
+        "duration_seconds": seconds,
+        "reproduced_differences": len(saved),
+        "sample": str(saved[0].relative_to(ROOT)) if saved else None,
+        "command": command,
+    }
+    summary = directory / "summary.json"
+    summary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if not saved:
+        raise RuntimeError(f"no reproduced difference saved; inspect {log}")
+    replay(saved[0])
+    print(f"Reproduced saved inputs: {len(saved)}\nReport: {summary}")
+    return directory
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("verify-vendor", help="verify pinned source provenance")
     commands.add_parser("build", help="build DiffRay and the real parser targets")
     commands.add_parser("verify", help="check the shared target contract")
+    replay_parser = commands.add_parser("replay", help="replay one differential input")
+    replay_parser.add_argument("input", type=Path)
+    run_parser = commands.add_parser("run", help="run a bounded real fuzzing campaign")
+    run_parser.add_argument("--seconds", type=positive_seconds, default=30.0)
+    run_parser.add_argument(
+        "--mode",
+        choices=(
+            "single-cov",
+            "single-rv",
+            "single-pl",
+            "single-rv-cov",
+            "combo-cov",
+            "combo-rv",
+            "combo-pl",
+        ),
+        default="single-cov",
+    )
     args = parser.parse_args()
     if args.command == "verify-vendor":
         verify_vendor_manifest(ROOT)
@@ -168,11 +356,15 @@ def main() -> None:
         build()
     elif args.command == "verify":
         verify()
+    elif args.command == "replay":
+        replay(args.input)
+    elif args.command == "run":
+        run(args.seconds, args.mode)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ManifestError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except (ManifestError, MetadataError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         sys.exit(1)

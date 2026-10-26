@@ -1,9 +1,16 @@
+import argparse
 import hashlib
 import importlib.util
 import json
+import math
+import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +122,128 @@ class TargetContractTests(unittest.TestCase):
     def test_known_invalid_escape_is_a_real_parser_difference(self):
         known = ROOT / "examples" / "real-json" / "known-difference.json"
         self.assertEqual(self.demo.results(known.read_bytes()), [1, 0])
+
+    def test_one_bit_seed_mutation_reaches_a_real_difference(self):
+        seed = ROOT / "examples" / "real-json" / "seeds" / "near-comma.json"
+        data = seed.read_bytes()
+        self.assertEqual(self.demo.results(data), [1, 1])
+        mutated = data.replace(b"-}", b",}")
+        self.assertEqual(len(mutated), len(data))
+        self.assertEqual(sum(left != right for left, right in zip(data, mutated)), 1)
+        self.assertEqual(self.demo.results(mutated), [1, 0])
+
+    def test_campaign_seed_has_many_one_byte_paths_to_a_real_difference(self):
+        seed = (
+            ROOT
+            / "examples"
+            / "real-json"
+            / "campaign-seeds"
+            / "escape-rich.json"
+        )
+        data = seed.read_bytes()
+        self.assertEqual(self.demo.results(data), [0, 0])
+        escape_values = [
+            index + 1
+            for index in range(len(data) - 1)
+            if data[index : index + 2] == b"\\n"
+        ]
+        self.assertGreaterEqual(len(escape_values), 8)
+        for index in escape_values:
+            mutated = bytearray(data)
+            mutated[index] = ord("q")
+            with self.subTest(index=index):
+                self.assertEqual(self.demo.results(bytes(mutated)), [1, 0])
+
+
+class WorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.demo = load_demo()
+
+    @staticmethod
+    def _metadata(rv_a=1, rv_b=0, note="rv_zero_nonzero"):
+        return {
+            "metadata": {
+                "map": {
+                    "123": [
+                        123,
+                        {"note": note, "rv_a": rv_a, "rv_b": rv_b, "crash": None},
+                    ]
+                }
+            },
+            "exec_time": None,
+            "executions": 42,
+        }
+
+    def test_duration_must_be_positive_and_finite(self):
+        for value in ("0", "-1", "nan", str(math.inf)):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    self.demo.positive_seconds(value)
+        self.assertEqual(self.demo.positive_seconds("0.25"), 0.25)
+
+    def test_metadata_must_exist_and_be_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / "difference"
+            saved.write_bytes(b'{"x":"\\q"}')
+            with self.assertRaises(RuntimeError):
+                self.demo.validate_metadata(saved, (1, 0))
+            Path(f"{saved}.metadata").write_text("not json", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                self.demo.validate_metadata(saved, (1, 0))
+
+    def test_metadata_requires_note_and_matching_return_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / "difference"
+            saved.write_bytes(b'{"x":"\\q"}')
+            sidecar = Path(f"{saved}.metadata")
+            for payload in (
+                self._metadata(note=None),
+                self._metadata(rv_a=0, rv_b=1),
+            ):
+                with self.subTest(payload=payload):
+                    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaises(RuntimeError):
+                        self.demo.validate_metadata(saved, (1, 0))
+
+    def test_metadata_returns_the_matching_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / "difference"
+            saved.write_bytes(b'{"x":"\\q"}')
+            sidecar = saved.parent / f".{saved.name}_1.metadata"
+            sidecar.write_text(json.dumps(self._metadata()), encoding="utf-8")
+            record = self.demo.validate_metadata(saved, (1, 0))
+            self.assertEqual(record["note"], "rv_zero_nonzero")
+            self.assertEqual((record["rv_a"], record["rv_b"]), (1, 0))
+
+    def test_early_campaign_exit_is_an_error_and_is_reaped(self):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "pass"], start_new_session=True
+        )
+        with self.assertRaises(RuntimeError):
+            self.demo.wait_for_campaign(process, 1.0)
+        self.assertIsNotNone(process.poll())
+
+    def test_stop_group_escalates_and_waits(self):
+        class StubbornProcess:
+            pid = 1234
+
+            def __init__(self):
+                self.wait_count = 0
+
+            def wait(self, timeout=None):
+                self.wait_count += 1
+                if self.wait_count == 1:
+                    raise subprocess.TimeoutExpired("target", timeout)
+                return -signal.SIGKILL
+
+        process = StubbornProcess()
+        with mock.patch.object(os, "killpg") as killpg:
+            self.demo.stop_group(process)
+        self.assertEqual(
+            killpg.call_args_list,
+            [mock.call(1234, signal.SIGTERM), mock.call(1234, signal.SIGKILL)],
+        )
+        self.assertEqual(process.wait_count, 2)
 
 
 if __name__ == "__main__":

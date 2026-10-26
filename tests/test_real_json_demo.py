@@ -246,5 +246,40 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(process.wait_count, 2)
 
 
+class DocumentationTests(unittest.TestCase):
+    def test_documented_real_json_recipes_are_available(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        commands = {
+            "real-json-build": [],
+            "real-json-verify": [],
+            "real-json-demo": ["30"],
+            "real-json-replay": [],
+        }
+        for recipe, arguments in commands.items():
+            with self.subTest(recipe=recipe):
+                self.assertIn(f"just {recipe}", readme)
+                subprocess.run(
+                    ["just", "--dry-run", recipe, *arguments],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+    def test_provenance_records_exact_upstream_revisions(self):
+        provenance = (ROOT / "docs" / "contest" / "provenance.md").read_text(
+            encoding="utf-8"
+        )
+        expected = (
+            ("cJSON", "1.7.19", "c859b25da02955fef659d658b8f324b5cde87be3"),
+            ("mjson", "1.2.7", "032a2eaca1a989e56d88218f2a3cb91a68afebe8"),
+        )
+        for name, version, commit in expected:
+            with self.subTest(library=name):
+                self.assertIn(name, provenance)
+                self.assertIn(version, provenance)
+                self.assertIn(commit, provenance)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository_root": "../..",
+  "workload": "real-json",
+  "warmup_seconds": 10.0,
+  "trial_seconds": 300.0,
+  "trials": 5,
+  "campaign_seed": 59109363396513830,
+  "rng_seed_controlled": false,
+  "seed_dir": "examples/real-json/campaign-seeds",
+  "target_a": "target/real-json/cjson_target",
+  "target_b": "target/real-json/mjson_target",
+  "configurations": {
+    "baseline": {
+      "mode": "single-cov"
+    }
+  }
+}

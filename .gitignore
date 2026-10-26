@@ -1,23 +1,11 @@
-/target
-app/src/
-app/build/
-app/corpus/
 target/
 run/
-misc/
 *.a
 *.tar
 __pycache__/
 .tmp/
-task/
-
-benchmark/libpng
-benchmark/libspng
-
 .vscode/
 .cur_input_*
-
-AFLplusplus
 
 # Local competition tools and generated artifacts.
 .tools/

@@ -62,6 +62,45 @@ class RepositoryLayoutTests(unittest.TestCase):
             fields[1], "90cb9a2919faf386e0678870e52784070cdac4b6"
         )
 
+    def test_root_justfile_exposes_only_supported_recipes(self):
+        completed = subprocess.run(
+            ["just", "--summary"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(
+            set(completed.stdout.split()),
+            {
+                "check",
+                "contest-build",
+                "contest-demo",
+                "contest-replay",
+                "contest-verify",
+                "real-json-build",
+                "real-json-demo",
+                "real-json-replay",
+                "real-json-verify",
+            },
+        )
+
+    def test_root_justfile_has_no_removed_or_absolute_paths(self):
+        content = (ROOT / "Justfile").read_text(encoding="utf-8")
+        forbidden = (
+            "benchmark/",
+            "docker/",
+            "experiments/",
+            "misc/",
+            "app/bins/",
+            "app/differential_libs/",
+            "/home/",
+            "/root/",
+        )
+        for token in forbidden:
+            with self.subTest(token=token):
+                self.assertNotIn(token, content)
+
 
 if __name__ == "__main__":
     unittest.main()

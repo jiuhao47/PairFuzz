@@ -14,6 +14,11 @@ import subprocess
 import time
 from typing import Any
 
+try:
+    from scripts.real_json_demo import results as real_json_results
+except ModuleNotFoundError:
+    from real_json_demo import results as real_json_results
+
 
 class ManifestError(RuntimeError):
     """The performance workload manifest is invalid or incomplete."""
@@ -175,6 +180,115 @@ class ProcessRecord:
         self.peak_rss_kb = peak_rss_kb
 
 
+class TrialPaths:
+    """Filesystem locations owned by one isolated measured trial."""
+
+    __slots__ = (
+        "root",
+        "differences",
+        "event_log",
+        "fuzzer_log",
+        "environment_json",
+        "trial_json",
+    )
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.differences = root / "diffs"
+        self.event_log = root / "log"
+        self.fuzzer_log = root / "fuzzer.log"
+        self.environment_json = root / "environment.json"
+        self.trial_json = root / "trial.json"
+
+
+class ReplayRecord:
+    """Three-way reproduction outcome for one unique raw input."""
+
+    __slots__ = ("sha256", "paths", "return_pairs", "stable", "differential")
+
+    def __init__(
+        self,
+        *,
+        sha256: str,
+        paths: tuple[str, ...],
+        return_pairs: tuple[tuple[int, int], ...],
+        stable: bool,
+        differential: bool,
+    ) -> None:
+        self.sha256 = sha256
+        self.paths = paths
+        self.return_pairs = return_pairs
+        self.stable = stable
+        self.differential = differential
+
+
+class TrialRecord:
+    """Metrics and retained raw artifacts for one measured trial."""
+
+    __slots__ = (
+        "configuration",
+        "trial_index",
+        "paths",
+        "wall_seconds",
+        "client_count",
+        "executions",
+        "cpu_seconds",
+        "peak_rss_kb",
+        "stable_nonduplicate_differences",
+        "unstable_solutions",
+        "byte_duplicates",
+        "rng_seed_controlled",
+    )
+
+    def __init__(
+        self,
+        *,
+        configuration: str,
+        trial_index: int,
+        paths: TrialPaths,
+        wall_seconds: float,
+        client_count: int,
+        executions: int,
+        cpu_seconds: float,
+        peak_rss_kb: int,
+        stable_nonduplicate_differences: int,
+        unstable_solutions: int,
+        byte_duplicates: int,
+        rng_seed_controlled: bool,
+    ) -> None:
+        self.configuration = configuration
+        self.trial_index = trial_index
+        self.paths = paths
+        self.wall_seconds = wall_seconds
+        self.client_count = client_count
+        self.executions = executions
+        self.cpu_seconds = cpu_seconds
+        self.peak_rss_kb = peak_rss_kb
+        self.stable_nonduplicate_differences = stable_nonduplicate_differences
+        self.unstable_solutions = unstable_solutions
+        self.byte_duplicates = byte_duplicates
+        self.rng_seed_controlled = rng_seed_controlled
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "configuration": self.configuration,
+            "trial_index": self.trial_index,
+            "raw_directory": str(self.paths.root),
+            "fuzzer_log": str(self.paths.fuzzer_log),
+            "environment_json": str(self.paths.environment_json),
+            "trial_json": str(self.paths.trial_json),
+            "wall_seconds": self.wall_seconds,
+            "client_count": self.client_count,
+            "executions": self.executions,
+            "cpu_seconds": self.cpu_seconds,
+            "peak_rss_kb": self.peak_rss_kb,
+            "stable_nonduplicate_differences": self.stable_nonduplicate_differences,
+            "unstable_solutions": self.unstable_solutions,
+            "byte_duplicates": self.byte_duplicates,
+            "rng_seed_controlled": self.rng_seed_controlled,
+        }
+
+
 def _positive_finite(value: Any, field: str) -> float:
     if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
         raise ManifestError(f"{field} must be a finite positive number")
@@ -206,6 +320,105 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def create_trial(root: Path, configuration: str, trial_index: int) -> TrialPaths:
+    if not configuration or Path(configuration).name != configuration:
+        raise ValueError("configuration must be one path component")
+    if type(trial_index) is not int or trial_index < 0:
+        raise ValueError("trial_index must be a non-negative integer")
+
+    parent = root.resolve() / configuration
+    parent.mkdir(parents=True, exist_ok=True)
+    suffix = 0
+    while True:
+        name = f"trial-{trial_index}" if suffix == 0 else f"trial-{trial_index}-{suffix}"
+        trial_root = parent / name
+        try:
+            trial_root.mkdir()
+            break
+        except FileExistsError:
+            suffix += 1
+
+    paths = TrialPaths(trial_root)
+    paths.differences.mkdir()
+    paths.event_log.mkdir()
+    return paths
+
+
+def replay_raw_solutions(
+    solution_dir: Path, repetitions: int = 3
+) -> list[ReplayRecord]:
+    if type(repetitions) is not int or repetitions < 3:
+        raise ValueError("repetitions must be an integer of at least three")
+    if not solution_dir.exists():
+        return []
+
+    by_hash: dict[str, list[Path]] = {}
+    for path in sorted(solution_dir.iterdir()):
+        if (
+            not path.is_file()
+            or path.name.startswith(".")
+            or path.name.endswith(".metadata")
+        ):
+            continue
+        by_hash.setdefault(sha256_file(path), []).append(path)
+
+    records = []
+    for digest, paths in sorted(by_hash.items()):
+        data = paths[0].read_bytes()
+        outcomes = tuple(tuple(real_json_results(data)) for _ in range(repetitions))
+        if any(len(pair) != 2 for pair in outcomes):
+            raise RuntimeError("real JSON replay must return exactly two statuses")
+        stable = len(set(outcomes)) == 1
+        differential = stable and outcomes[0][0] != outcomes[0][1]
+        records.append(
+            ReplayRecord(
+                sha256=digest,
+                paths=tuple(str(path) for path in paths),
+                return_pairs=outcomes,
+                stable=stable,
+                differential=differential,
+            )
+        )
+    return records
+
+
+def aggregate_trials(records: list[TrialRecord]) -> dict[str, Any]:
+    configurations: dict[str, dict[str, Any]] = {}
+    for name in sorted({record.configuration for record in records}):
+        selected = [record for record in records if record.configuration == name]
+        allocated_cpu_hours = sum(
+            record.client_count * record.wall_seconds for record in selected
+        ) / 3600.0
+        wall_seconds = sum(record.wall_seconds for record in selected)
+        stable = sum(record.stable_nonduplicate_differences for record in selected)
+        executions = sum(record.executions for record in selected)
+        configurations[name] = {
+            "trial_count": len(selected),
+            "allocated_cpu_hours": allocated_cpu_hours,
+            "measured_process_cpu_hours": sum(
+                record.cpu_seconds for record in selected
+            )
+            / 3600.0,
+            "executions": executions,
+            "executions_per_second": executions / wall_seconds,
+            "stable_nonduplicate_differences": stable,
+            "stable_nonduplicate_differences_per_cpu_hour": (
+                stable / allocated_cpu_hours
+            ),
+            "unstable_solutions": sum(
+                record.unstable_solutions for record in selected
+            ),
+            "byte_duplicates": sum(record.byte_duplicates for record in selected),
+            "peak_rss_kb": max(record.peak_rss_kb for record in selected),
+            "trials": [record.as_dict() for record in selected],
+        }
+    return {
+        "schema_version": 1,
+        "behavioral_signature": "pending-v1-coverage-replay",
+        "configurations": configurations,
+    }
 
 
 def clean_environment(root: Path) -> dict[str, str]:

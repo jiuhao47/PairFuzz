@@ -243,5 +243,123 @@ class ProcessRunnerTests(unittest.TestCase):
         return True
 
 
+class AggregationTests(unittest.TestCase):
+    def test_trial_paths_never_collide(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "campaign"
+            first = campaign.create_trial(root, "baseline", 0)
+            second = campaign.create_trial(root, "baseline", 0)
+
+            self.assertNotEqual(first.root, second.root)
+            for trial in (first, second):
+                self.assertTrue(trial.differences.is_dir())
+                self.assertTrue(trial.event_log.is_dir())
+                self.assertEqual(trial.fuzzer_log.parent, trial.root)
+                self.assertEqual(trial.environment_json.parent, trial.root)
+                self.assertEqual(trial.trial_json.parent, trial.root)
+
+    def test_replay_requires_three_equal_return_pairs(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            solutions = Path(directory)
+            (solutions / "stable").write_bytes(b"stable difference")
+            (solutions / "stable-copy").write_bytes(b"stable difference")
+            (solutions / "unstable").write_bytes(b"unstable")
+            (solutions / "matching").write_bytes(b"matching")
+            calls = {b"unstable": 0}
+
+            def result_for(data):
+                if data == b"stable difference":
+                    return [0, 1]
+                if data == b"matching":
+                    return [0, 0]
+                calls[data] += 1
+                return [0, calls[data] % 2]
+
+            with mock.patch.object(
+                campaign, "real_json_results", side_effect=result_for
+            ) as results:
+                records = campaign.replay_raw_solutions(solutions)
+
+            self.assertEqual(results.call_count, 9)
+            self.assertEqual(len(records), 3)
+            stable = next(record for record in records if record.differential)
+            unstable = next(record for record in records if not record.stable)
+            self.assertEqual(stable.return_pairs, ((0, 1), (0, 1), (0, 1)))
+            self.assertEqual(len(stable.paths), 2)
+            self.assertFalse(unstable.differential)
+
+    def test_zero_solution_trial_is_reported(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            paths = campaign.create_trial(Path(directory) / "campaign", "baseline", 0)
+            record = self._trial(campaign, paths, stable=0, executions=100)
+
+            summary = campaign.aggregate_trials([record])
+
+            baseline = summary["configurations"]["baseline"]
+            self.assertEqual(baseline["stable_nonduplicate_differences"], 0)
+            self.assertEqual(baseline["trial_count"], 1)
+            self.assertEqual(summary["behavioral_signature"], "pending-v1-coverage-replay")
+            self.assertEqual(baseline["trials"][0]["raw_directory"], str(paths.root))
+            self.assertEqual(baseline["trials"][0]["fuzzer_log"], str(paths.fuzzer_log))
+
+    def test_cpu_hour_denominator_uses_client_count_times_wall_time(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            campaign_root = Path(directory) / "campaign"
+            first = self._trial(
+                campaign,
+                campaign.create_trial(campaign_root, "baseline", 0),
+                stable=2,
+                executions=1_000,
+                wall=1800.0,
+                clients=2,
+            )
+            second = self._trial(
+                campaign,
+                campaign.create_trial(campaign_root, "baseline", 1),
+                stable=1,
+                executions=2_000,
+                wall=3600.0,
+                clients=3,
+            )
+
+            summary = campaign.aggregate_trials([first, second])
+
+            baseline = summary["configurations"]["baseline"]
+            self.assertEqual(baseline["allocated_cpu_hours"], 4.0)
+            self.assertEqual(
+                baseline["stable_nonduplicate_differences_per_cpu_hour"], 0.75
+            )
+            self.assertEqual(baseline["executions"], 3_000)
+
+    @staticmethod
+    def _trial(
+        campaign,
+        paths,
+        *,
+        stable,
+        executions,
+        wall=300.0,
+        clients=1,
+    ):
+        return campaign.TrialRecord(
+            configuration="baseline",
+            trial_index=0,
+            paths=paths,
+            wall_seconds=wall,
+            client_count=clients,
+            executions=executions,
+            cpu_seconds=wall * 0.9,
+            peak_rss_kb=4096,
+            stable_nonduplicate_differences=stable,
+            unstable_solutions=0,
+            byte_duplicates=0,
+            rng_seed_controlled=False,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

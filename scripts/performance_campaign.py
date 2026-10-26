@@ -504,7 +504,7 @@ def run_bounded(
             start_new_session=True,
         )
         while True:
-            sample_rss_kb, sample_cpu_seconds = _sample_process_group(process.pid)
+            sample_rss_kb, sample_cpu_seconds = _sample_process_tree(process.pid)
             peak_rss_kb = max(peak_rss_kb, sample_rss_kb)
             peak_cpu_seconds = max(peak_cpu_seconds, sample_cpu_seconds)
             status = process.poll()
@@ -520,7 +520,7 @@ def run_bounded(
             term_sent = _signal_group(process.pid, signal.SIGTERM)
             grace_deadline = time.monotonic() + 0.25
             while _group_exists(process.pid) and time.monotonic() < grace_deadline:
-                sample_rss_kb, sample_cpu_seconds = _sample_process_group(process.pid)
+                sample_rss_kb, sample_cpu_seconds = _sample_process_tree(process.pid)
                 peak_rss_kb = max(peak_rss_kb, sample_rss_kb)
                 peak_cpu_seconds = max(peak_cpu_seconds, sample_cpu_seconds)
                 time.sleep(0.01)
@@ -579,22 +579,38 @@ def _group_has_live_processes(process_group: int) -> bool:
     return False
 
 
-def _sample_process_group(process_group: int) -> tuple[int, float]:
+def _sample_process_tree(root_pid: int) -> tuple[int, float]:
     ticks = os.sysconf("SC_CLK_TCK")
     page_kb = os.sysconf("SC_PAGE_SIZE") // 1024
-    rss_kb = 0
-    cpu_seconds = 0.0
+    processes: dict[int, tuple[int, float, int]] = {}
     for stat_path in Path("/proc").glob("[0-9]*/stat"):
         try:
             raw = stat_path.read_text(encoding="ascii")
             fields = raw[raw.rfind(")") + 2 :].split()
-            if int(fields[2]) != process_group:
-                continue
-            cpu_seconds += sum(int(fields[index]) for index in (11, 12, 13, 14)) / ticks
-            rss_kb += max(0, int(fields[21])) * page_kb
+            pid = int(stat_path.parent.name)
+            processes[pid] = (
+                int(fields[1]),
+                sum(int(fields[index]) for index in (11, 12, 13, 14)) / ticks,
+                max(0, int(fields[21])) * page_kb,
+            )
         except (FileNotFoundError, ProcessLookupError):
             continue
-    return rss_kb, cpu_seconds
+
+    children: dict[int, list[int]] = {}
+    for pid, (parent, _, _) in processes.items():
+        children.setdefault(parent, []).append(pid)
+    descendants = []
+    pending = [root_pid]
+    while pending:
+        pid = pending.pop()
+        if pid not in processes:
+            continue
+        descendants.append(pid)
+        pending.extend(children.get(pid, ()))
+    return (
+        sum(processes[pid][2] for pid in descendants),
+        sum(processes[pid][1] for pid in descendants),
+    )
 
 
 def capture_environment(

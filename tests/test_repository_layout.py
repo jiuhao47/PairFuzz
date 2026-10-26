@@ -32,12 +32,15 @@ class RepositoryLayoutTests(unittest.TestCase):
             "examples/contest/Makefile",
             "scripts/real_json_demo.py",
             "scripts/contest_demo.py",
+            "scripts/performance_campaign.py",
+            "examples/real-json/performance-campaign.json",
             "third_party/json-libs.json",
             "tests/test_real_json_demo.py",
             "LibAFL",
             "README.md",
             "Justfile",
             "docs/contest/README.md",
+            "docs/contest/performance/README.md",
         )
         for relative in required:
             with self.subTest(path=relative):
@@ -98,8 +101,38 @@ class RepositoryLayoutTests(unittest.TestCase):
                 "real-json-demo",
                 "real-json-replay",
                 "real-json-verify",
+                "performance-build",
+                "performance-smoke",
+                "performance-baseline",
             },
         )
+
+    def test_performance_baseline_builds_targets_before_trials(self):
+        completed = subprocess.run(
+            ["just", "--dry-run", "performance-baseline", "0"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        commands = completed.stdout + completed.stderr
+        build = "python3 scripts/real_json_demo.py build"
+        run = "python3 scripts/performance_campaign.py run"
+        self.assertIn(build, commands)
+        self.assertIn(run, commands)
+        self.assertLess(commands.index(build), commands.index(run))
+
+    def test_performance_runner_exposes_measurement_commands(self):
+        completed = subprocess.run(
+            ["python3", "scripts/performance_campaign.py", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        for command in ("run", "aggregate", "export"):
+            with self.subTest(command=command):
+                self.assertIn(command, completed.stdout)
 
     def test_check_builds_synthetic_targets_before_verifying_them(self):
         completed = subprocess.run(

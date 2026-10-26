@@ -23,6 +23,14 @@ real-json-verify:
 real-json-replay input="examples/real-json/known-difference.json":
     python3 scripts/real_json_demo.py replay {{quote(input)}}
 
+performance-build: real-json-build
+
+performance-smoke cpu: performance-build
+    python3 scripts/performance_campaign.py run --cpu {{quote(cpu)}} --warmup-seconds 1 --trial-seconds 5 --trials 1
+
+performance-baseline cpu: performance-build
+    python3 scripts/performance_campaign.py run --cpu {{quote(cpu)}}
+
 check: contest-build real-json-build
     cargo check --all-targets --workspace --locked
     cargo test --workspace --locked

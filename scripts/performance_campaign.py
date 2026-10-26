@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -11,6 +12,7 @@ from pathlib import Path
 import platform
 import signal
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -35,10 +37,12 @@ class CampaignManifest:
         "trials",
         "campaign_seed",
         "rng_seed_controlled",
+        "repository_root",
         "seed_dir",
         "target_a",
         "target_b",
         "configurations",
+        "configuration_modes",
     )
 
     def __init__(
@@ -51,10 +55,12 @@ class CampaignManifest:
         trials: int,
         campaign_seed: int,
         rng_seed_controlled: bool,
+        repository_root: Path,
         seed_dir: Path,
         target_a: Path,
         target_b: Path,
         configurations: tuple[str, ...],
+        configuration_modes: dict[str, str],
     ) -> None:
         self.schema_version = schema_version
         self.workload = workload
@@ -63,10 +69,12 @@ class CampaignManifest:
         self.trials = trials
         self.campaign_seed = campaign_seed
         self.rng_seed_controlled = rng_seed_controlled
+        self.repository_root = repository_root
         self.seed_dir = seed_dir
         self.target_a = target_a
         self.target_b = target_b
         self.configurations = configurations
+        self.configuration_modes = configuration_modes
 
     @classmethod
     def load(cls, path: Path) -> CampaignManifest:
@@ -122,6 +130,8 @@ class CampaignManifest:
         for name, configuration in raw_configurations.items():
             if not isinstance(name, str) or not name or not isinstance(configuration, dict):
                 raise ManifestError("each configuration must have a name and object value")
+            if not isinstance(configuration.get("mode"), str):
+                raise ManifestError(f"configuration {name} requires a mode")
 
         return cls(
             schema_version=schema_version,
@@ -131,10 +141,15 @@ class CampaignManifest:
             trials=trials,
             campaign_seed=campaign_seed,
             rng_seed_controlled=rng_seed_controlled,
+            repository_root=root,
             seed_dir=seed_dir,
             target_a=target_a,
             target_b=target_b,
             configurations=tuple(sorted(raw_configurations)),
+            configuration_modes={
+                name: raw_configurations[name]["mode"]
+                for name in sorted(raw_configurations)
+            },
         )
 
 
@@ -179,6 +194,20 @@ class ProcessRecord:
         self.cpu_seconds = cpu_seconds
         self.peak_rss_kb = peak_rss_kb
 
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "command": list(self.command),
+            "cpu": self.cpu,
+            "exit_code": self.exit_code,
+            "completed_early": self.completed_early,
+            "timed_out": self.timed_out,
+            "term_sent": self.term_sent,
+            "kill_sent": self.kill_sent,
+            "wall_seconds": self.wall_seconds,
+            "cpu_seconds": self.cpu_seconds,
+            "peak_rss_kb": self.peak_rss_kb,
+        }
+
 
 class TrialPaths:
     """Filesystem locations owned by one isolated measured trial."""
@@ -220,6 +249,15 @@ class ReplayRecord:
         self.return_pairs = return_pairs
         self.stable = stable
         self.differential = differential
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sha256": self.sha256,
+            "paths": list(self.paths),
+            "return_pairs": [list(pair) for pair in self.return_pairs],
+            "stable": self.stable,
+            "differential": self.differential,
+        }
 
 
 class TrialRecord:
@@ -628,3 +666,316 @@ def _sha256_tree(root: Path) -> str:
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def _fuzzer_command(manifest: CampaignManifest, paths: TrialPaths, mode: str) -> list[str]:
+    return [
+        str(manifest.repository_root / "target" / "debug" / "diffray"),
+        "--mode",
+        mode,
+        "-i",
+        str(manifest.seed_dir),
+        "-o",
+        str(paths.differences),
+        "-l",
+        str(paths.event_log),
+        "--prog-a",
+        str(manifest.target_a),
+        "--prog-b",
+        str(manifest.target_b),
+        "--persistent-mode",
+        "disabled",
+        "--simple-monitor",
+        "disabled",
+        "--json-heartbeat-secs",
+        "1",
+    ]
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _execution_count(event_log: Path) -> int:
+    stats = event_log / "fuzzer_stats.json"
+    if not stats.is_file():
+        return 0
+    executions = 0
+    for line in stats.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            executions = int(json.loads(line)["executions"])
+    return executions
+
+
+def _run_trial(
+    manifest: CampaignManifest,
+    paths: TrialPaths,
+    configuration: str,
+    trial_index: int,
+    cpu: int,
+    duration: float,
+) -> TrialRecord:
+    command = _fuzzer_command(
+        manifest,
+        paths,
+        manifest.configuration_modes[configuration],
+    )
+    environment = capture_environment(
+        manifest.repository_root,
+        command,
+        cpu,
+        manifest.seed_dir,
+        (manifest.target_a, manifest.target_b),
+    )
+    _write_json(paths.environment_json, environment)
+    process = run_bounded(
+        command,
+        cwd=paths.root,
+        env=clean_environment(manifest.repository_root),
+        duration=duration,
+        cpu=cpu,
+        log_path=paths.fuzzer_log,
+    )
+    if process.completed_early:
+        _write_json(
+            paths.trial_json,
+            {
+                "schema_version": 1,
+                "status": "early-exit",
+                "configuration": configuration,
+                "trial_index": trial_index,
+                "process": process.as_dict(),
+            },
+        )
+        raise RuntimeError(
+            f"campaign process exited early ({process.exit_code}); evidence: {paths.root}"
+        )
+
+    replays = replay_raw_solutions(paths.differences)
+    record = TrialRecord(
+        configuration=configuration,
+        trial_index=trial_index,
+        paths=paths,
+        wall_seconds=duration,
+        client_count=1,
+        executions=_execution_count(paths.event_log),
+        cpu_seconds=process.cpu_seconds,
+        peak_rss_kb=process.peak_rss_kb,
+        stable_nonduplicate_differences=sum(
+            replay.stable and replay.differential for replay in replays
+        ),
+        unstable_solutions=sum(not replay.stable for replay in replays),
+        byte_duplicates=sum(len(replay.paths) - 1 for replay in replays),
+        rng_seed_controlled=manifest.rng_seed_controlled,
+    )
+    _write_json(
+        paths.trial_json,
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "process": process.as_dict(),
+            "record": record.as_dict(),
+            "replays": [replay.as_dict() for replay in replays],
+        },
+    )
+    return record
+
+
+def run_campaign(
+    manifest_path: Path,
+    cpu: int,
+    *,
+    warmup_seconds: float | None = None,
+    trial_seconds: float | None = None,
+    trials: int | None = None,
+) -> Path:
+    manifest = CampaignManifest.load(manifest_path)
+    warmup_seconds = manifest.warmup_seconds if warmup_seconds is None else _positive_finite(warmup_seconds, "warmup_seconds")
+    trial_seconds = manifest.trial_seconds if trial_seconds is None else _positive_finite(trial_seconds, "trial_seconds")
+    trial_count = manifest.trials if trials is None else trials
+    if type(trial_count) is not int or trial_count <= 0:
+        raise ManifestError("trials must be a positive integer")
+
+    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    campaign_root = (
+        manifest.repository_root
+        / "run"
+        / "performance"
+        / f"{timestamp}-{os.getpid()}-{time.time_ns() % 1_000_000_000:09d}"
+    )
+    campaign_root.mkdir(parents=True)
+    _write_json(
+        campaign_root / "campaign.json",
+        {
+            "schema_version": 1,
+            "manifest": str(manifest_path.resolve()),
+            "campaign_seed": manifest.campaign_seed,
+            "rng_seed_controlled": manifest.rng_seed_controlled,
+            "cpu": cpu,
+            "warmup_seconds": warmup_seconds,
+            "trial_seconds": trial_seconds,
+            "trials": trial_count,
+        },
+    )
+
+    for configuration in manifest.configurations:
+        warmup = create_trial(campaign_root / "warmup", configuration, 0)
+        _run_trial(
+            manifest,
+            warmup,
+            configuration,
+            -1,
+            cpu,
+            warmup_seconds,
+        )
+
+    records = []
+    for trial_index in range(trial_count):
+        for configuration in rotate_configurations(
+            manifest.configurations, trial_index
+        ):
+            paths = create_trial(campaign_root, configuration, trial_index)
+            records.append(
+                _run_trial(
+                    manifest,
+                    paths,
+                    configuration,
+                    trial_index,
+                    cpu,
+                    trial_seconds,
+                )
+            )
+            summary = aggregate_trials(records)
+            summary.update(
+                {
+                    "campaign_root": str(campaign_root),
+                    "campaign_seed": manifest.campaign_seed,
+                    "rng_seed_controlled": manifest.rng_seed_controlled,
+                }
+            )
+            _write_json(campaign_root / "summary.json", summary)
+    return campaign_root
+
+
+def aggregate_campaign(campaign_root: Path) -> dict[str, Any]:
+    records = []
+    for path in sorted(campaign_root.glob("*/trial-*/trial.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("status") != "complete":
+            continue
+        item = payload["record"]
+        records.append(
+            TrialRecord(
+                configuration=item["configuration"],
+                trial_index=item["trial_index"],
+                paths=TrialPaths(path.parent),
+                wall_seconds=item["wall_seconds"],
+                client_count=item["client_count"],
+                executions=item["executions"],
+                cpu_seconds=item["cpu_seconds"],
+                peak_rss_kb=item["peak_rss_kb"],
+                stable_nonduplicate_differences=item[
+                    "stable_nonduplicate_differences"
+                ],
+                unstable_solutions=item["unstable_solutions"],
+                byte_duplicates=item["byte_duplicates"],
+                rng_seed_controlled=item["rng_seed_controlled"],
+            )
+        )
+    if not records:
+        raise RuntimeError(f"no complete measured trials in {campaign_root}")
+    campaign = json.loads((campaign_root / "campaign.json").read_text(encoding="utf-8"))
+    summary = aggregate_trials(records)
+    summary.update(
+        {
+            "campaign_root": str(campaign_root.resolve()),
+            "campaign_seed": campaign["campaign_seed"],
+            "rng_seed_controlled": campaign["rng_seed_controlled"],
+        }
+    )
+    _write_json(campaign_root / "summary.json", summary)
+    return summary
+
+
+def export_campaign(performance_root: Path, output: Path) -> dict[str, Any]:
+    candidates = sorted(
+        path for path in performance_root.iterdir() if (path / "summary.json").is_file()
+    )
+    if not candidates:
+        raise RuntimeError(f"no complete campaign under {performance_root}")
+    campaign_root = candidates[-1]
+    summary = aggregate_campaign(campaign_root)
+    first_trial = summary["configurations"][next(iter(summary["configurations"]))][
+        "trials"
+    ][0]
+    environment = json.loads(
+        Path(first_trial["environment_json"]).read_text(encoding="utf-8")
+    )
+    evidence = {
+        "schema_version": 1,
+        "environment": environment,
+        "results": summary,
+        "raw_campaign": str(campaign_root.resolve()),
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(output, evidence)
+    return evidence
+
+
+def _positive_seconds(value: str) -> float:
+    try:
+        return _positive_finite(float(value), "duration")
+    except (ValueError, ManifestError) as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    run_parser = commands.add_parser("run", help="run an isolated pinned campaign")
+    run_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path("examples/real-json/performance-campaign.json"),
+    )
+    run_parser.add_argument("--cpu", required=True, type=int)
+    run_parser.add_argument("--warmup-seconds", type=_positive_seconds)
+    run_parser.add_argument("--trial-seconds", type=_positive_seconds)
+    run_parser.add_argument("--trials", type=int)
+    aggregate_parser = commands.add_parser(
+        "aggregate", help="rebuild a campaign summary from retained trials"
+    )
+    aggregate_parser.add_argument("campaign", type=Path)
+    export_parser = commands.add_parser(
+        "export", help="export compact evidence from the latest campaign"
+    )
+    export_parser.add_argument("--latest", action="store_true", required=True)
+    export_parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+
+    if args.command == "run":
+        campaign_root = run_campaign(
+            args.manifest,
+            args.cpu,
+            warmup_seconds=args.warmup_seconds,
+            trial_seconds=args.trial_seconds,
+            trials=args.trials,
+        )
+        print(campaign_root)
+    elif args.command == "aggregate":
+        summary = aggregate_campaign(args.campaign.resolve())
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    elif args.command == "export":
+        root = Path(__file__).resolve().parents[1]
+        export_campaign(root / "run" / "performance", args.output.resolve())
+        print(args.output.resolve())
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ManifestError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        raise SystemExit(1) from error

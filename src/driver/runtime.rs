@@ -20,6 +20,13 @@ use crate::observers::ReturnValueObserver;
 use crate::driver::args::Args;
 use crate::utils::logging::{error, info, warn};
 
+fn normalize_fuzz_result<T>(result: Result<T, libafl::Error>) -> Result<(), libafl::Error> {
+    match result {
+        Ok(_) | Err(libafl::Error::ShuttingDown) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 #[expect(clippy::too_many_lines)]
 pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
@@ -156,7 +163,7 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let (maybe_state, mut mgr) =
-        match SimpleRestartingEventManager::launch(monitors, &mut shmem_provider) {
+        match SimpleRestartingEventManager::launch(monitors, &mut shmem_provider, true) {
             Ok(res) => res,
             Err(e) => match e {
                 libafl::Error::ShuttingDown => {
@@ -402,13 +409,13 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // This call will run indefinitely (or until the restarter/manager stops it)
-    match fuzzer.fuzz_loop(
+    match normalize_fuzz_result(fuzzer.fuzz_loop(
         &mut stages,
         &mut differential_executor,
         &mut state,
         &mut mgr,
-    ) {
-        Ok(_) => return Ok(()),
+    )) {
+        Ok(()) => return Ok(()),
         Err(e) => {
             error("main", &format!("Error in fuzz loop: {}", e));
             return Err(Box::new(e));
@@ -480,5 +487,21 @@ pub(crate) fn log_working_state(args: &Args) {
         }
     } else {
         info("main", "prog-b: not provided");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_fuzz_result;
+
+    #[test]
+    fn shutdown_is_a_clean_fuzz_loop_result() {
+        assert!(normalize_fuzz_result::<()>(Err(libafl::Error::shutting_down())).is_ok());
+    }
+
+    #[test]
+    fn ordinary_fuzz_loop_errors_are_preserved() {
+        let result = normalize_fuzz_result::<()>(Err(libafl::Error::illegal_state("broken")));
+        assert!(result.is_err());
     }
 }

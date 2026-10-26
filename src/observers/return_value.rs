@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
 /// An observer that tracks the return value (i32) of harness executions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ReturnValueObserver {
     name: Cow<'static, str>,
     /// The last observed numeric return value (from the harness)
@@ -133,58 +133,6 @@ where
             }
         }
 
-        Ok(())
-    }
-
-    fn pre_exec_child(&mut self, _state: &mut S, _input: &I) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn post_exec_child(
-        &mut self,
-        _state: &mut S,
-        _input: &I,
-        exit_kind: &ExitKind,
-    ) -> Result<(), Error> {
-        self.last_exit_kind = Some(exit_kind.clone());
-        // Prefer shmem if present (forkserver targets will write into shmem).
-        // TLS is deprecated; if no shmem is present, last_value stays unchanged.
-        if let Some(shm) = &mut self.rv_shmem {
-            if shm.len() >= 4 {
-                let slice = &shm[..4];
-                let mut arr = [0u8; 4];
-                arr.copy_from_slice(slice);
-                let v = i32::from_ne_bytes(arr);
-                self.last_value = Some(v);
-            }
-        }
-        // self.append_debug_log(exit_kind, observed_val);
-        if rv_obs_debug_enabled() {
-            if let Some(v) = self.last_value {
-                debug(
-                    "return_value",
-                    &format!("observed return value (child) = {} ({:?})", v, exit_kind),
-                );
-            } else {
-                debug(
-                    "return_value",
-                    &format!("no return value observed (child) ({:?})", exit_kind),
-                );
-            }
-            if let Some(shm) = &self.rv_shmem {
-                let len = shm.len();
-                let snap = self.snapshot_bytes(8).unwrap_or_default();
-                let hex: String = snap
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                debug(
-                    "return_value",
-                    &format!("shmem len={} snapshot={} (child)", len, hex),
-                );
-            }
-        }
         Ok(())
     }
 }

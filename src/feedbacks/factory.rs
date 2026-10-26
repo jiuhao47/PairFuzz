@@ -8,7 +8,7 @@ use libafl::{
     feedbacks::{FastAndFeedback, FastOrFeedback, MaxMapFeedback},
     observers::{CanTrack, MapObserver},
 };
-use libafl_bolts::{AsIter, AsSlice, Named};
+use libafl_bolts::{AsIter, Named, ToSlice};
 
 pub(crate) fn build_feedback<C>(
     mode: RunMode,
@@ -45,7 +45,7 @@ where
         + AsRef<C>
         + Named
         + MapObserver<Entry = u8>
-        + for<'it> AsSlice<'it, Entry = u8>
+        + for<'it> ToSlice<'it, Entry = u8>
         + for<'it> AsIter<'it, Item = u8>,
 {
     let difference = DiffObjective::new("zero_nonzero", &[rv_a, rv_b]);

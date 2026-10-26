@@ -24,6 +24,22 @@ class RepositoryLayoutTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, main)
 
+    def test_upgrade_checkpoint_keeps_legacy_algorithm(self):
+        runtime = (ROOT / "src" / "driver" / "runtime.rs").read_text(
+            encoding="utf-8"
+        )
+        for token in (
+            "QueueScheduler",
+            "HavocScheduledMutator",
+            "ShmemComboUpdater",
+            "SimpleRestartingEventManager",
+        ):
+            with self.subTest(required=token):
+                self.assertIn(token, runtime)
+        for token in ("StdMOptMutator", "CentralizedLauncher", "CachedOnDiskCorpus"):
+            with self.subTest(forbidden=token):
+                self.assertNotIn(token, runtime)
+
     def test_required_competition_paths_exist(self):
         required = (
             "src/main.rs",

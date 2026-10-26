@@ -10,4 +10,5 @@ __pycache__/
 # Local competition tools and generated artifacts.
 .tools/
 .superpowers/
+.worktrees/
 examples/contest/*.o

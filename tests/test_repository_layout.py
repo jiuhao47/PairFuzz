@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+import tomllib
 import unittest
 
 
@@ -78,8 +79,16 @@ class RepositoryLayoutTests(unittest.TestCase):
         self.assertGreaterEqual(len(fields), 4)
         self.assertEqual(fields[0], "160000")
         self.assertEqual(
-            fields[1], "90cb9a2919faf386e0678870e52784070cdac4b6"
+            fields[1], "92ad89454765440c7c03b87b11d5dbde753f9633"
         )
+
+    def test_rust_toolchain_matches_libafl_minimum(self):
+        with (ROOT / "rust-toolchain.toml").open("rb") as source:
+            toolchain = tomllib.load(source)["toolchain"]
+
+        self.assertEqual(toolchain["channel"], "1.93.1")
+        self.assertEqual(toolchain["profile"], "minimal")
+        self.assertEqual(toolchain["components"], ["rustfmt"])
 
     def test_root_justfile_exposes_only_supported_recipes(self):
         completed = subprocess.run(

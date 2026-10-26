@@ -101,6 +101,57 @@ class RepositoryLayoutTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, content)
 
+    def test_participant_docs_do_not_reference_removed_paths(self):
+        documents = [ROOT / "README.md", ROOT / "docs" / "STRUCTURE.md"]
+        documents.extend(
+            path
+            for path in sorted((ROOT / "docs" / "contest").glob("*.md"))
+            if path.name != "provenance.md"
+        )
+        forbidden = (
+            "benchmark/",
+            "docker/",
+            "experiments/",
+            "misc/",
+            "app/bins/",
+            "app/differential_libs/",
+            "app/libs/",
+            "app/script/",
+            "app/tools/",
+            "app/verify/",
+            "LocateFix",
+            "fuzzers/",
+        )
+        for document in documents:
+            content = document.read_text(encoding="utf-8")
+            for token in forbidden:
+                with self.subTest(document=document.name, token=token):
+                    self.assertNotIn(token, content)
+
+    def test_provenance_records_remote_recovery_point(self):
+        content = (ROOT / "docs" / "contest" / "provenance.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("internal-source-remote", content)
+        self.assertIn("dcf9efb0347e488b7a1e12f6ec42fc5299539035", content)
+
+    def test_structure_lists_every_retained_product_area(self):
+        content = (ROOT / "docs" / "STRUCTURE.md").read_text(encoding="utf-8")
+        retained = (
+            "src/",
+            "app/compiler/",
+            "examples/real-json/",
+            "examples/contest/",
+            "scripts/",
+            "tests/",
+            "third_party/",
+            "docs/contest/",
+            "LibAFL/",
+        )
+        for path in retained:
+            with self.subTest(path=path):
+                self.assertIn(path, content)
+
 
 if __name__ == "__main__":
     unittest.main()

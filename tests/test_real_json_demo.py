@@ -303,6 +303,7 @@ class DocumentationTests(unittest.TestCase):
     def test_documented_real_json_recipes_are_available(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         commands = {
+            "check": [],
             "real-json-build": [],
             "real-json-verify": [],
             "real-json-demo": ["30"],

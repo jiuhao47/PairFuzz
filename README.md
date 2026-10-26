@@ -17,6 +17,7 @@ sudo apt-get install build-essential clang-18 llvm-18-dev \
   libclang-18-dev libclang-rt-18-dev pkg-config python3 git
 git submodule update --init LibAFL
 rustup toolchain install 1.91.1 --profile minimal --component rustfmt
+cargo install just --locked
 export PATH="/usr/lib/llvm-18/bin:$PATH"
 export LLVM_CONFIG=/usr/lib/llvm-18/bin/llvm-config
 ```
@@ -101,24 +102,19 @@ flowchart LR
 | [scripts/real_json_demo.py](scripts/real_json_demo.py) | 真实库构建、限时 fuzz、元数据校验与复现入口 |
 | [examples/contest/](examples/contest/) | 自包含合成冒烟目标 |
 | [scripts/contest_demo.py](scripts/contest_demo.py) | 合成演示入口 |
+| [tests/](tests/) | 供应链、目标契约、进程清理与仓库结构回归测试 |
 | [真实库演示说明](docs/contest/real-json-demo.md) | 目标契约、现场命令、结果解释与安全边界 |
 | [参赛介绍与演示讲稿](docs/contest/README.md) | 项目简介、展示顺序与待补充信息 |
 | [验证记录](docs/contest/verification.md) | 本次环境、执行结果与已知限制 |
 | [项目结构](docs/STRUCTURE.md) | 与当前经典版本对应的模块说明 |
 
-`app/` 的其他目标、`experiments/`、`docker/` 和旧 `Justfile` 配方属于历史研究材料，
-部分依赖原机器路径和外部库。演示只需初始化 `LibAFL`；根部旧 `LocateFix` 和
-外部 fuzzer 子模块已经移除。请使用 `real-json-*` 或 `contest-*` 配方，旧
-`run` / `pre_run` 等历史配方可能清空 `run/`。
+当前分支是精简参赛交付，只保留上述可构建路径；完整研究工作区的只读恢复点
+记录在[来源说明](docs/contest/provenance.md)，不构成本项目的运行依赖。
 
 ## 开发验证
 
 ```bash
-cargo check --locked --all-targets --workspace
-cargo test --locked --workspace
-python3 -m unittest tests.test_real_json_demo -v
-just contest-verify
-just real-json-verify
+just check
 ```
 
 Rust 1.98 会触发旧 LibAFL 的新增 lint 错误，请先使用固定工具链。

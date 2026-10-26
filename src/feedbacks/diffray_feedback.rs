@@ -23,7 +23,7 @@ use std::u8;
 
 /// Mode for multi-observer decision. We implement AND now and leave
 /// room to add OR, MAJORITY, custom closures, etc.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     /// debug mode: collect all info for each observer (found, indices, rv)
     Debug,

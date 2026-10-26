@@ -1,12 +1,13 @@
+use libafl::common::HasMetadata;
 use libafl::events::{AwaitRestartSafe, SendExiting};
+use libafl::executors::HasObservers;
+use libafl::observers::MapObserver;
+use libafl::state::HasStartTime;
 use libafl::ExecutesInput;
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleRestartingEventManager,
     executors::DiffExecutor,
-    feedback_and_fast,
-    feedback_or_fast,
-    // feedbacks::MaxMapFeedback,
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
@@ -14,12 +15,6 @@ use libafl::{
     stages::mutational::StdMutationalStage,
     state::{HasCorpus, StdState},
 };
-// Note: we intentionally avoid MinMapFeedback here to keep concrete feedback types
-// identical across branches; we emulate Min via inverted owned map.
-use libafl::common::HasMetadata;
-use libafl::executors::HasObservers;
-use libafl::observers::MapObserver;
-use libafl::state::HasStartTime;
 use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 use libafl_bolts::tuples::MatchNameRef;
 use libafl_bolts::AsIter;
@@ -156,77 +151,18 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         objective_observer = HitcountsMapObserver::new(obs_obj);
     }
 
-    // Build coverage/return-value feedbacks. Support rv-mode == Single by constructing
-    // a DiffrayFeedback that uses return-value observers only. Otherwise fall
-    // back to the SingleCov two-map feedback used previously.
-    let mut feedback = match args.mode {
-        crate::driver::args::RunMode::SinglePl => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_pl(
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::ComboPl => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_pl(
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::SingleRv => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_rv(
-                &rv_feedback_observer_a,
-                &rv_feedback_observer_b,
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::SingleRvCov => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_rv_cov(
-                &rv_feedback_observer_a,
-                &rv_feedback_observer_b,
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::ComboRv => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_rv(
-                &rv_feedback_observer_a,
-                &rv_feedback_observer_b,
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::ComboCov => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_combo_cov(
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::SingleCov => {
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_cov(
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-        crate::driver::args::RunMode::ReplayCov => {
-            // Replay mode uses the same coverage-only feedback for now;
-            // the execution driver will handle replay semantics later.
-            crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_cov(
-                &map_observer_a,
-                &map_observer_b,
-            )
-        }
-    };
-
-    // Build objectives: diff objective (based on return values) and map objective
-    let diff_obj = crate::feedbacks::DiffObjective::new(
-        "zero_nonzero",
-        &[&rv_exec_observer_a, &rv_exec_observer_b],
+    let mut feedback = crate::feedbacks::factory::build_feedback(
+        args.mode,
+        &map_observer_a,
+        &map_observer_b,
+        &rv_feedback_observer_a,
+        &rv_feedback_observer_b,
     );
-    let map_diff_obj_fb = libafl::feedbacks::MaxMapFeedback::new(&objective_observer);
-    let mut objective = feedback_and_fast!(
-        feedback_or_fast!(crate::feedbacks::CrashObjective::new(), diff_obj),
-        map_diff_obj_fb
+
+    let mut objective = crate::feedbacks::factory::build_objective(
+        &objective_observer,
+        &rv_exec_observer_a,
+        &rv_exec_observer_b,
     );
 
     let (maybe_state, mut mgr) =

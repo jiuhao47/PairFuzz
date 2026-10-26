@@ -17,9 +17,15 @@ import time
 from typing import Any
 
 try:
-    from scripts.real_json_demo import results as real_json_results
+    from scripts.real_json_demo import (
+        results as real_json_results,
+        validate_metadata as real_json_validate_metadata,
+    )
 except ModuleNotFoundError:
-    from real_json_demo import results as real_json_results
+    from real_json_demo import (
+        results as real_json_results,
+        validate_metadata as real_json_validate_metadata,
+    )
 
 
 class ManifestError(RuntimeError):
@@ -350,6 +356,26 @@ def rotate_configurations(names: tuple[str, ...], trial_index: int) -> tuple[str
         return ()
     offset = trial_index % len(ordered)
     return ordered[offset:] + ordered[:offset]
+
+
+def select_configurations(
+    manifest: CampaignManifest, requested: str | None
+) -> tuple[tuple[str, str], ...]:
+    if requested is None:
+        return tuple(
+            (name, manifest.configuration_modes[name])
+            for name in manifest.configurations
+        )
+    if not requested or Path(requested).name != requested:
+        raise ManifestError("configuration label must be one path component")
+    if requested in manifest.configuration_modes:
+        return ((requested, manifest.configuration_modes[requested]),)
+    if len(manifest.configurations) != 1:
+        raise ManifestError(
+            f"configuration {requested!r} is not defined by a multi-mode manifest"
+        )
+    source = manifest.configurations[0]
+    return ((requested, manifest.configuration_modes[source]),)
 
 
 def sha256_file(path: Path) -> str:
@@ -726,15 +752,12 @@ def _run_trial(
     manifest: CampaignManifest,
     paths: TrialPaths,
     configuration: str,
+    mode: str,
     trial_index: int,
     cpu: int,
     duration: float,
 ) -> TrialRecord:
-    command = _fuzzer_command(
-        manifest,
-        paths,
-        manifest.configuration_modes[configuration],
-    )
+    command = _fuzzer_command(manifest, paths, mode)
     environment = capture_environment(
         manifest.repository_root,
         command,
@@ -803,6 +826,7 @@ def run_campaign(
     warmup_seconds: float | None = None,
     trial_seconds: float | None = None,
     trials: int | None = None,
+    configuration: str | None = None,
 ) -> Path:
     manifest = CampaignManifest.load(manifest_path)
     warmup_seconds = manifest.warmup_seconds if warmup_seconds is None else _positive_finite(warmup_seconds, "warmup_seconds")
@@ -810,6 +834,7 @@ def run_campaign(
     trial_count = manifest.trials if trials is None else trials
     if type(trial_count) is not int or trial_count <= 0:
         raise ManifestError("trials must be a positive integer")
+    selected = select_configurations(manifest, configuration)
 
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     campaign_root = (
@@ -830,15 +855,17 @@ def run_campaign(
             "warmup_seconds": warmup_seconds,
             "trial_seconds": trial_seconds,
             "trials": trial_count,
+            "configurations": [name for name, _ in selected],
         },
     )
 
-    for configuration in manifest.configurations:
-        warmup = create_trial(campaign_root / "warmup", configuration, 0)
+    for configuration_name, mode in selected:
+        warmup = create_trial(campaign_root / "warmup", configuration_name, 0)
         _run_trial(
             manifest,
             warmup,
-            configuration,
+            configuration_name,
+            mode,
             -1,
             cpu,
             warmup_seconds,
@@ -846,15 +873,16 @@ def run_campaign(
 
     records = []
     for trial_index in range(trial_count):
-        for configuration in rotate_configurations(
-            manifest.configurations, trial_index
-        ):
-            paths = create_trial(campaign_root, configuration, trial_index)
+        modes = dict(selected)
+        names = tuple(name for name, _ in selected)
+        for configuration_name in rotate_configurations(names, trial_index):
+            paths = create_trial(campaign_root, configuration_name, trial_index)
             records.append(
                 _run_trial(
                     manifest,
                     paths,
-                    configuration,
+                    configuration_name,
+                    modes[configuration_name],
                     trial_index,
                     cpu,
                     trial_seconds,
@@ -937,6 +965,103 @@ def export_campaign(performance_root: Path, output: Path) -> dict[str, Any]:
     return evidence
 
 
+def validate_sidecars(evidence_path: Path) -> dict[str, Any]:
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    configurations = evidence["results"]["configurations"]
+    validated = 0
+    for configuration in configurations.values():
+        for trial in configuration["trials"]:
+            differences = Path(trial["raw_directory"]) / "diffs"
+            for path in sorted(differences.iterdir()):
+                if (
+                    not path.is_file()
+                    or path.name.startswith(".")
+                    or path.name.endswith(".metadata")
+                ):
+                    continue
+                pair = tuple(real_json_results(path.read_bytes()))
+                if len(pair) != 2 or pair[0] == pair[1]:
+                    raise RuntimeError(f"saved solution no longer differs: {path}")
+                real_json_validate_metadata(path, pair)
+                validated += 1
+    return {
+        "schema_version": 1,
+        "evidence": str(evidence_path.resolve()),
+        "validated_solutions": validated,
+    }
+
+
+def _named_target_hashes(environment: dict[str, Any]) -> dict[str, str]:
+    return {
+        Path(path).name: digest
+        for path, digest in environment["target_sha256"].items()
+    }
+
+
+def compare_evidence(baseline_path: Path, candidate_path: Path) -> dict[str, Any]:
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    baseline_environment = baseline["environment"]
+    candidate_environment = candidate["environment"]
+    if (
+        baseline_environment["corpus_sha256"]
+        != candidate_environment["corpus_sha256"]
+    ):
+        raise ManifestError("cannot compare campaigns with different seed corpora")
+    if _named_target_hashes(baseline_environment) != _named_target_hashes(
+        candidate_environment
+    ):
+        raise ManifestError("cannot compare campaigns with different target binaries")
+
+    baseline_configurations = baseline["results"]["configurations"]
+    candidate_configurations = candidate["results"]["configurations"]
+    if len(baseline_configurations) != 1 or len(candidate_configurations) != 1:
+        raise ManifestError("upgrade comparison requires one configuration per campaign")
+    baseline_name, baseline_metrics = next(iter(baseline_configurations.items()))
+    candidate_name, candidate_metrics = next(iter(candidate_configurations.items()))
+
+    def checkpoint(
+        evidence_path: Path,
+        environment: dict[str, Any],
+        name: str,
+        metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "evidence": str(evidence_path.resolve()),
+            "configuration": name,
+            "measurement_commit": environment["measurement_commit"],
+            "libafl_commit": environment["libafl_commit"],
+            "executions_per_second": metrics["executions_per_second"],
+            "stable_nonduplicate_differences": metrics[
+                "stable_nonduplicate_differences"
+            ],
+            "stable_nonduplicate_differences_per_cpu_hour": metrics[
+                "stable_nonduplicate_differences_per_cpu_hour"
+            ],
+        }
+
+    return {
+        "schema_version": 1,
+        "change_scope": "dependency-only",
+        "identity": {
+            "corpus_sha256": baseline_environment["corpus_sha256"],
+            "target_sha256": _named_target_hashes(baseline_environment),
+        },
+        "baseline": checkpoint(
+            baseline_path,
+            baseline_environment,
+            baseline_name,
+            baseline_metrics,
+        ),
+        "candidate": checkpoint(
+            candidate_path,
+            candidate_environment,
+            candidate_name,
+            candidate_metrics,
+        ),
+    }
+
+
 def _positive_seconds(value: str) -> float:
     try:
         return _positive_finite(float(value), "duration")
@@ -957,6 +1082,10 @@ def main() -> None:
     run_parser.add_argument("--warmup-seconds", type=_positive_seconds)
     run_parser.add_argument("--trial-seconds", type=_positive_seconds)
     run_parser.add_argument("--trials", type=int)
+    run_parser.add_argument(
+        "--configuration",
+        help="label this single-mode campaign without changing its pinned mode",
+    )
     aggregate_parser = commands.add_parser(
         "aggregate", help="rebuild a campaign summary from retained trials"
     )
@@ -966,6 +1095,15 @@ def main() -> None:
     )
     export_parser.add_argument("--latest", action="store_true", required=True)
     export_parser.add_argument("--output", type=Path, required=True)
+    validate_parser = commands.add_parser(
+        "validate-sidecars", help="independently replay all evidence sidecars"
+    )
+    validate_parser.add_argument("--evidence", type=Path, required=True)
+    compare_parser = commands.add_parser(
+        "compare", help="compare two identity-compatible campaign checkpoints"
+    )
+    compare_parser.add_argument("baseline", type=Path)
+    compare_parser.add_argument("candidate", type=Path)
     args = parser.parse_args()
 
     if args.command == "run":
@@ -975,6 +1113,7 @@ def main() -> None:
             warmup_seconds=args.warmup_seconds,
             trial_seconds=args.trial_seconds,
             trials=args.trials,
+            configuration=args.configuration,
         )
         print(campaign_root)
     elif args.command == "aggregate":
@@ -984,6 +1123,14 @@ def main() -> None:
         root = Path(__file__).resolve().parents[1]
         export_campaign(root / "run" / "performance", args.output.resolve())
         print(args.output.resolve())
+    elif args.command == "validate-sidecars":
+        report = validate_sidecars(args.evidence.resolve())
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.command == "compare":
+        comparison = compare_evidence(
+            args.baseline.resolve(), args.candidate.resolve()
+        )
+        print(json.dumps(comparison, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

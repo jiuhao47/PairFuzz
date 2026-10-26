@@ -268,6 +268,14 @@ class ProcessRunnerTests(unittest.TestCase):
 
 
 class AggregationTests(unittest.TestCase):
+    def test_upgrade_only_label_reuses_the_single_pinned_mode(self):
+        campaign = load_campaign_module()
+        manifest = campaign.CampaignManifest.load(MANIFEST)
+
+        selected = campaign.select_configurations(manifest, "upgrade-only")
+
+        self.assertEqual(selected, (("upgrade-only", "single-cov"),))
+
     def test_trial_paths_never_collide(self):
         campaign = load_campaign_module()
         with tempfile.TemporaryDirectory() as directory:
@@ -382,6 +390,96 @@ class AggregationTests(unittest.TestCase):
             unstable_solutions=0,
             byte_duplicates=0,
             rng_seed_controlled=False,
+        )
+
+
+class EvidenceCompatibilityTests(unittest.TestCase):
+    def test_validate_sidecars_replays_every_referenced_solution(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trial = root / "trial"
+            differences = trial / "diffs"
+            differences.mkdir(parents=True)
+            solution = differences / "solution"
+            solution.write_bytes(b"difference")
+            evidence = root / "evidence.json"
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "results": {
+                            "configurations": {
+                                "baseline": {
+                                    "trials": [{"raw_directory": str(trial)}]
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                campaign, "real_json_results", return_value=[1, 0]
+            ) as results, mock.patch.object(
+                campaign, "real_json_validate_metadata"
+            ) as validate:
+                report = campaign.validate_sidecars(evidence)
+
+            self.assertEqual(report["validated_solutions"], 1)
+            results.assert_called_once_with(b"difference")
+            validate.assert_called_once_with(solution, (1, 0))
+
+    def test_compare_labels_dependency_only_and_rejects_identity_drift(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / "baseline.json"
+            candidate = root / "candidate.json"
+            self._write_evidence(baseline, "baseline", "old-libafl", "same-corpus")
+            self._write_evidence(
+                candidate, "upgrade-only", "new-libafl", "same-corpus"
+            )
+
+            comparison = campaign.compare_evidence(baseline, candidate)
+
+            self.assertEqual(comparison["change_scope"], "dependency-only")
+            self.assertEqual(comparison["baseline"]["configuration"], "baseline")
+            self.assertEqual(
+                comparison["candidate"]["configuration"], "upgrade-only"
+            )
+
+            self._write_evidence(candidate, "upgrade-only", "new-libafl", "drift")
+            with self.assertRaises(campaign.ManifestError):
+                campaign.compare_evidence(baseline, candidate)
+
+    @staticmethod
+    def _write_evidence(path, configuration, libafl_commit, corpus_hash):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "environment": {
+                        "libafl_commit": libafl_commit,
+                        "measurement_commit": f"{libafl_commit}-measurement",
+                        "corpus_sha256": corpus_hash,
+                        "target_sha256": {
+                            "/root/cjson_target": "cjson-hash",
+                            "/root/mjson_target": "mjson-hash",
+                        },
+                    },
+                    "results": {
+                        "configurations": {
+                            configuration: {
+                                "executions_per_second": 10.0,
+                                "stable_nonduplicate_differences_per_cpu_hour": 2.0,
+                                "stable_nonduplicate_differences": 1,
+                            }
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
         )
 
 

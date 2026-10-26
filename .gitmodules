@@ -1,22 +1,3 @@
 [submodule "LibAFL"]
 	path = LibAFL
 	url = https://github.com/AFLplusplus/LibAFL
-[submodule "LocateFix"]
-	path = LocateFix
-	url = https://github.com/jiuhao47/LocateFix
-	branch = main
-[submodule "AFLplusplus"]
-	path = fuzzers/AFLplusplus
-	url = https://github.com/jiuhao47/AFLplusplus
-[submodule "MOpt-AFL"]
-	path = fuzzers/MOpt-AFL
-	url = https://github.com/puppet-meteor/MOpt-AFL
-[submodule "AFL"]
-	path = fuzzers/AFL
-	url = http://github.com/google/AFL
-[submodule "honggfuzz"]
-	path = fuzzers/honggfuzz
-	url = https://github.com/google/honggfuzz
-[submodule "aflfast"]
-	path = fuzzers/aflfast
-	url = https://github.com/mboehme/aflfast

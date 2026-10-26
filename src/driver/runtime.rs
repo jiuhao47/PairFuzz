@@ -3,7 +3,7 @@ use libafl::ExecutesInput;
 use libafl::{
     corpus::{Corpus, InMemoryCorpus, InMemoryOnDiskCorpus},
     events::SimpleRestartingEventManager,
-    executors::{forkserver::ForkserverExecutor, DiffExecutor},
+    executors::DiffExecutor,
     feedback_and_fast,
     feedback_or_fast,
     // feedbacks::MaxMapFeedback,
@@ -18,13 +18,11 @@ use libafl::{
 // identical across branches; we emulate Min via inverted owned map.
 use libafl::common::HasMetadata;
 use libafl::executors::HasObservers;
-use libafl::executors::StdChildArgs;
 use libafl::observers::MapObserver;
 use libafl::state::HasStartTime;
 use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 use libafl_bolts::tuples::MatchNameRef;
 use libafl_bolts::AsIter;
-use libafl_bolts::StdTargetArgs;
 use libafl_bolts::{current_time, nonzero, rands::StdRand, tuples::tuple_list};
 use serde_json::json;
 use std::fs::OpenOptions;
@@ -70,8 +68,8 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // Executor-attached return-value observers (may be backed by small shmem regions)
     use libafl_bolts::shmem::StdShMem;
-    let mut rv_exec_observer_a = ReturnValueObserver::new("first_return");
-    let mut rv_exec_observer_b = ReturnValueObserver::new("second_return");
+    let rv_exec_observer_a = ReturnValueObserver::new("first_return");
+    let rv_exec_observer_b = ReturnValueObserver::new("second_return");
 
     let monitors = crate::driver::monitor::build_monitors(
         args.log_dir.as_deref(),
@@ -92,7 +90,7 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     match crate::observers::shmem::rv_shmem::try_alloc_cov_shmem_with_ptr(
         &mut shmem_provider,
         num_edges,
-        "__DIFFRAY_TMP_COV_A",
+        crate::driver::target::names(crate::driver::target::TargetRole::A).coverage_temp_env,
     ) {
         Ok((s_a, ptr_a, id)) => {
             cov_shm_id_a = Some(id);
@@ -120,7 +118,7 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     match crate::observers::shmem::rv_shmem::try_alloc_cov_shmem_with_ptr(
         &mut shmem_provider,
         num_edges,
-        "__DIFFRAY_TMP_COV_B",
+        crate::driver::target::names(crate::driver::target::TargetRole::B).coverage_temp_env,
     ) {
         Ok((s_b, ptr_b, id)) => {
             cov_shm_id_b = Some(id);
@@ -318,239 +316,41 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Tokens used for auto-dictionary
     let mut tokens = libafl::mutators::Tokens::new();
 
-    // Build executor A (forkserver) and attach coverage/rv shmems if available
-    let executor_a = if let Some(prog_a) = &args.prog_a {
-        // Validate target binary for executor A and detect capabilities
-        let caps_a = match crate::driver::bin_check::check_binary(
-            &mut prog_a.clone(),
-            false,
-            "__AFL_SHM_ID",
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                error("main", &format!("Target A binary validation failed: {}", e));
-                std::process::exit(1);
-            }
-        };
-        info(
-            "main",
-            &format!(
-                "Detected capabilities for A: persistent={} defer={} asan={} lsan={} instrumented={}",
-                caps_a.persistent, caps_a.defer, caps_a.has_asan, caps_a.has_lsan, caps_a.instrumented
-            ),
-        );
-        // If we allocated a rv shmem earlier, extract id/size and inject into child's env
-        // Determine persistent setting: CLI flags take precedence over detected capability.
-        // Use `Args::persistent_enabled()` to encapsulate precedence between
-        // `--persistent` and `--no-persistent`.
-        let is_persistent_a = if args.persistent_enabled() {
-            caps_a.persistent
-        } else {
-            false
-        };
+    let executor_a = crate::driver::target::build_executor(
+        crate::driver::target::TargetSpec {
+            role: crate::driver::target::TargetRole::A,
+            program: args.prog_a.as_deref(),
+            coverage_id: cov_shm_id_a.as_deref(),
+            coverage_shmem: _cov_shmem_a.as_ref(),
+            return_shmem: rv_shmem_a,
+            persistent_requested: args.persistent_enabled(),
+            verbose: args.verbose,
+            timeout: Duration::from_millis(args.timeout_ms),
+            num_edges,
+        },
+        map_observer_a,
+        rv_exec_observer_a,
+        &mut shmem_provider,
+        &mut tokens,
+    );
 
-        let mut builder_a = ForkserverExecutor::builder()
-            .program(prog_a.as_os_str().to_os_string())
-            .shmem_provider(&mut shmem_provider)
-            .autotokens(&mut tokens)
-            .is_persistent(is_persistent_a)
-            // Enable child debug output when verbosity is very high (-vvv)
-            .debug_child(args.verbose >= 3)
-            .coverage_map_size(num_edges)
-            .timeout(Duration::from_millis(args.timeout_ms));
-
-        // Collect child envs to inject into the builder in a single pass.
-        let mut child_envs_a: Vec<(&str, String)> = Vec::new();
-
-        // If a per-target coverage shmem was allocated, add its id to the child's env list
-        if let Some(id) = cov_shm_id_a.as_ref() {
-            child_envs_a.push(("__AFL_SHM_ID", id.clone()));
-            // Also log for diagnostics
-            info("main", &format!("Injected __AFL_SHM_ID for A = {}", id));
-        }
-
-        if let Some(s) = rv_shmem_a.take() {
-            match crate::observers::shmem::rv_shmem::extract_id_size_and_clear(
-                &s,
-                "__DIFFRAY_TMP_RV_A",
-            ) {
-                Ok((id, size)) => {
-                    // Queue env vars for injection into the child's environment
-                    child_envs_a.push(("__DIFFRAY_RV_SHM_ID_A", id.clone()));
-                    child_envs_a.push(("__DIFFRAY_RV_SHM_ID_A_SIZE", size.clone()));
-                    info(
-                        "main",
-                        &format!(
-                            "Prepared __DIFFRAY_RV_SHM_ID_A for builder (id={} size={})",
-                            id, size
-                        ),
-                    );
-                }
-                Err(e) => warn("main", &format!("failed to extract rv shmem id A: {}", e)),
-            }
-            // Attach the shmem to the executor-side return-value observer
-            rv_exec_observer_a.set_shmem(s);
-            info(
-                "main",
-                "Attached rv shmem to executor observer A (first_return)",
-            );
-            // note: rv_shmem snapshot logging removed by request
-        }
-
-        // If a per-target coverage shmem exists, write its id into the parent env
-        if let Some(s) = _cov_shmem_a.as_ref() {
-            if let Err(e) = crate::observers::shmem::rv_shmem::write_shmem_to_env(s, "__AFL_SHM_ID")
-            {
-                warn(
-                    "main",
-                    &format!("failed to write __AFL_SHM_ID for A: {}", e),
-                );
-            }
-            info("main", "Wrote __AFL_SHM_ID into parent env for executor A");
-        }
-
-        // Apply collected child envs to the builder in one pass
-        for (k, v) in child_envs_a.drain(..) {
-            builder_a = builder_a.env(k, v);
-        }
-
-        // Remove temporary parent environment variables to avoid pollution
-        for key in &["__DIFFRAY_RV_SHM_ID_A", "__DIFFRAY_RV_SHM_ID_A_SIZE"] {
-            let _ = std::env::remove_var(key);
-        }
-
-        // Build executor A with dynamic coverage map sizing; exit on failure.
-        match builder_a.build_dynamic_map(map_observer_a, tuple_list!(rv_exec_observer_a)) {
-            Ok(exec) => exec,
-            Err(e) => {
-                error(
-                    "main",
-                    &format!("Failed to create forkserver executor A: {}", e),
-                );
-                std::process::exit(1);
-            }
-        }
-    } else {
-        error(
-            "main",
-            "prog-a not provided; forkserver executor A cannot be created",
-        );
-        std::process::exit(1);
-    };
-
-    // Build executor B (forkserver) and attach coverage/rv shmems if available
-    let executor_b = if let Some(prog_b) = &args.prog_b {
-        // Validate target binary for executor B and detect its capabilities
-        let caps_b = match crate::driver::bin_check::check_binary(
-            &mut prog_b.clone(),
-            false,
-            "__AFL_SHM_ID",
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                error("main", &format!("Target B binary validation failed: {}", e));
-                std::process::exit(1);
-            }
-        };
-        info(
-            "main",
-            &format!(
-                "Detected capabilities for B: persistent={} defer={} asan={} lsan={} instrumented={}",
-                caps_b.persistent, caps_b.defer, caps_b.has_asan, caps_b.has_lsan, caps_b.instrumented
-            ),
-        );
-
-        // Determine persistent setting for B: CLI flags override detected capability.
-        let is_persistent_b = if args.persistent_enabled() {
-            caps_b.persistent
-        } else {
-            false
-        };
-
-        let mut builder_b = ForkserverExecutor::builder()
-            .program(prog_b.as_os_str().to_os_string())
-            .shmem_provider(&mut shmem_provider)
-            .autotokens(&mut tokens)
-            .is_persistent(is_persistent_b)
-            // Enable child debug output when verbosity is very high (-vvv)
-            .debug_child(args.verbose >= 3)
-            .coverage_map_size(num_edges)
-            .timeout(Duration::from_millis(args.timeout_ms));
-
-        // Collect child envs for B to inject later in one pass
-        let mut child_envs_b: Vec<(&str, String)> = Vec::new();
-
-        // If a per-target coverage shmem was allocated, add its id to the child env list
-        if let Some(id) = cov_shm_id_b.as_ref() {
-            child_envs_b.push(("__AFL_SHM_ID", id.clone()));
-            info("main", &format!("Injected __AFL_SHM_ID for B = {}", id));
-        }
-
-        if let Some(s) = rv_shmem_b.take() {
-            match crate::observers::shmem::rv_shmem::extract_id_size_and_clear(
-                &s,
-                "__DIFFRAY_TMP_RV_B",
-            ) {
-                Ok((id, size)) => {
-                    child_envs_b.push(("__DIFFRAY_RV_SHM_ID_B", id.clone()));
-                    child_envs_b.push(("__DIFFRAY_RV_SHM_ID_B_SIZE", size.clone()));
-                    info(
-                        "main",
-                        &format!(
-                            "Prepared __DIFFRAY_RV_SHM_ID_B for builder (id={} size={})",
-                            id, size
-                        ),
-                    );
-                }
-                Err(e) => warn("main", &format!("failed to extract rv shmem id B: {}", e)),
-            }
-            rv_exec_observer_b.set_shmem(s);
-            info(
-                "main",
-                "Attached rv shmem to executor observer B (second_return)",
-            );
-            // note: rv_shmem snapshot logging removed by request
-        }
-
-        // If a per-target coverage shmem exists, write its id into the parent env
-        if let Some(s) = _cov_shmem_b.as_ref() {
-            if let Err(e) = crate::observers::shmem::rv_shmem::write_shmem_to_env(s, "__AFL_SHM_ID")
-            {
-                warn(
-                    "main",
-                    &format!("failed to write __AFL_SHM_ID for B: {}", e),
-                );
-            }
-            info("main", "Wrote __AFL_SHM_ID into parent env for executor B");
-        }
-
-        // Apply collected child envs to the builder
-        for (k, v) in child_envs_b.drain(..) {
-            builder_b = builder_b.env(k, v);
-        }
-
-        // Remove temporary parent environment variables
-        for key in &["__DIFFRAY_RV_SHM_ID_B", "__DIFFRAY_RV_SHM_ID_B_SIZE"] {
-            let _ = std::env::remove_var(key);
-        }
-
-        match builder_b.build_dynamic_map(map_observer_b, tuple_list!(rv_exec_observer_b)) {
-            Ok(exec) => exec,
-            Err(e) => {
-                error(
-                    "main",
-                    &format!("Failed to create forkserver executor B: {}", e),
-                );
-                std::process::exit(1);
-            }
-        }
-    } else {
-        error(
-            "main",
-            "prog-b not provided; forkserver executor B cannot be created",
-        );
-        std::process::exit(1);
-    };
+    let executor_b = crate::driver::target::build_executor(
+        crate::driver::target::TargetSpec {
+            role: crate::driver::target::TargetRole::B,
+            program: args.prog_b.as_deref(),
+            coverage_id: cov_shm_id_b.as_deref(),
+            coverage_shmem: _cov_shmem_b.as_ref(),
+            return_shmem: rv_shmem_b,
+            persistent_requested: args.persistent_enabled(),
+            verbose: args.verbose,
+            timeout: Duration::from_millis(args.timeout_ms),
+            num_edges,
+        },
+        map_observer_b,
+        rv_exec_observer_b,
+        &mut shmem_provider,
+        &mut tokens,
+    );
 
     // Create a ShmemComboUpdater that copies (A,B) coverage into the objective
     // buffer. Move shmem objects into the updater to keep them alive for the run.

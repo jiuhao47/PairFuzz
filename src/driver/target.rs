@@ -2,13 +2,13 @@ use libafl::{
     executors::{forkserver::ForkserverExecutor, StdChildArgs},
     inputs::Input,
     mutators::Tokens,
-    observers::{HitcountsMapObserver, StdMapObserver},
+    observers::{MapObserver, Observer, ObserversTuple},
     state::HasExecutions,
 };
 use libafl_bolts::{
     shmem::{StdShMem, StdShMemProvider},
-    tuples::tuple_list,
-    StdTargetArgs,
+    tuples::{tuple_list, Prepend},
+    StdTargetArgs, Truncate,
 };
 use std::{path::Path, time::Duration};
 
@@ -16,8 +16,6 @@ use crate::{
     observers::ReturnValueObserver,
     utils::logging::{error, info, warn},
 };
-
-pub(crate) type CoverageObserver = HitcountsMapObserver<StdMapObserver<'static, u8, true>>;
 
 #[derive(Clone, Copy)]
 pub(crate) enum TargetRole {
@@ -67,16 +65,19 @@ pub(crate) struct TargetSpec<'a> {
     pub(crate) num_edges: usize,
 }
 
-pub(crate) fn build_executor<I, S>(
+pub(crate) fn build_executor<I, S, A, MO>(
     spec: TargetSpec<'_>,
-    map_observer: CoverageObserver,
+    map_observer: A,
     mut rv_observer: ReturnValueObserver,
     provider: &mut StdShMemProvider,
     tokens: &mut Tokens,
-) -> ForkserverExecutor<I, (CoverageObserver, (ReturnValueObserver, ())), S, StdShMem>
+) -> ForkserverExecutor<I, (A, (ReturnValueObserver, ())), S, StdShMem>
 where
     I: Input,
     S: HasExecutions,
+    A: Observer<I, S> + AsMut<MO>,
+    MO: MapObserver + Truncate,
+    (ReturnValueObserver, ()): ObserversTuple<I, S> + Prepend<MO>,
 {
     let target_names = names(spec.role);
     let Some(program) = spec.program else {

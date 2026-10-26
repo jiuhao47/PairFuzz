@@ -21,7 +21,7 @@ use libafl_bolts::{
     tuples::{Handle, Handled, MatchNameRef},
     AsIter, Named,
 };
-use std::{borrow::Cow, collections::HashSet};
+use std::{borrow::Cow, collections::HashSet, marker::PhantomData};
 
 const OBJECTIVE_A: &str = "objective-a";
 const OBJECTIVE_B: &str = "objective-b";
@@ -156,24 +156,26 @@ impl CandidateEvaluator {
     }
 }
 
-pub struct DifferentialObjective<C> {
+pub struct DifferentialObjective<A, AO, B, BO> {
     name: Cow<'static, str>,
-    map_a: Handle<C>,
-    map_b: Handle<C>,
+    map_a: Handle<A>,
+    map_b: Handle<B>,
     rv_a: Handle<ReturnValueObserver>,
     rv_b: Handle<ReturnValueObserver>,
     evaluator: CandidateEvaluator,
     last_result: Option<bool>,
+    maps: PhantomData<(AO, BO)>,
 }
 
-impl<C> DifferentialObjective<C>
+impl<A, AO, B, BO> DifferentialObjective<A, AO, B, BO>
 where
-    C: Named,
+    A: Named,
+    B: Named,
 {
     #[must_use]
     pub fn new(
-        map_a: &C,
-        map_b: &C,
+        map_a: &A,
+        map_b: &B,
         rv_a: &ReturnValueObserver,
         rv_b: &ReturnValueObserver,
     ) -> Self {
@@ -185,17 +187,18 @@ where
             rv_b: rv_b.handle(),
             evaluator: CandidateEvaluator::default(),
             last_result: None,
+            maps: PhantomData,
         }
     }
 }
 
-impl<C> Named for DifferentialObjective<C> {
+impl<A, AO, B, BO> Named for DifferentialObjective<A, AO, B, BO> {
     fn name(&self) -> &Cow<'static, str> {
         &self.name
     }
 }
 
-impl<C, S> StateInitializer<S> for DifferentialObjective<C>
+impl<A, AO, B, BO, S> StateInitializer<S> for DifferentialObjective<A, AO, B, BO>
 where
     S: HasMetadata + HasNamedMetadata,
 {
@@ -243,9 +246,12 @@ fn update_history(history: &mut MapFeedbackMetadata<u8>, map: &[u8], initial: u8
     }
 }
 
-impl<C, EM, I, OT, S> Feedback<EM, I, OT, S> for DifferentialObjective<C>
+impl<A, AO, B, BO, EM, I, OT, S> Feedback<EM, I, OT, S> for DifferentialObjective<A, AO, B, BO>
 where
-    C: MapObserver<Entry = u8> + for<'it> AsIter<'it, Item = u8>,
+    A: AsRef<AO> + Named,
+    AO: MapObserver<Entry = u8> + for<'it> AsIter<'it, Item = u8>,
+    B: AsRef<BO> + Named,
+    BO: MapObserver<Entry = u8> + for<'it> AsIter<'it, Item = u8>,
     OT: MatchNameRef,
     S: HasMetadata + HasNamedMetadata + HasStartTime,
 {
@@ -283,12 +289,14 @@ where
             return Ok(false);
         }
 
-        let map_a = observers
+        let map_a_container = observers
             .get(&self.map_a)
             .ok_or_else(|| Error::illegal_state("objective map A missing"))?;
-        let map_b = observers
+        let map_b_container = observers
             .get(&self.map_b)
             .ok_or_else(|| Error::illegal_state("objective map B missing"))?;
+        let map_a = map_a_container.as_ref();
+        let map_b = map_b_container.as_ref();
         let bytes_a: Vec<u8> = map_a.as_iter().map(|value| *value).collect();
         let bytes_b: Vec<u8> = map_b.as_iter().map(|value| *value).collect();
 

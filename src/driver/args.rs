@@ -56,6 +56,18 @@ pub enum SimpleMonitorMode {
     Disabled,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum PipelineChoice {
+    Legacy,
+    Fast,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum ScheduleChoice {
+    Explore,
+    Fast,
+}
+
 impl std::fmt::Display for SimpleMonitorMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -143,7 +155,38 @@ pub struct Args {
     /// (legacy flags removed) Use `--persistent-mode` instead.
     #[arg(long = "simple-monitor", help = "Simple monitor: auto|enabled|disabled", value_enum, default_value_t = SimpleMonitorMode::Auto)]
     pub simple_monitor_mode: SimpleMonitorMode,
+    /// Execution pipeline. Legacy remains the default until benchmark selection is complete.
+    #[arg(long, value_enum, default_value_t = PipelineChoice::Legacy)]
+    pub pipeline: PipelineChoice,
+    /// AFL-style weighted power schedule used by the fast pipeline.
+    #[arg(long, value_enum, default_value_t = ScheduleChoice::Explore)]
+    pub schedule: ScheduleChoice,
+    /// Interval between AFL-compatible statistics updates.
+    #[arg(long, default_value_t = 15u64)]
+    pub stats_interval_secs: u64,
     // legacy flags removed: use --persistent-mode and --simple-monitor instead
+}
+
+#[cfg(test)]
+mod fast_pipeline_tests {
+    use super::{Args, PipelineChoice, ScheduleChoice};
+    use clap::Parser;
+
+    #[test]
+    fn pipeline_choices_parse() {
+        let legacy = Args::try_parse_from(["diffray"]);
+        assert_eq!(legacy.unwrap().pipeline, PipelineChoice::Legacy);
+        let fast = Args::try_parse_from(["diffray", "--pipeline", "fast"]);
+        assert_eq!(fast.unwrap().pipeline, PipelineChoice::Fast);
+    }
+
+    #[test]
+    fn schedule_choices_parse() {
+        let explore = Args::try_parse_from(["diffray"]);
+        assert_eq!(explore.unwrap().schedule, ScheduleChoice::Explore);
+        let fast = Args::try_parse_from(["diffray", "--schedule", "fast"]);
+        assert_eq!(fast.unwrap().schedule, ScheduleChoice::Fast);
+    }
 }
 
 impl Args {

@@ -35,14 +35,15 @@ where
     }
 }
 
-pub(crate) fn build_fast_objective<C>(
-    map_a: &C,
-    map_b: &C,
+pub(crate) fn build_fast_objective<A, AO, B, BO>(
+    map_a: &A,
+    map_b: &B,
     rv_a: &ReturnValueObserver,
     rv_b: &ReturnValueObserver,
-) -> DifferentialObjective<C>
+) -> DifferentialObjective<A, AO, B, BO>
 where
-    C: Named,
+    A: Named + AsRef<AO>,
+    B: Named + AsRef<BO>,
 {
     DifferentialObjective::new(map_a, map_b, rv_a, rv_b)
 }

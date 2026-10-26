@@ -8,7 +8,7 @@ use libafl::{
     generators::RandPrintablesGenerator,
     mutators::{havoc_mutations::havoc_mutations, scheduled::HavocScheduledMutator},
     schedulers::QueueScheduler,
-    stages::mutational::StdMutationalStage,
+    stages::StdMutationalStage,
     state::{HasCorpus, StdState},
 };
 use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
@@ -18,10 +18,11 @@ use std::{fs, time::Duration};
 use crate::observers::ReturnValueObserver;
 // CLI args and logging helpers
 use crate::driver::args::Args;
-use crate::driver::pipeline::ClientIdentity;
 use crate::utils::logging::{error, info, warn};
 
-fn normalize_fuzz_result<T>(result: Result<T, libafl::Error>) -> Result<(), libafl::Error> {
+pub(super) fn normalize_fuzz_result<T>(
+    result: Result<T, libafl::Error>,
+) -> Result<(), libafl::Error> {
     match result {
         Ok(_) | Err(libafl::Error::ShuttingDown) => Ok(()),
         Err(error) => Err(error),
@@ -426,19 +427,6 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
     }
 }
 
-pub(crate) fn run_fast_client(
-    args: &Args,
-    identity: ClientIdentity,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = (
-        identity.stable_index,
-        identity.core_id,
-        identity.rng_seed,
-        &identity.output_dir,
-    );
-    run_legacy_client(args)
-}
-
 // Log a concise snapshot of the current working state and parsed args.
 // Keep messages English-only per repository policy and use existing
 // logging helpers (info/warn/error) so output goes to the configured logger.
@@ -463,6 +451,12 @@ pub(crate) fn log_working_state(args: &Args) {
     info("main", &format!("args.verbose: {}", args.verbose));
     info("main", &format!("args.timeout_ms: {}", args.timeout_ms));
     info("main", &format!("args.mode: {}", args.mode));
+    info("main", &format!("args.pipeline: {:?}", args.pipeline));
+    info("main", &format!("args.schedule: {:?}", args.schedule));
+    info(
+        "main",
+        &format!("args.stats_interval_secs: {}", args.stats_interval_secs),
+    );
     info(
         "main",
         &format!("args.persistent_mode: {}", args.persistent_mode),

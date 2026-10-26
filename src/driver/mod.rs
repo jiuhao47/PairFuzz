@@ -3,6 +3,7 @@ pub mod bin_check;
 pub mod client;
 pub mod constants;
 pub mod env_var;
+pub mod fast_client;
 pub mod monitor;
 pub mod pipeline;
 pub mod replay;

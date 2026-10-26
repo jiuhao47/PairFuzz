@@ -40,6 +40,33 @@ class RepositoryLayoutTests(unittest.TestCase):
             with self.subTest(forbidden=token):
                 self.assertNotIn(token, runtime)
 
+    def test_compiler_checkpoint_keeps_normal_instrumentation_abi(self):
+        manifest = (ROOT / "app" / "compiler" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+        wrapper = (
+            ROOT / "app" / "compiler" / "src" / "bin" / "libafl_forkserver_cc.rs"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            'name = "libforkserver_libafl_cc"',
+            'name = "libafl_forkserver_cc"',
+            'name = "libafl_forkserver_cxx"',
+            '"sancov_pcguard_hitcounts"',
+            '"pointer_maps"',
+        ):
+            with self.subTest(manifest_token=token):
+                self.assertIn(token, manifest)
+        for token in (
+            "-fsanitize-coverage=trace-pc-guard",
+            "DIFFRAY_INIT()",
+            "DIFFRAY_RETVAL(r)",
+            "DIFFRAY_RUN(fn)",
+            "libforkserver_libafl_cc",
+        ):
+            with self.subTest(wrapper_token=token):
+                self.assertIn(token, wrapper)
+
     def test_required_competition_paths_exist(self):
         required = (
             "src/main.rs",

@@ -23,7 +23,7 @@ real-json-verify:
 real-json-replay input="examples/real-json/known-difference.json":
     python3 scripts/real_json_demo.py replay {{quote(input)}}
 
-check:
+check: contest-build real-json-build
     cargo check --all-targets --workspace --locked
     cargo test --workspace --locked
     python3 -m unittest discover -s tests -v

@@ -85,6 +85,21 @@ class RepositoryLayoutTests(unittest.TestCase):
             },
         )
 
+    def test_check_builds_synthetic_targets_before_verifying_them(self):
+        completed = subprocess.run(
+            ["just", "--dry-run", "check"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        commands = completed.stdout + completed.stderr
+        build = "python3 scripts/contest_demo.py build"
+        verify = "python3 scripts/contest_demo.py verify"
+        self.assertIn(build, commands)
+        self.assertIn(verify, commands)
+        self.assertLess(commands.index(build), commands.index(verify))
+
     def test_root_justfile_has_no_removed_or_absolute_paths(self):
         content = (ROOT / "Justfile").read_text(encoding="utf-8")
         forbidden = (

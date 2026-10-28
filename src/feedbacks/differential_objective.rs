@@ -209,13 +209,21 @@ where
     S: HasMetadata + HasNamedMetadata,
 {
     fn init_state(&mut self, state: &mut S) -> Result<(), Error> {
+        let expected_policy = ResultPolicyMetadata::new(self.policy);
+        if let Some(recorded_policy) = state.metadata_map().get::<ResultPolicyMetadata>() {
+            if recorded_policy != &expected_policy {
+                return Err(Error::illegal_state(format!(
+                    "restored result policy metadata {recorded_policy:?} does not match {expected_policy:?}"
+                )));
+            }
+        }
         state.add_named_metadata_checked(OBJECTIVE_A, MapFeedbackMetadata::<u8>::default())?;
         state.add_named_metadata_checked(OBJECTIVE_B, MapFeedbackMetadata::<u8>::default())?;
         if !state.has_metadata::<DifferentialSignatureSetMetadata>() {
             state.add_metadata(DifferentialSignatureSetMetadata::default());
         }
         if !state.has_metadata::<ResultPolicyMetadata>() {
-            state.add_metadata(ResultPolicyMetadata::new(self.policy));
+            state.add_metadata(expected_policy);
         }
         Ok(())
     }
@@ -382,6 +390,8 @@ where
         testcase.add_metadata(ExitInfo {
             note: if exceptional {
                 "differential_exit".to_owned()
+            } else if self.policy == ResultPolicy::Exact {
+                "semantic_result_difference".to_owned()
             } else {
                 "rv_zero_nonzero".to_owned()
             },
@@ -561,7 +571,7 @@ mod tests {
         use libafl::{
             corpus::{InMemoryCorpus, Testcase},
             events::NopEventManager,
-            feedbacks::{ConstFeedback, Feedback},
+            feedbacks::{ConstFeedback, Feedback, StateInitializer},
             inputs::BytesInput,
             observers::{HitcountsMapObserver, MapObserver, Observer, StdMapObserver},
             state::StdState,
@@ -591,13 +601,8 @@ mod tests {
         rv_shmem_b[..8].copy_from_slice(&1_u64.to_ne_bytes());
         rv_a.set_shmem(rv_shmem_a).unwrap();
         rv_b.set_shmem(rv_shmem_b).unwrap();
-        let mut objective = super::DifferentialObjective::new(
-            &map_a,
-            &map_b,
-            &rv_a,
-            &rv_b,
-            ResultPolicy::ZeroNonzero,
-        );
+        let mut objective =
+            super::DifferentialObjective::new(&map_a, &map_b, &rv_a, &rv_b, ResultPolicy::Exact);
         let mut feedback = ConstFeedback::new(false);
         let mut state = StdState::new(
             StdRand::with_seed(7),
@@ -633,11 +638,15 @@ mod tests {
         assert!(testcase.has_metadata::<DiscoveryElapsedMetadata>());
         assert_eq!(
             testcase.metadata::<ResultPolicyMetadata>().unwrap().policy,
-            ResultPolicy::ZeroNonzero
+            ResultPolicy::Exact
         );
         let exit = testcase.metadata::<ExitInfo>().unwrap();
         assert_eq!(exit.rv_a, Some(0));
         assert_eq!(exit.rv_b, Some(1));
+        assert_eq!(exit.note, "semantic_result_difference");
+
+        objective.policy = ResultPolicy::ZeroNonzero;
+        assert!(StateInitializer::init_state(&mut objective, &mut state).is_err());
     }
 
     #[test]

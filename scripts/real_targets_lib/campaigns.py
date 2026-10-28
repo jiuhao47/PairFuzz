@@ -362,6 +362,10 @@ def verify_pair(root: Path, pair: str, profile: str, manifest_path: Path | None 
     for index, fixture in enumerate(fixtures):
         input_path = root / f"examples/real-targets/{pair}" / fixture["path"]
         replay = replay_pair(build.path, input_path, verify_root / f"fixture-{index:03d}")
+        if not replay.get("stable"):
+            raise CampaignError(
+                f"fixture {fixture['name']} produced an unstable three-run replay"
+            )
         first = replay["runs"][0]
         if fixture.get("matching"):
             for role in ("a", "b"):
@@ -414,6 +418,7 @@ def verify_manifests(root: Path, manifests: dict[str, Path], profile: str) -> Pa
             ValueError,
             KeyError,
             json.JSONDecodeError,
+            subprocess.SubprocessError,
         ) as error:
             failures.append(pair)
             results[pair] = {"status": "failed", "error": str(error)}

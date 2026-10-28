@@ -3,18 +3,21 @@ import json
 import math
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
 
 from scripts.real_targets_lib.campaigns import (
+    BuildManifest,
     CampaignError,
     campaign_command,
     load_build_manifest,
     replay_pair,
     run_pair,
     verify_manifests,
+    verify_pair,
 )
 from scripts.real_targets_lib.evidence import (
     EvidenceError,
@@ -462,7 +465,7 @@ class FinalGateTests(unittest.TestCase):
         def verifier(_root, pair, profile, manifest):
             attempts.append((pair, profile, manifest))
             if pair == "bmp":
-                raise CampaignError("broken fixture")
+                raise subprocess.TimeoutExpired(["bmp-target"], 30)
             path = self.root / f"{pair}-summary.json"
             path.write_text(json.dumps({"status": "complete"}))
             return path
@@ -477,6 +480,58 @@ class FinalGateTests(unittest.TestCase):
         payload = json.loads(report.read_text())
         self.assertEqual(payload["attempted"], list(pair_names()))
         self.assertEqual(payload["results"]["bmp"]["status"], "failed")
+
+    def test_fixture_verification_rejects_an_unstable_three_run_replay(self):
+        fixture_root = self.root / "examples/real-targets/png"
+        fixture_root.mkdir(parents=True)
+        (fixture_root / "input.png").write_bytes(b"png")
+        (fixture_root / "fixtures.json").write_text(
+            json.dumps(
+                {
+                    "fixtures": [
+                        {
+                            "name": "unstable",
+                            "path": "input.png",
+                            "expected_by_target": {"a": "rejected", "b": "rejected"},
+                        }
+                    ]
+                }
+            )
+        )
+        manifest_path = self.root / "manifest.json"
+        manifest_path.write_text("{}")
+        build = BuildManifest(
+            manifest_path,
+            self.root,
+            {"pair": "png", "profile": "release"},
+            {},
+        )
+        replay = {
+            "stable": False,
+            "differential": False,
+            "runs": [
+                {
+                    "a": {"class": "rejected"},
+                    "b": {"class": "rejected"},
+                }
+            ],
+        }
+        with (
+            mock.patch(
+                "scripts.real_targets_lib.campaigns.load_build_manifest",
+                return_value=build,
+            ),
+            mock.patch(
+                "scripts.real_targets_lib.campaigns.replay_pair", return_value=replay
+            ),
+        ):
+            with self.assertRaisesRegex(CampaignError, "unstable"):
+                verify_pair(
+                    self.root,
+                    "png",
+                    "release",
+                    manifest_path,
+                )
 
     def evidence(self, pair, *, seed=7, profiles=("asan", "release"), complete=True):
         path = self.root / f"{pair}.json"

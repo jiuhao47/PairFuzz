@@ -227,14 +227,14 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
 
     // Some targets expect __AFL_SHM_ID in the environment; we write any allocated
     // coverage shmem ids into the parent's env so forkserver builders can pick them up.
-    // Allocate small shmem regions for return-value transport (4 bytes each).
+    // Allocate semantic-result transport regions (u64, 8 bytes each).
     let mut rv_shmem_a: Option<StdShMem> = None;
     let mut rv_shmem_b: Option<StdShMem> = None;
     if args.prog_a.is_some() || args.prog_b.is_some() {
         // use the same provider to allocate small shmems; warn on errors (will fallback to TLS)
         match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
             &mut shmem_provider,
-            4,
+            8,
             "__DIFFRAY_RV_SHM_ID_A",
         ) {
             Ok(s) => rv_shmem_a = Some(s),
@@ -242,7 +242,7 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
         }
         match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
             &mut shmem_provider,
-            4,
+            8,
             "__DIFFRAY_RV_SHM_ID_B",
         ) {
             Ok(s) => rv_shmem_b = Some(s),

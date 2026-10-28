@@ -1,6 +1,7 @@
 use crate::{
     feedbacks::{
         objectives::{CrashInfo, ExitInfo},
+        semantic::SemanticValue,
         signature::{
             compute_signature, DifferentialSignature, DifferentialSignatureMetadata,
             DifferentialSignatureSetMetadata, DiscoveryElapsedMetadata, ExitClass,
@@ -30,8 +31,8 @@ const OBJECTIVE_B: &str = "objective-b";
 struct Evaluation<'a> {
     exit_a: ExitClass,
     exit_b: ExitClass,
-    rv_a: Option<i32>,
-    rv_b: Option<i32>,
+    rv_a: Option<SemanticValue>,
+    rv_b: Option<SemanticValue>,
     map_a: &'a [u8],
     map_b: &'a [u8],
     initial_a: u8,
@@ -42,8 +43,8 @@ struct Evaluation<'a> {
 struct CandidateRecord {
     exit_a: ExitClass,
     exit_b: ExitClass,
-    rv_a: Option<i32>,
-    rv_b: Option<i32>,
+    rv_a: Option<SemanticValue>,
+    rv_b: Option<SemanticValue>,
     signature: DifferentialSignature,
     map_a: Vec<u8>,
     map_b: Vec<u8>,
@@ -396,14 +397,15 @@ mod tests {
     use super::{
         concatenated_map_novelty, direct_dual_map_novelty, CandidateEvaluator, Evaluation,
     };
+    use crate::feedbacks::semantic::{legacy_value, SemanticValue};
     use crate::feedbacks::signature::{compute_signature, ExitClass};
     use std::collections::HashSet;
 
     fn evaluation<'a>(
         exit_a: ExitClass,
         exit_b: ExitClass,
-        rv_a: Option<i32>,
-        rv_b: Option<i32>,
+        rv_a: Option<SemanticValue>,
+        rv_b: Option<SemanticValue>,
         map_a: &'a [u8],
         map_b: &'a [u8],
     ) -> Evaluation<'a> {
@@ -458,7 +460,14 @@ mod tests {
     fn zero_nonzero_difference_is_detected() {
         let mut evaluator = CandidateEvaluator::default();
         assert!(evaluator.evaluate(
-            evaluation(ExitClass::Ok, ExitClass::Ok, Some(0), Some(-7), &[0], &[1],),
+            evaluation(
+                ExitClass::Ok,
+                ExitClass::Ok,
+                Some(0),
+                Some(legacy_value(-7)),
+                &[0],
+                &[1],
+            ),
             &HashSet::new(),
             &[0],
             &[0],
@@ -539,12 +548,12 @@ mod tests {
         let mut rv_a = ReturnValueObserver::new("first_return");
         let mut rv_b = ReturnValueObserver::new("second_return");
         let mut provider = StdShMemProvider::new().unwrap();
-        let mut rv_shmem_a = provider.new_shmem(4).unwrap();
-        let mut rv_shmem_b = provider.new_shmem(4).unwrap();
-        rv_shmem_a[..4].copy_from_slice(&0_i32.to_ne_bytes());
-        rv_shmem_b[..4].copy_from_slice(&1_i32.to_ne_bytes());
-        rv_a.set_shmem(rv_shmem_a);
-        rv_b.set_shmem(rv_shmem_b);
+        let mut rv_shmem_a = provider.new_shmem(8).unwrap();
+        let mut rv_shmem_b = provider.new_shmem(8).unwrap();
+        rv_shmem_a[..8].copy_from_slice(&0_u64.to_ne_bytes());
+        rv_shmem_b[..8].copy_from_slice(&1_u64.to_ne_bytes());
+        rv_a.set_shmem(rv_shmem_a).unwrap();
+        rv_b.set_shmem(rv_shmem_b).unwrap();
         let mut objective = super::DifferentialObjective::new(&map_a, &map_b, &rv_a, &rv_b);
         let mut feedback = ConstFeedback::new(false);
         let mut state = StdState::new(

@@ -148,6 +148,7 @@ where
             Ok((id, size)) => {
                 child_envs.push((target_names.rv_env, id.clone()));
                 child_envs.push((target_names.rv_size_env, size.clone()));
+                child_envs.push(("__DIFFRAY_RV_ROLE", target_names.label.to_owned()));
                 info(
                     "main",
                     &format!(
@@ -164,7 +165,16 @@ where
                 ),
             ),
         }
-        rv_observer.set_shmem(return_shmem);
+        if let Err(err) = rv_observer.set_shmem(return_shmem) {
+            error(
+                "main",
+                &format!(
+                    "failed to attach semantic result mapping for {}: {}",
+                    target_names.label, err
+                ),
+            );
+            std::process::exit(1);
+        }
         info(
             "main",
             &format!(

@@ -2,6 +2,7 @@
 use crate::feedbacks::hist_stats::{
     history_contains, history_insert, ComboSeenStats, HistKey, HistVal,
 };
+use crate::feedbacks::semantic::SemanticValue;
 use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TwoStateStats {
@@ -367,7 +368,7 @@ where
 pub fn rv_path_seen_in_history<S: HasNamedMetadata>(
     state: &S,
     side: &str,
-    rv: Option<i32>,
+    rv: Option<SemanticValue>,
     path: &Vec<usize>,
 ) -> bool {
     let rv_str = match rv {
@@ -386,7 +387,7 @@ pub fn rv_path_seen_in_history<S: HasNamedMetadata>(
 pub fn append_rv_path<S: HasNamedMetadata>(
     state: &mut S,
     side: &str,
-    rv: Option<i32>,
+    rv: Option<SemanticValue>,
     path: &Vec<usize>,
 ) -> Result<(), Error> {
     let rv_str = match rv {
@@ -420,8 +421,8 @@ where
 
     let mut path_a: Vec<usize> = Vec::new();
     let mut path_b: Vec<usize> = Vec::new();
-    let mut rv_a: Option<i32> = None;
-    let mut rv_b: Option<i32> = None;
+    let mut rv_a: Option<SemanticValue> = None;
+    let mut rv_b: Option<SemanticValue> = None;
     for info in infos.iter() {
         if info.idx == 0 {
             if let Some(idxs) = &info.indices {
@@ -436,7 +437,7 @@ where
         }
     }
 
-    let is_zero = |v: Option<i32>| matches!(v, Some(0));
+    let is_zero = |v: Option<SemanticValue>| matches!(v, Some(0));
     let rv_state_diff = (is_zero(rv_a) && !is_zero(rv_b)) || (is_zero(rv_b) && !is_zero(rv_a));
 
     let side_a_new = !rv_path_seen_in_history(state, "A", rv_a, &path_a);

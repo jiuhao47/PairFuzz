@@ -1,5 +1,6 @@
 use crate::feedbacks::diffray_feedback::{DiffrayFeedback, Mode, ObserverInfo};
 use crate::feedbacks::metadata::TwoStateStats;
+use crate::feedbacks::semantic::SemanticValue;
 use crate::observers::ReturnValueObserver;
 use crate::utils::bits::BitsRef;
 use libafl::observers::MapObserver;
@@ -123,7 +124,7 @@ pub fn collect_rv<C, OT>(
     f: &DiffrayFeedback<C>,
     idx: usize,
     observers: &OT,
-) -> Result<Option<(String, Option<i32>)>, Error>
+) -> Result<Option<(String, Option<SemanticValue>)>, Error>
 where
     OT: MatchNameRef,
 {

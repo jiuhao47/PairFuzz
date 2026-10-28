@@ -1,5 +1,6 @@
 use crate::{
     feedbacks::diffray_feedback::DiffrayFeedback,
+    feedbacks::semantic::SemanticValue,
     feedbacks::signature::{compute_signature, DifferentialSignature, ExitClass},
     observers::ReturnValueObserver,
     utils::logging::{error, info, warn},
@@ -31,7 +32,7 @@ const SIGNATURE_REPETITIONS: usize = 3;
 struct SignatureReplayRecord {
     path: String,
     signatures: Vec<String>,
-    return_pairs: Vec<[Option<i32>; 2]>,
+    return_pairs: Vec<[Option<SemanticValue>; 2]>,
     stable: bool,
     differential: bool,
     discovery_elapsed_nanos: Option<u64>,
@@ -81,8 +82,8 @@ fn exit_class_pair(kind: ExitKind) -> (ExitClass, ExitClass) {
 fn semantic_difference(
     exit_a: ExitClass,
     exit_b: ExitClass,
-    rv_a: Option<i32>,
-    rv_b: Option<i32>,
+    rv_a: Option<SemanticValue>,
+    rv_b: Option<SemanticValue>,
 ) -> bool {
     exit_a != exit_b || rv_a.map(|value| value == 0) != rv_b.map(|value| value == 0)
 }
@@ -131,7 +132,7 @@ fn signature_observation<C, EX>(
     feedback: &DiffrayFeedback<C>,
     executor: &EX,
     exit_kind: ExitKind,
-) -> Option<(DifferentialSignature, [Option<i32>; 2], bool)>
+) -> Option<(DifferentialSignature, [Option<SemanticValue>; 2], bool)>
 where
     C: MapObserver + for<'it> AsIter<'it, Item = C::Entry>,
     C::Entry: Into<u8> + Copy,

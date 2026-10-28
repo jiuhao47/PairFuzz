@@ -4,6 +4,7 @@
 // combination strategies in the future.
 use crate::feedbacks::hist_stats::{history_contains, HistKey, HistVal};
 use crate::feedbacks::metadata::TwoStateStats;
+use crate::feedbacks::semantic::SemanticValue;
 use crate::observers::ReturnValueObserver;
 use core::fmt::Debug;
 use libafl::corpus::Testcase;
@@ -89,7 +90,7 @@ pub struct ObserverInfo {
     pub found: bool,
     pub indices: Option<smallvec::SmallVec<[(usize, u8); 16]>>,
     /// Optional return-value observer (name, last_value) collected for this map observer
-    pub return_value: Option<(String, Option<i32>)>,
+    pub return_value: Option<(String, Option<SemanticValue>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -468,8 +469,8 @@ where
                 // Build per-side path vectors and rv values (assume side 0 -> A, side 1 -> B)
                 let mut path_a: Vec<usize> = Vec::new();
                 let mut path_b: Vec<usize> = Vec::new();
-                let mut rv_a: Option<i32> = None;
-                let mut rv_b: Option<i32> = None;
+                let mut rv_a: Option<SemanticValue> = None;
+                let mut rv_b: Option<SemanticValue> = None;
                 for info in infos.iter() {
                     if info.idx == 0 {
                         if let Some(idxs) = &info.indices {
@@ -485,7 +486,7 @@ where
                 }
 
                 // helper: Some(0) is zero-state; None is treated as non-zero per design
-                let is_zero = |v: Option<i32>| matches!(v, Some(0));
+                let is_zero = |v: Option<SemanticValue>| matches!(v, Some(0));
                 let rv_state_diff =
                     (is_zero(rv_a) && !is_zero(rv_b)) || (is_zero(rv_b) && !is_zero(rv_a));
 

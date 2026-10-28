@@ -17,7 +17,7 @@ real-json-build:
 real-json-demo seconds="30": real-json-build
     python3 scripts/real_json_demo.py run --seconds {{quote(seconds)}}
 
-real-json-verify:
+real-json-verify: real-json-build
     python3 scripts/real_json_demo.py verify
 
 real-json-replay input="examples/real-json/known-difference.json":

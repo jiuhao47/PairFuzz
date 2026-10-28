@@ -6,5 +6,6 @@ pub mod factory;
 pub mod hist_stats;
 pub mod metadata;
 pub mod objectives;
+pub mod semantic;
 pub mod signature;
 pub use objectives::{CrashObjective, DiffObjective};

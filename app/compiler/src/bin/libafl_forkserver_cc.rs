@@ -37,9 +37,9 @@ pub fn main() {
         let mut tmpfile: NamedTempFile = NamedTempFile::new().expect("failed to create temp file");
         let tmp_header_path = tmpfile.path().to_path_buf();
         let header_contents = if is_cpp {
-            "#ifdef __cplusplus\nextern \"C\" {\n#endif\n#include <stddef.h>\n#include <stdint.h>\nvoid select_rv_shm_env(const char **out_id, const char **out_size);\nvoid write_return_value_to_shm(const char *env_id, const char *env_size, int32_t result);\n#ifdef __cplusplus\n}\n#endif\n"
+            "#ifdef __cplusplus\nextern \"C\" {\n#endif\n#include <stddef.h>\n#include <stdint.h>\nint diffray_result_init(void);\nvoid diffray_publish_result(uint64_t value);\n#ifdef __cplusplus\n}\n#endif\n"
         } else {
-            "#include <stddef.h>\n#include <stdint.h>\nvoid select_rv_shm_env(const char **out_id, const char **out_size);\nvoid write_return_value_to_shm(const char *env_id, const char *env_size, int32_t result);\n"
+            "#include <stddef.h>\n#include <stdint.h>\nint diffray_result_init(void);\nvoid diffray_publish_result(uint64_t value);\n"
         };
         // Write header contents into the NamedTempFile (best-effort)
         let _ = tmpfile.write_all(header_contents.as_bytes());
@@ -64,14 +64,15 @@ pub fn main() {
             // Force-include the runtime-generated header with rv_shm declarations
             .add_arg("-include")
             .add_arg(tmp_header_path.to_str().unwrap())
-            // DIFFRAY helper macros: DIFFRAY_INIT() expands to the AFL init macro;
-            // DIFFRAY_RETVAL(r) will select the rv shm env and write the provided r.
+            // DIFFRAY helper macros keep legacy source compatibility while the
+            // runtime publishes an eight-byte semantic value through a cached map.
             .add_arg("-DDIFFRAY_INIT()=__AFL_FUZZ_INIT()")
-            .add_arg("-DDIFFRAY_RETVAL(r)=do{const char*__d_id=NULL;const char*__d_size=NULL;select_rv_shm_env(&__d_id,&__d_size);write_return_value_to_shm(__d_id,__d_size,(r));}while(0)")
+            .add_arg("-DDIFFRAY_RETVAL(r)=do{int32_t __d_legacy=(int32_t)(r);diffray_publish_result((uint64_t)(uint32_t)__d_legacy);}while(0)")
             // Provide convenience macros DIFFRAY_RUN(fn) and DIFFRAY_CALL(fn,out)
             // DIFFRAY_RUN(fn) executes fn(buf,len), writes the result, and returns it.
-            .add_arg("-DDIFFRAY_RUN(fn)=do{__AFL_INIT();uint8_t*__d_buf=(uint8_t*)__AFL_FUZZ_TESTCASE_BUF;size_t __d_len=__AFL_FUZZ_TESTCASE_LEN;int __d_result=(fn)(__d_buf,__d_len);DIFFRAY_RETVAL(__d_result);return __d_result;}while(0)")
-            .add_arg("-DDIFFRAY_CALL(fn,out)=do{uint8_t*__d_buf=(uint8_t*)__AFL_FUZZ_TESTCASE_BUF;size_t __d_len=__AFL_FUZZ_TESTCASE_LEN;(out)=(fn)(__d_buf,__d_len);DIFFRAY_RETVAL(out);}while(0)")
+            .add_arg("-DDIFFRAY_RUN(fn)=do{if(diffray_result_init()!=0)return 90;__AFL_INIT();uint8_t*__d_buf=(uint8_t*)__AFL_FUZZ_TESTCASE_BUF;size_t __d_len=__AFL_FUZZ_TESTCASE_LEN;int __d_result=(fn)(__d_buf,__d_len);DIFFRAY_RETVAL(__d_result);return __d_result;}while(0)")
+            .add_arg("-DDIFFRAY_RUN_SEMANTIC(fn)=do{if(diffray_result_init()!=0)return 90;__AFL_INIT();uint8_t*__d_buf=(uint8_t*)__AFL_FUZZ_TESTCASE_BUF;size_t __d_len=__AFL_FUZZ_TESTCASE_LEN;uint64_t __d_result=(uint64_t)(fn)(__d_buf,__d_len);diffray_publish_result(__d_result);return 0;}while(0)")
+            .add_arg("-DDIFFRAY_CALL(fn,out)=do{if(diffray_result_init()!=0)return 90;uint8_t*__d_buf=(uint8_t*)__AFL_FUZZ_TESTCASE_BUF;size_t __d_len=__AFL_FUZZ_TESTCASE_LEN;(out)=(fn)(__d_buf,__d_len);DIFFRAY_RETVAL(out);}while(0)")
             // Link with the compiler crate staticlib which exports both the
             // forkserver start symbol and the rv_shm helper symbols (rv_shm.rs).
             // This makes select_rv_shm_env/write_return_value_to_shm available

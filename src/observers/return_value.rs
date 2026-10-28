@@ -13,7 +13,7 @@
 //!   from the codebase; the harness now communicates via shmem in forkserver
 //!   executions. See `main.rs` where `set_shmem` is used to attach the mapping.
 
-use crate::utils::logging::debug;
+use crate::{feedbacks::semantic::SemanticValue, utils::logging::debug};
 use core::fmt::Debug;
 use libafl::{executors::ExitKind, observers::Observer, state::HasExecutions, Error};
 use libafl_bolts::shmem::StdShMem;
@@ -21,16 +21,18 @@ use libafl_bolts::Named;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
-/// An observer that tracks the return value (i32) of harness executions
+const SEMANTIC_VALUE_SIZE: usize = std::mem::size_of::<SemanticValue>();
+
+/// An observer that tracks the semantic value of harness executions.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReturnValueObserver {
     name: Cow<'static, str>,
     /// The last observed numeric return value (from the harness)
-    last_value: Option<i32>,
+    last_value: Option<SemanticValue>,
     /// Also keep track of last ExitKind for convenience
     last_exit_kind: Option<ExitKind>,
     /// Optional shared memory region that the target writes its numeric return into.
-    /// If present, `post_exec*` will try to read an i32 from the start of this mapping.
+    /// If present, `post_exec*` reads a u64 from the start of this mapping.
     #[serde(skip)]
     rv_shmem: Option<StdShMem>,
 }
@@ -46,12 +48,20 @@ impl ReturnValueObserver {
     }
 
     /// Attach/replace the rv shmem mapping for this observer.
-    pub fn set_shmem(&mut self, shmem: StdShMem) {
+    pub fn set_shmem(&mut self, shmem: StdShMem) -> Result<(), Error> {
+        if shmem.len() < SEMANTIC_VALUE_SIZE {
+            return Err(Error::illegal_argument(format!(
+                "semantic result mapping is {} bytes; at least {} required",
+                shmem.len(),
+                SEMANTIC_VALUE_SIZE
+            )));
+        }
         self.rv_shmem = Some(shmem);
+        Ok(())
     }
 
     #[must_use]
-    pub fn last_value(&self) -> Option<i32> {
+    pub fn last_value(&self) -> Option<SemanticValue> {
         self.last_value
     }
 
@@ -85,6 +95,9 @@ where
     fn pre_exec(&mut self, _state: &mut S, _input: &I) -> Result<(), Error> {
         self.last_value = None;
         self.last_exit_kind = None;
+        if let Some(shmem) = &mut self.rv_shmem {
+            shmem[..SEMANTIC_VALUE_SIZE].fill(0);
+        }
         Ok(())
     }
 
@@ -92,17 +105,12 @@ where
         // Record ExitKind
         self.last_exit_kind = Some(exit_kind.clone());
 
-        // Prefer shmem if present (forkserver targets will write into shmem).
-        // If no shmem is present, do not update last_value (TLS is deprecated).
-        if let Some(shm) = &mut self.rv_shmem {
-            // read first 4 bytes as native-endian i32 if possible (safe slice-based read)
-            if shm.len() >= 4 {
-                // Obtain a slice of the first 4 bytes and convert to i32 according to native endianness
-                let slice = &shm[..4];
-                let mut arr = [0u8; 4];
-                arr.copy_from_slice(slice);
-                let v = i32::from_ne_bytes(arr);
-                self.last_value = Some(v);
+        // Crashes and timeouts must never expose a stale or partially written value.
+        if matches!(exit_kind, ExitKind::Ok) {
+            if let Some(shm) = &self.rv_shmem {
+                let mut bytes = [0_u8; SEMANTIC_VALUE_SIZE];
+                bytes.copy_from_slice(&shm[..SEMANTIC_VALUE_SIZE]);
+                self.last_value = Some(SemanticValue::from_ne_bytes(bytes));
             }
         }
 
@@ -189,10 +197,10 @@ mod tests {
 
         // create observer and attach shmem, then post_exec
         let mut obs = ReturnValueObserver::new("rv");
-        obs.set_shmem(shm);
+        obs.set_shmem(shm).unwrap();
         let mut state = DummyState::new();
         obs.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
-        assert_eq!(obs.last_value(), Some(value));
+        assert_eq!(obs.last_value(), Some(value as u32 as u64));
     }
 
     #[test]
@@ -200,16 +208,73 @@ mod tests {
         use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 
         let mut provider = StdShMemProvider::new().unwrap();
-        let mut shm = provider.new_shmem(4).unwrap();
-        shm[..4].copy_from_slice(&7_i32.to_ne_bytes());
+        let mut shm = provider.new_shmem(8).unwrap();
+        shm[..8].copy_from_slice(&7_u64.to_ne_bytes());
         let mut obs = ReturnValueObserver::new("rv");
-        obs.set_shmem(shm);
+        obs.set_shmem(shm).unwrap();
         let mut state = DummyState::new();
         obs.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
-        assert_eq!(obs.last_value(), Some(7));
+        assert_eq!(obs.last_value(), Some(7_u64));
 
         obs.pre_exec(&mut state, &()).unwrap();
 
         assert_eq!(obs.last_value(), None);
+    }
+
+    #[test]
+    fn semantic_transport_reads_full_u64() {
+        use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+
+        let mut provider = StdShMemProvider::new().unwrap();
+        let mut shm = provider.new_shmem(8).unwrap();
+        let value = 0x3123_4567_89ab_cdef_u64;
+        shm[..8].copy_from_slice(&value.to_ne_bytes());
+        let mut observer = ReturnValueObserver::new("rv");
+        observer.set_shmem(shm).unwrap();
+        let mut state = DummyState::new();
+        observer.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
+        assert_eq!(observer.last_value(), Some(value));
+    }
+
+    #[test]
+    fn semantic_transport_rejects_undersized_mapping() {
+        use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+
+        let mut provider = StdShMemProvider::new().unwrap();
+        let shm = provider.new_shmem(7).unwrap();
+        let mut observer = ReturnValueObserver::new("rv");
+        assert!(observer.set_shmem(shm).is_err());
+    }
+
+    #[test]
+    fn semantic_transport_pre_exec_clears_shared_and_logical_value() {
+        use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+
+        let mut provider = StdShMemProvider::new().unwrap();
+        let mut shm = provider.new_shmem(8).unwrap();
+        shm[..8].copy_from_slice(&7_u64.to_ne_bytes());
+        let mut observer = ReturnValueObserver::new("rv");
+        observer.set_shmem(shm).unwrap();
+        let mut state = DummyState::new();
+        observer.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
+        observer.pre_exec(&mut state, &()).unwrap();
+        assert_eq!(observer.last_value(), None);
+        assert_eq!(observer.snapshot_bytes(8), Some(vec![0; 8]));
+    }
+
+    #[test]
+    fn semantic_transport_crash_or_timeout_does_not_report_stale_value() {
+        use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+
+        for exit_kind in [ExitKind::Crash, ExitKind::Timeout] {
+            let mut provider = StdShMemProvider::new().unwrap();
+            let mut shm = provider.new_shmem(8).unwrap();
+            shm[..8].copy_from_slice(&7_u64.to_ne_bytes());
+            let mut observer = ReturnValueObserver::new("rv");
+            observer.set_shmem(shm).unwrap();
+            let mut state = DummyState::new();
+            observer.post_exec(&mut state, &(), &exit_kind).unwrap();
+            assert_eq!(observer.last_value(), None);
+        }
     }
 }

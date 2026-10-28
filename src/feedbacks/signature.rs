@@ -1,3 +1,4 @@
+use crate::feedbacks::semantic::SemanticValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -98,11 +99,13 @@ pub fn register_metadata_types() {
     }
 }
 
-fn encode_optional_return(hasher: &mut blake3::Hasher, value: Option<i32>) {
+fn encode_optional_return(hasher: &mut blake3::Hasher, value: Option<SemanticValue>) {
     match value {
         Some(value) => {
             hasher.update(&[1]);
-            hasher.update(&value.to_le_bytes());
+            // Signature v1 encoded the legacy i32 bit pattern. Keep that exact
+            // wire format until the explicit v2 signature transition.
+            hasher.update(&(value as u32).to_le_bytes());
         }
         None => {
             hasher.update(&[0]);
@@ -114,8 +117,8 @@ fn encode_optional_return(hasher: &mut blake3::Hasher, value: Option<i32>) {
 pub fn compute_signature(
     exit_a: ExitClass,
     exit_b: ExitClass,
-    rv_a: Option<i32>,
-    rv_b: Option<i32>,
+    rv_a: Option<SemanticValue>,
+    rv_b: Option<SemanticValue>,
     map_a: &[u8],
     map_b: &[u8],
 ) -> DifferentialSignature {
@@ -138,13 +141,14 @@ mod tests {
         compute_signature, DifferentialSignatureMetadata, DifferentialSignatureSetMetadata,
         DiscoveryElapsedMetadata, ExitClass,
     };
+    use crate::feedbacks::semantic::legacy_value;
 
     #[test]
     fn signature_v1_matches_fixed_vector() {
         let signature = compute_signature(
             ExitClass::Crash,
             ExitClass::Timeout,
-            Some(-7),
+            Some(legacy_value(-7)),
             None,
             &[0, 1, 2, 3],
             &[4, 5, 6],

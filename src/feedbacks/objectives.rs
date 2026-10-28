@@ -1,5 +1,5 @@
-use crate::observers::ReturnValueObserver;
 use crate::utils::logging::debug;
+use crate::{feedbacks::semantic::SemanticValue, observers::ReturnValueObserver};
 use libafl::feedbacks::{Feedback, StateInitializer};
 use libafl::{
     executors::{DiffExitKind, ExitKind},
@@ -16,9 +16,11 @@ use std::borrow::Cow;
 pub struct ExitInfo {
     pub note: std::string::String,
     /// optional return-value from harness A
-    pub rv_a: Option<i32>,
+    #[serde(with = "crate::feedbacks::semantic::legacy_option")]
+    pub rv_a: Option<SemanticValue>,
     /// optional return-value from harness B
-    pub rv_b: Option<i32>,
+    #[serde(with = "crate::feedbacks::semantic::legacy_option")]
+    pub rv_b: Option<SemanticValue>,
     /// optional structured crash detail
     pub crash: Option<CrashInfo>,
 }
@@ -182,8 +184,10 @@ pub struct DiffObjective {
     name: Cow<'static, str>,
     mode: Cow<'static, str>,
     // return-value remembered state
-    last_rv_a: Option<i32>,
-    last_rv_b: Option<i32>,
+    #[serde(with = "crate::feedbacks::semantic::legacy_option")]
+    last_rv_a: Option<SemanticValue>,
+    #[serde(with = "crate::feedbacks::semantic::legacy_option")]
+    last_rv_b: Option<SemanticValue>,
     rv_pending: bool,
 }
 
@@ -363,5 +367,33 @@ where
 impl Named for DiffObjective {
     fn name(&self) -> &Cow<'static, str> {
         &self.name
+    }
+}
+
+#[cfg(test)]
+mod semantic_transport_tests {
+    use super::ExitInfo;
+
+    #[test]
+    fn semantic_transport_deserializes_legacy_signed_results_losslessly() {
+        let negative: ExitInfo = serde_json::from_value(serde_json::json!({
+            "note": "legacy",
+            "rv_a": -1,
+            "rv_b": 0,
+            "crash": null
+        }))
+        .unwrap();
+        assert_eq!(negative.rv_a, Some(0xffff_ffff_u64));
+        assert_eq!(negative.rv_b, Some(0_u64));
+
+        let absent: ExitInfo = serde_json::from_value(serde_json::json!({
+            "note": "legacy",
+            "rv_a": null,
+            "rv_b": 0,
+            "crash": null
+        }))
+        .unwrap();
+        assert_eq!(absent.rv_a, None);
+        assert_eq!(absent.rv_b, Some(0_u64));
     }
 }

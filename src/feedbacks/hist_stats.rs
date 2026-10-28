@@ -1,3 +1,4 @@
+use crate::feedbacks::semantic::SemanticValue;
 use libafl::{Error, HasNamedMetadata};
 use libafl_bolts::impl_serdeany;
 use serde::de::DeserializeOwned;
@@ -7,11 +8,11 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-/// Historical value variant for single-key history: either an RV value (Option<i32>)
+/// Historical value variant for single-key history: either a semantic value
 /// or a PL count (usize).
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub enum HistVal {
-    Rv(Option<i32>),
+    Rv(#[serde(with = "crate::feedbacks::semantic::legacy_option")] Option<SemanticValue>),
     Pl(usize),
     /// exact indices vector for ComboCov semantics
     Cov(Vec<usize>),

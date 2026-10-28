@@ -93,6 +93,17 @@ class VendorVerifierTests(unittest.TestCase):
                 demo.verify_vendor_manifest(root)
 
 
+class BuildDependencyTests(unittest.TestCase):
+    def test_targets_rebuild_when_compiler_runtime_changes(self):
+        makefile = (ROOT / "examples" / "real-json" / "Makefile").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RUNTIME :=", makefile)
+        self.assertIn("$(CC) $(RUNTIME)", makefile)
+        justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+        self.assertIn("real-json-verify: real-json-build", justfile)
+
+
 class TargetContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

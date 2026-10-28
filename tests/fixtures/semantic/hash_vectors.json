@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "xxh64_seed_0": [
+    {"name": "empty", "hex": "", "hash": "ef46db3751d8e999"},
+    {"name": "a", "hex": "61", "hash": "d24ec4f1a98c6e5b"},
+    {"name": "abc", "hex": "616263", "hash": "44bc2cf5ad770999"},
+    {"name": "range-256", "generator": "bytes(range(256))", "hash": "1facbe8406cd904b"}
+  ],
+  "packed_results": [
+    {"class": 0, "payload": "ffffffffffffffff", "code": "0fffffffffffffff"},
+    {"class": 1, "payload": "123456789abcdef0", "code": "1000000000000000"},
+    {"class": 2, "payload": "123456789abcdef0", "code": "2000000000000000"},
+    {"class": 3, "payload": "123456789abcdef0", "code": "3000000000000000"},
+    {"class": 4, "payload": "123456789abcdef0", "code": "4000000000000000"}
+  ]
+}

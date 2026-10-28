@@ -36,6 +36,17 @@ pub const fn legacy_value(value: i32) -> SemanticValue {
     (value as u32) as SemanticValue
 }
 
+#[must_use]
+pub const fn pack_semantic_result(class_id: u8, payload: u64) -> SemanticValue {
+    let normalized_class = if class_id <= 4 { class_id } else { 4 };
+    let class = (normalized_class as u64) << 60;
+    if normalized_class == 0 {
+        class | (payload & 0x0fff_ffff_ffff_ffff)
+    } else {
+        class
+    }
+}
+
 /// Serde compatibility for values persisted before the semantic transport
 /// changed from signed i32 to u64. Negative legacy values retain their exact
 /// 32-bit representation through zero extension.
@@ -128,7 +139,7 @@ pub mod legacy_option {
 
 #[cfg(test)]
 mod tests {
-    use super::{legacy_value, ResultPolicy, SemanticValue};
+    use super::{legacy_value, pack_semantic_result, ResultPolicy, SemanticValue};
 
     #[test]
     fn legacy_values_are_zero_extended() {
@@ -144,5 +155,19 @@ mod tests {
         assert!(ResultPolicy::Exact.differs(low, high));
         assert!(ResultPolicy::ZeroNonzero.differs(None, Some(1)));
         assert!(ResultPolicy::ZeroNonzero.differs(None, Some(0)));
+    }
+
+    #[test]
+    fn semantic_code_vectors_match_shared_c_contract() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/semantic/hash_vectors.json"
+        ))
+        .unwrap();
+        for vector in vectors["packed_results"].as_array().unwrap() {
+            let class_id = vector["class"].as_u64().unwrap() as u8;
+            let payload = u64::from_str_radix(vector["payload"].as_str().unwrap(), 16).unwrap();
+            let expected = u64::from_str_radix(vector["code"].as_str().unwrap(), 16).unwrap();
+            assert_eq!(pack_semantic_result(class_id, payload), expected);
+        }
     }
 }

@@ -74,6 +74,7 @@ def load_build_manifest(path: Path, *, expected_pair=None, expected_profile=None
 
 
 def campaign_command(root: Path, manifest: BuildManifest, output: Path, cpu: int, seed: int) -> list[str]:
+    seed_dir = (root / pair_spec(manifest.payload["pair"]).seed_dir).resolve()
     return [
         str((root / "target/debug/diffray").resolve()),
         "--pipeline", "fast",
@@ -87,7 +88,7 @@ def campaign_command(root: Path, manifest: BuildManifest, output: Path, cpu: int
         "--campaign-seed", str(seed),
         "--client-core-id", str(cpu),
         "--json-heartbeat-secs", "1",
-        "--input", str((root / "examples/real-targets/png/seeds").resolve()),
+        "--input", str(seed_dir),
         "--output", str((output / "diffs").resolve()),
         "--log", str((output / "log").resolve()),
         "--prog-a", str(manifest.targets["a"]),
@@ -181,9 +182,54 @@ def _executions(log_dir: Path) -> int:
     return value
 
 
+def _verified_seed_paths(root: Path, build: BuildManifest) -> list[Path]:
+    seed_dir = (root / pair_spec(build.payload["pair"]).seed_dir).resolve()
+    recorded = build.payload.get("seed_sha256")
+    if not isinstance(recorded, dict) or not recorded:
+        raise CampaignError("build manifest has no seed hashes")
+    paths = []
+    for relative, expected in sorted(recorded.items()):
+        path = (root / relative).resolve()
+        if not path.is_relative_to(seed_dir) or not path.is_file():
+            raise CampaignError(f"manifest seed escapes or is missing: {relative}")
+        actual = sha256_file(path)
+        if actual != expected:
+            raise CampaignError(
+                f"seed SHA-256 mismatch for {relative}: expected {expected}, got {actual}"
+            )
+        paths.append(path)
+    actual_paths = sorted(path.resolve() for path in seed_dir.iterdir() if path.is_file())
+    if paths != actual_paths:
+        raise CampaignError("manifest seed set does not match the selected pair seed directory")
+    return paths
+
+
+def _preflight_seeds(build: BuildManifest, seeds: list[Path], output: Path) -> None:
+    output.mkdir()
+    records = []
+    failed = None
+    for index, seed in enumerate(seeds):
+        pair = {}
+        for role in ("a", "b"):
+            normalized = output / f"{index:03d}-{role}.canonical"
+            pair[role] = _run_target(build.targets[role], seed, normalized)
+            normalized.unlink(missing_ok=True)
+            if pair[role].get("class") in ("adapter-error", "process-error"):
+                failed = (seed, role, pair[role]["class"])
+        records.append({"seed": str(seed), "targets": pair})
+    _write_json(output / "summary.json", {"schema_version": 1, "seeds": records})
+    if failed is not None:
+        seed, role, class_name = failed
+        raise CampaignError(f"seed preflight returned {class_name} for target {role}: {seed}")
+
+
 def run_pair(root: Path, pair: str, manifest: Path, seconds: float, cpu: int, seed: int) -> Path:
-    if pair not in ("png",):
-        raise CampaignError("one implemented pair is required; expected png")
+    try:
+        spec = pair_spec(pair)
+    except ValueError as error:
+        raise CampaignError(str(error)) from error
+    if not spec.build_supported:
+        raise CampaignError(f"pair {pair} is not implemented")
     if not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds <= 0:
         raise CampaignError("seconds must be positive and finite")
     if type(cpu) is not int or cpu < 0 or cpu not in os.sched_getaffinity(0):
@@ -196,6 +242,7 @@ def run_pair(root: Path, pair: str, manifest: Path, seconds: float, cpu: int, se
         raise CampaignError("manifest belongs to a different repository")
     campaign_root = root / "run/real-targets/campaigns" / pair / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}-{time.time_ns()}"
     campaign_root.mkdir(parents=True)
+    _preflight_seeds(build, _verified_seed_paths(root, build), campaign_root / "seed-preflight")
     command = campaign_command(root, build, campaign_root, cpu, seed)
     _write_json(campaign_root / "campaign.json", {"schema_version": 1, "manifest": str(build.path), "manifest_sha256": sha256_file(build.path), "command": command, "cpu": cpu, "seed": seed, "seconds": seconds})
     process = run_bounded(command, root, clean_environment(root), seconds, cpu, campaign_root / "fuzzer.log")

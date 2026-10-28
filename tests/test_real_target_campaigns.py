@@ -46,6 +46,7 @@ class NativeCampaignTests(unittest.TestCase):
                 "ldd": "not a dynamic executable",
             }
 
+        seed_path = self.root / "examples/real-targets/png/seeds/seed"
         payload = {
             "schema_version": 1,
             "status": "complete",
@@ -54,7 +55,9 @@ class NativeCampaignTests(unittest.TestCase):
             "profile": profile,
             "fingerprint": "a" * 64,
             "source_sha256": {"libpng": "b" * 64},
-            "seed_sha256": {"seed": "c" * 64},
+            "seed_sha256": {
+                str(seed_path.relative_to(self.root)): hashlib.sha256(seed_path.read_bytes()).hexdigest()
+            },
             "targets": {"a": record(target_a), "b": record(target_b)},
         }
         path = self.root / "run/build/build.json"
@@ -216,6 +219,162 @@ class NativeCampaignTests(unittest.TestCase):
         self.assertTrue(summary["zero_solutions"])
         self.assertEqual(summary["solutions_saved"], 0)
         self.assertNotEqual(roots[-1], result)
+
+
+class BmpCampaignTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="diffray bmp campaign ")
+        self.root = Path(self.temporary.name)
+        (self.root / "third_party").mkdir()
+        (self.root / "examples/real-targets/bmp/seeds").mkdir(parents=True)
+        (self.root / "examples/real-targets/png/seeds").mkdir(parents=True)
+        (self.root / "examples/real-targets/bmp/seeds/seed.bmp").write_bytes(b"bmp")
+        (self.root / "examples/real-targets/png/seeds/seed.png").write_bytes(b"png")
+        (self.root / "target/debug").mkdir(parents=True)
+        (self.root / "run/build").mkdir(parents=True)
+        self.cpu = min(os.sched_getaffinity(0))
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def executable(self, relative, body):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env python3\n" + body)
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        return path
+
+    def target(self, name, *, class_name="accepted", code="0000000000000001", log=None):
+        logging = ""
+        if log is not None:
+            logging = f"pathlib.Path({str(log)!r}).open('a').write(sys.argv[2]+'\\n')\n"
+        write_output = (
+            "pathlib.Path(sys.argv[4]).write_bytes(b'same')\n"
+            if class_name == "accepted"
+            else ""
+        )
+        return self.executable(
+            f"targets/{name}",
+            "import json,pathlib,sys\n"
+            + logging
+            + write_output
+            + f"print(json.dumps({{'schema_version':1,'operation':'image.bmp.decode.rgba8','class':'{class_name}','semantic_code':'{code}','width':1 if '{class_name}' == 'accepted' else 0,'height':1 if '{class_name}' == 'accepted' else 0,'normalized_length':4 if '{class_name}' == 'accepted' else 0,'facts':{{}},'diagnostic':''}}))\n",
+        )
+
+    def manifest(self, target_a, target_b, *, pair="bmp", profile="release"):
+        def record(path):
+            return {
+                "path": str(path.relative_to(self.root)),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "ldd": "not a dynamic executable",
+            }
+
+        operation = {
+            "bmp": "image.bmp.decode.rgba8",
+            "png": "image.png.decode.rgba8",
+            "x509": "certificate.x509.parse.der",
+        }[pair]
+        seed = self.root / f"examples/real-targets/{pair}/seeds/seed.{pair}"
+        if not seed.is_file():
+            seed.parent.mkdir(parents=True, exist_ok=True)
+            seed.write_bytes(pair.encode())
+        payload = {
+            "schema_version": 1,
+            "status": "complete",
+            "pair": pair,
+            "operation": operation,
+            "profile": profile,
+            "fingerprint": "a" * 64,
+            "source_sha256": {"library": "b" * 64},
+            "seed_sha256": {
+                str(seed.relative_to(self.root)): hashlib.sha256(seed.read_bytes()).hexdigest()
+            },
+            "targets": {"a": record(target_a), "b": record(target_b)},
+        }
+        path = self.root / "run/build" / f"{pair}.json"
+        path.write_text(json.dumps(payload))
+        return path
+
+    def sleeping_fuzzer(self, *, solution=False):
+        solution_lines = ""
+        if solution:
+            solution_lines = "(solutions/'id-000').write_bytes(b'witness')\n"
+        return self.executable(
+            "target/debug/diffray",
+            "import pathlib,sys,time\n"
+            "args=sys.argv[1:]\n"
+            "out=pathlib.Path(args[args.index('--output')+1])\n"
+            "solutions=out/'client-000'/'solutions'\n"
+            "solutions.mkdir(parents=True)\n"
+            + solution_lines
+            + "time.sleep(10)\n",
+        )
+
+    def test_bmp_command_uses_only_bmp_manifest_and_seed_directory(self):
+        a, b = self.target("a"), self.target("b")
+        manifest = load_build_manifest(self.manifest(a, b), expected_pair="bmp")
+        command = campaign_command(self.root, manifest, self.root / "run/output", self.cpu, 7)
+        input_index = command.index("--input")
+        self.assertEqual(
+            Path(command[input_index + 1]),
+            (self.root / "examples/real-targets/bmp/seeds").resolve(),
+        )
+        self.assertNotIn("real-targets/png", " ".join(command))
+
+    def test_bmp_rejects_png_and_x509_manifests(self):
+        a, b = self.target("a"), self.target("b")
+        for pair in ("png", "x509"):
+            with self.subTest(pair=pair):
+                with self.assertRaisesRegex(CampaignError, "does not match"):
+                    load_build_manifest(self.manifest(a, b, pair=pair), expected_pair="bmp")
+
+    def test_bmp_zero_solution_campaign_is_valid(self):
+        a, b = self.target("a"), self.target("b")
+        manifest = self.manifest(a, b)
+        self.sleeping_fuzzer()
+        result = run_pair(self.root, "bmp", manifest, 0.2, self.cpu, 7)
+        summary = json.loads((result / "summary.json").read_text())
+        self.assertTrue(summary["zero_solutions"])
+        self.assertEqual(summary["solutions_saved"], 0)
+
+    def test_bmp_adapter_error_seed_fails_before_campaign(self):
+        a = self.target("a", class_name="adapter-error", code="4000000000000000")
+        b = self.target("b")
+        manifest = self.manifest(a, b)
+        self.sleeping_fuzzer()
+        with self.assertRaisesRegex(CampaignError, "adapter-error"):
+            run_pair(self.root, "bmp", manifest, 0.2, self.cpu, 7)
+
+    def test_bmp_saved_witness_is_replayed_three_times_by_manifest_targets(self):
+        log_a = self.root / "a.log"
+        log_b = self.root / "b.log"
+        a = self.target("a", code="0000000000000001", log=log_a)
+        b = self.target("b", code="0000000000000002", log=log_b)
+        manifest = self.manifest(a, b)
+        self.sleeping_fuzzer(solution=True)
+
+        def signature_index(_root, solution_dir, _a, _b, **kwargs):
+            solution = (solution_dir / "id-000").resolve()
+            return {
+                str(solution): {
+                    "path": str(solution),
+                    "return_pairs": [[1, 2]] * 3,
+                    "signatures": ["ab" * 32] * 3,
+                    "stable": True,
+                    "differential": True,
+                    "discovery_elapsed_nanos": 7,
+                }
+            }
+
+        with mock.patch(
+            "scripts.real_targets_lib.campaigns.generate_signature_index",
+            side_effect=signature_index,
+        ):
+            result = run_pair(self.root, "bmp", manifest, 0.2, self.cpu, 7)
+        solution = str((result / "diffs/client-000/solutions/id-000").resolve())
+        self.assertEqual(log_a.read_text().splitlines().count(solution), 3)
+        self.assertEqual(log_b.read_text().splitlines().count(solution), 3)
+        self.assertEqual(json.loads((result / "summary.json").read_text())["stable_signatures"], 1)
 
 
 if __name__ == "__main__":

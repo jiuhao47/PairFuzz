@@ -3,6 +3,7 @@ use libafl_targets::{
     map_input_shared_memory, map_shared_memory, start_forkserver, MaybePersistentForkserverParent,
 };
 
+pub mod profile;
 mod rv_shm;
 
 #[no_mangle]

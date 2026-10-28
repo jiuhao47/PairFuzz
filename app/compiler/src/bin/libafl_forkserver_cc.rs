@@ -4,9 +4,17 @@ use std::io::Write;
 use libafl_cc::{ClangWrapper, CompilerWrapper, ToolWrapper};
 use tempfile::NamedTempFile;
 
+#[path = "../profile.rs"]
+mod profile;
+use profile::TargetProfile;
+
 pub fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
+        let target_profile = TargetProfile::from_env().unwrap_or_else(|message| {
+            eprintln!("{message}");
+            std::process::exit(2);
+        });
         let mut dir = env::current_exe().unwrap();
         let wrapper_name = dir.file_name().unwrap().to_str().unwrap();
 
@@ -44,14 +52,18 @@ pub fn main() {
         // Write header contents into the NamedTempFile (best-effort)
         let _ = tmpfile.write_all(header_contents.as_bytes());
 
-        if let Some(code) = cc
-            .cpp(is_cpp)
+        cc.cpp(is_cpp)
             // silence the compiler wrapper output, needed for some configure scripts.
             .silence(true)
             .parse_args(&args)
-            .expect("Failed to parse the command line")
-            // Enable libafl's coverage instrumentation
-            .add_arg("-fsanitize=address")
+            .expect("Failed to parse the command line");
+
+        if target_profile.uses_asan() {
+            cc.add_arg("-fsanitize=address");
+        }
+
+        if let Some(code) = cc
+            // Coverage remains enabled in both sanitizer profiles.
             .add_arg("-fsanitize-coverage=trace-pc-guard")
             // Imitate afl-cc's compile definitions
             .add_arg(fuzz_init_def)

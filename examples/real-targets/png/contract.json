@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "operation": "image.png.decode.rgba8",
+  "semantic_schema": 1,
+  "input_limit": 1048576,
+  "max_dimension": 4096,
+  "max_pixels": 4194304,
+  "max_rgba_bytes": 16777216,
+  "sample_16_to_8": "high-byte",
+  "apply_gamma": false,
+  "apply_sbit": false,
+  "alpha": "unpremultiplied",
+  "apng": "unsupported",
+  "crc_policy": "critical-errors-reject",
+  "terminal_chunk_required": true
+}

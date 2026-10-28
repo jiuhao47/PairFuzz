@@ -28,6 +28,7 @@ _PAIRS = {
         _BASE / "png/seeds",
         _BASE / "png/contract.json",
         ("zlib", "libpng", "libspng", "xxhash", "xxhash-license"),
+        True,
     ),
     "bmp": PairSpec(
         "bmp",

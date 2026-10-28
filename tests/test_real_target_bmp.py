@@ -1,4 +1,9 @@
 import ctypes
+import hashlib
+import json
+import os
+import re
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -154,6 +159,277 @@ class BmpScopeTests(unittest.TestCase):
             with self.subTest(bpp=bpp, compression=compression):
                 data = windows_bmp(1, 1, bpp=bpp, compression=compression, pixels=b"\x00" * 16)
                 self.assertEqual(self.result(data)[0], expected)
+
+
+class BmpDecoderTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = json.loads((BMP / "contract.json").read_text())
+        cls.fixtures = json.loads((BMP / "fixtures.json").read_text())["fixtures"]
+        cls.profile = os.environ.get("DIFFRAY_BMP_TEST_PROFILE", "release")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="diffray-bmp-contract-")
+        cls.manifest = None
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temporary.cleanup()
+
+    @classmethod
+    def ensure_manifest(cls):
+        if cls.manifest is None:
+            completed = subprocess.run(
+                [
+                    "python3",
+                    str(ROOT / "scripts" / "real_targets.py"),
+                    "build",
+                    "--pair",
+                    "bmp",
+                    "--profile",
+                    cls.profile,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+                env={
+                    **os.environ,
+                    "MAGICK_CONFIGURE_PATH": "",
+                    "MAGICK_CODER_MODULE_PATH": "",
+                    "MAGICK_CODER_FILTER_PATH": "",
+                },
+            )
+            cls.manifest = json.loads(Path(completed.stdout.strip()).read_text())
+        return cls.manifest
+
+    def replay(self, target, fixture, sequence=0):
+        manifest = self.ensure_manifest()
+        output = Path(self.temporary.name) / f"{target}-{fixture['name']}-{sequence}.canonical"
+        binary = ROOT / manifest["targets"][target]["path"]
+        completed = subprocess.run(
+            [
+                str(binary),
+                "--replay",
+                str(BMP / fixture["path"]),
+                "--normalized-output",
+                str(output),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "MAGICK_CONFIGURE_PATH": "",
+                "MAGICK_CODER_MODULE_PATH": "",
+                "MAGICK_CODER_FILTER_PATH": "",
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout), output
+
+    def sequence_driver(self, target):
+        manifest = self.ensure_manifest()
+        build_root = (ROOT / manifest["targets"][target]["path"]).parents[1]
+        name, package, adapter = {
+            "a": ("imagemagick", "MagickCore", "imagemagick_target.c"),
+            "b": ("graphicsmagick", "GraphicsMagick", "graphicsmagick_target.c"),
+        }[target]
+        pkgconfig = build_root / "install" / name / "lib" / "pkgconfig"
+        environment = {
+            **os.environ,
+            "PATH": str(ROOT / "run/toolchain/bin") + os.pathsep + os.environ["PATH"],
+            "PKG_CONFIG_PATH": str(pkgconfig),
+            "DIFFRAY_TARGET_PROFILE": self.profile,
+        }
+        cflags = subprocess.run(
+            ["pkg-config", "--cflags", package],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        libraries = subprocess.run(
+            ["pkg-config", "--libs", package],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        binary = Path(self.temporary.name) / f"sequence-{target}"
+        profile_flags = (
+            ["-O1", "-g", "-fno-omit-frame-pointer", "-fsanitize=address"]
+            if self.profile == "asan"
+            else ["-O3", "-g"]
+        )
+        subprocess.run(
+            [
+                str(ROOT / "app/compiler/target/debug/libafl_forkserver_cc"),
+                *profile_flags,
+                *cflags,
+                "-I",
+                str(ROOT / "examples/real-targets/common"),
+                "-I",
+                str(BMP),
+                f'-DDIFFRAY_MAGICK_CONFIG_PATH="{build_root / "policy" / name}"',
+                str(ROOT / "examples/real-targets/common/semantic.c"),
+                str(BMP / "bmp_scope.c"),
+                str(BMP / adapter),
+                str(ROOT / "tests/fixtures/bmp_sequence_driver.c"),
+                *libraries,
+                *(["-fsanitize=address"] if self.profile == "asan" else []),
+                "-o",
+                str(binary),
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return binary
+
+    def test_fixture_matrix_covers_required_bmp_behaviors(self):
+        required = {
+            "indexed1",
+            "indexed4",
+            "indexed8",
+            "rgb16-bitfields",
+            "rgb24-bottom-up-odd",
+            "rgb24-top-down-odd",
+            "rgb32-unused-alpha",
+            "rgba32-bitfields",
+            "rle4",
+            "rle8",
+            "truncated-pixels",
+            "truncated-palette",
+            "bad-offset",
+            "second-image",
+            "embedded-png",
+            "width-4097",
+            "pixel-over-limit",
+        }
+        self.assertTrue(required.issubset({fixture["name"] for fixture in self.fixtures}))
+
+    def test_both_decoders_match_independent_valid_fixture_expectations(self):
+        matching = [fixture for fixture in self.fixtures if fixture.get("matching")]
+        self.assertGreaterEqual(len(matching), 10)
+        for fixture in matching:
+            with self.subTest(fixture=fixture["name"]):
+                reports = {}
+                outputs = {}
+                for target in ("a", "b"):
+                    reports[target], output = self.replay(target, fixture)
+                    self.assertEqual(reports[target]["class"], "accepted")
+                    outputs[target] = output.read_bytes()
+                    self.assertEqual(
+                        (reports[target]["width"], reports[target]["height"]),
+                        tuple(fixture["dimensions"]),
+                    )
+                    self.assertEqual(
+                        hashlib.sha256(outputs[target]).hexdigest(),
+                        fixture["canonical_sha256"],
+                    )
+                self.assertEqual(reports["a"]["semantic_code"], reports["b"]["semantic_code"])
+                self.assertEqual(outputs["a"], outputs["b"])
+
+    def test_malformed_scope_and_resource_fixtures_have_pinned_per_library_classes(self):
+        for fixture in self.fixtures:
+            expected = fixture.get("expected_by_target")
+            if expected is None:
+                continue
+            with self.subTest(fixture=fixture["name"]):
+                for target in ("a", "b"):
+                    report, output = self.replay(target, fixture)
+                    self.assertEqual(report["class"], expected[target])
+                    if report["class"] != "accepted":
+                        self.assertFalse(output.exists())
+
+    def test_valid_invalid_valid_sequence_never_reuses_pixels(self):
+        by_name = {fixture["name"]: fixture for fixture in self.fixtures}
+        self.assertIn("rgb24-bottom-up-odd", by_name)
+        self.assertIn("truncated-pixels", by_name)
+        valid = by_name["rgb24-bottom-up-odd"]
+        invalid = by_name["truncated-pixels"]
+        for target in ("a", "b"):
+            completed = subprocess.run(
+                [
+                    str(self.sequence_driver(target)),
+                    str(BMP / valid["path"]),
+                    str(BMP / invalid["path"]),
+                    str(BMP / valid["path"]),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "ASAN_OPTIONS": "abort_on_error=1:detect_leaks=false"},
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            outcomes = [line.split() for line in completed.stdout.splitlines()]
+            self.assertEqual([outcome[0] for outcome in outcomes], ["0", "1", "0"])
+            self.assertEqual(outcomes[0][1], outcomes[2][1])
+
+    def test_targets_do_not_probe_ambient_magick_configuration(self):
+        if shutil.which("strace") is None:
+            self.skipTest("strace is required for the native configuration audit")
+        manifest = self.ensure_manifest()
+        build_root = Path(manifest["targets"]["a"]["path"]).parents[1].resolve()
+        fixture = next(item for item in self.fixtures if item["name"] == "rgb24-bottom-up-odd")
+        configuration_names = {
+            "coder.xml",
+            "delegates.xml",
+            "delegates.mgk",
+            "log.mgk",
+            "log.xml",
+            "magic.xml",
+            "modules.mgk",
+            "policy.xml",
+            "type.xml",
+        }
+        for target in ("a", "b"):
+            trace = Path(self.temporary.name) / f"{target}-openat.log"
+            output = Path(self.temporary.name) / f"{target}-trace.canonical"
+            binary = ROOT / manifest["targets"][target]["path"]
+            completed = subprocess.run(
+                [
+                    "strace",
+                    "-f",
+                    "-qq",
+                    "-e",
+                    "trace=openat",
+                    "-o",
+                    str(trace),
+                    str(binary),
+                    "--replay",
+                    str(BMP / fixture["path"]),
+                    "--normalized-output",
+                    str(output),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                    **os.environ,
+                    "MAGICK_CONFIGURE_PATH": "",
+                    "MAGICK_CODER_MODULE_PATH": "",
+                    "MAGICK_CODER_FILTER_PATH": "",
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            opened = [Path(path) for path in re.findall(r'openat\([^,]+, "([^"]+)"', trace.read_text())]
+            magick_configuration = [
+                path
+                for path in opened
+                if path.name in configuration_names
+                or ".config/ImageMagick" in path.as_posix()
+            ]
+            self.assertTrue(magick_configuration)
+            for path in magick_configuration:
+                self.assertTrue(
+                    path.is_relative_to(build_root),
+                    f"{target} probed ambient Magick configuration: {path}",
+                )
 
 
 if __name__ == "__main__":

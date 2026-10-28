@@ -103,8 +103,17 @@ def generate(output):
     (output / "fixtures.json").write_text(json.dumps({"schema_version": 1, "generator": "scripts/generate_real_target_fixtures.py", "fixtures": fixtures}, indent=2, sort_keys=True) + "\n")
 
 
-def make_bmp(width, height, pixels, *, bits_per_pixel=24, compression=0):
-    offset = 14 + 40
+def make_bmp(
+    width,
+    height,
+    pixels,
+    *,
+    bits_per_pixel=24,
+    compression=0,
+    palette=b"",
+    masks=b"",
+):
+    offset = 14 + 40 + len(masks) + len(palette)
     size = offset + len(pixels)
     return (
         b"BM"
@@ -120,29 +129,235 @@ def make_bmp(width, height, pixels, *, bits_per_pixel=24, compression=0):
             len(pixels),
             0,
             0,
+            len(palette) // 4,
+            0,
+        )
+        + masks
+        + palette
+        + pixels
+    )
+
+
+def make_bmp_v4(width, height, pixels, *, bits_per_pixel, compression, masks):
+    dib = (
+        struct.pack(
+            "<IiiHHIIiiII",
+            108,
+            width,
+            height,
+            1,
+            bits_per_pixel,
+            compression,
+            len(pixels),
+            0,
+            0,
             0,
             0,
         )
-        + pixels
+        + struct.pack("<IIII", *masks)
+        + struct.pack("<I", 0x73524742)
+        + bytes(48)
     )
+    offset = 14 + len(dib)
+    return b"BM" + struct.pack("<IHHI", offset + len(pixels), 0, 0, offset) + dib + pixels
 
 
 def generate_bmp(output):
     seeds = output / "seeds"
     seeds.mkdir(parents=True, exist_ok=True)
-    # Bottom-up BGR rows with one byte of row padding: red, then green.
-    payload = make_bmp(2, 1, bytes([0, 0, 255, 0, 255, 0, 0, 0]))
-    path = seeds / "rgb24-2x1.bmp"
-    path.write_bytes(payload)
-    fixtures = [
-        {
-            "name": "rgb24-2x1",
-            "path": "seeds/rgb24-2x1.bmp",
+    fixtures = []
+
+    def add(name, payload, *, rgba=None, dimensions=None, expected=None):
+        path = seeds / f"{name}.bmp"
+        path.write_bytes(payload)
+        fixture = {
+            "name": name,
+            "path": f"seeds/{name}.bmp",
             "sha256": hashlib.sha256(payload).hexdigest(),
-            "scope": "decode",
-            "dimensions": [2, 1],
         }
-    ]
+        if rgba is not None:
+            width, height = dimensions
+            fixture.update(
+                {
+                    "matching": True,
+                    "expected_class": "accepted",
+                    "dimensions": [width, height],
+                    "canonical_sha256": hashlib.sha256(
+                        canonical(width, height, rgba)
+                    ).hexdigest(),
+                }
+            )
+        else:
+            fixture["expected_by_target"] = expected
+        fixtures.append(fixture)
+
+    palette = bytes(
+        [
+            30,
+            20,
+            10,
+            0,
+            60,
+            50,
+            40,
+            0,
+            90,
+            80,
+            70,
+            0,
+        ]
+    )
+    colors = (
+        bytes([10, 20, 30, 255]),
+        bytes([40, 50, 60, 255]),
+        bytes([70, 80, 90, 255]),
+    )
+    add(
+        "rgb24-2x1",
+        make_bmp(2, 1, bytes([0, 0, 255, 0, 255, 0, 0, 0])),
+        rgba=bytes([255, 0, 0, 255, 0, 255, 0, 255]),
+        dimensions=(2, 1),
+    )
+    add(
+        "indexed1",
+        make_bmp(3, 1, bytes([0x40, 0, 0, 0]), bits_per_pixel=1, palette=palette[:8]),
+        rgba=colors[0] + colors[1] + colors[0],
+        dimensions=(3, 1),
+    )
+    add(
+        "indexed4",
+        make_bmp(3, 1, bytes([0x01, 0x20, 0, 0]), bits_per_pixel=4, palette=palette),
+        rgba=colors[0] + colors[1] + colors[2],
+        dimensions=(3, 1),
+    )
+    add(
+        "indexed8",
+        make_bmp(3, 1, bytes([0, 1, 2, 0]), bits_per_pixel=8, palette=palette),
+        rgba=colors[0] + colors[1] + colors[2],
+        dimensions=(3, 1),
+    )
+
+    masks_565 = struct.pack("<III", 0xF800, 0x07E0, 0x001F)
+    add(
+        "rgb16-bitfields",
+        make_bmp(
+            2,
+            1,
+            struct.pack("<HH", 0xF800, 0x07E0),
+            bits_per_pixel=16,
+            compression=3,
+            masks=masks_565,
+        ),
+        rgba=bytes([255, 0, 0, 255, 0, 255, 0, 255]),
+        dimensions=(2, 1),
+    )
+
+    top = bytes([0, 0, 255, 0, 255, 0, 255, 0, 0, 0, 0, 0])
+    bottom = bytes([255, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 0])
+    rgba_rows = bytes(
+        [
+            255,
+            0,
+            0,
+            255,
+            0,
+            255,
+            0,
+            255,
+            0,
+            0,
+            255,
+            255,
+            0,
+            255,
+            255,
+            255,
+            255,
+            0,
+            255,
+            255,
+            255,
+            255,
+            0,
+            255,
+        ]
+    )
+    add(
+        "rgb24-bottom-up-odd",
+        make_bmp(3, 2, bottom + top),
+        rgba=rgba_rows,
+        dimensions=(3, 2),
+    )
+    add(
+        "rgb24-top-down-odd",
+        make_bmp(3, -2, top + bottom),
+        rgba=rgba_rows,
+        dimensions=(3, 2),
+    )
+    add(
+        "rgb32-unused-alpha",
+        make_bmp(2, 1, bytes([3, 2, 1, 0, 30, 20, 10, 7]), bits_per_pixel=32),
+        rgba=bytes([1, 2, 3, 255, 10, 20, 30, 255]),
+        dimensions=(2, 1),
+    )
+    add(
+        "rgba32-bitfields",
+        make_bmp_v4(
+            1,
+            1,
+            struct.pack("<I", 0x80112233),
+            bits_per_pixel=32,
+            compression=3,
+            masks=(0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000),
+        ),
+        rgba=bytes([0x11, 0x22, 0x33, 0x80]),
+        dimensions=(1, 1),
+    )
+
+    add(
+        "rle8",
+        make_bmp(
+            3,
+            1,
+            bytes([1, 0, 1, 1, 1, 2, 0, 0, 0, 1]),
+            bits_per_pixel=8,
+            compression=1,
+            palette=palette,
+        ),
+        rgba=colors[0] + colors[1] + colors[2],
+        dimensions=(3, 1),
+    )
+    add(
+        "rle4",
+        make_bmp(
+            3,
+            1,
+            bytes([3, 0x12, 0, 0, 0, 1]),
+            bits_per_pixel=4,
+            compression=2,
+            palette=palette,
+        ),
+        rgba=colors[1] + colors[2] + colors[1],
+        dimensions=(3, 1),
+    )
+
+    rejected = {"a": "rejected", "b": "rejected"}
+    unsupported = {"a": "unsupported", "b": "unsupported"}
+    resource = {"a": "resource-limit", "b": "resource-limit"}
+    valid = make_bmp(1, 1, bytes([0, 0, 255, 0]))
+    add("truncated-pixels", valid[:-1], expected=rejected)
+    indexed = make_bmp(1, 1, bytes([0, 0, 0, 0]), bits_per_pixel=8, palette=palette[:4])
+    add("truncated-palette", indexed[:56], expected=rejected)
+    bad_offset = bytearray(valid)
+    bad_offset[10:14] = struct.pack("<I", 13)
+    add("bad-offset", bytes(bad_offset), expected=rejected)
+    add("second-image", valid + valid, expected=unsupported)
+    embedded = bytearray(valid)
+    embedded[30:34] = struct.pack("<I", 5)
+    add("embedded-png", bytes(embedded), expected=unsupported)
+    add("width-4097", make_bmp(4097, 1, b""), expected=resource)
+    add("pixel-over-limit", make_bmp(2049, 2048, b""), expected=resource)
+
     (output / "fixtures.json").write_text(
         json.dumps(
             {

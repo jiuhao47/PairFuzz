@@ -2,7 +2,7 @@ use crate::{
     driver::args::RunMode,
     feedbacks::{
         differential_objective::DifferentialObjective, diffray_feedback::DiffrayFeedback,
-        CrashObjective, DiffObjective,
+        semantic::ResultPolicy, CrashObjective, DiffObjective,
     },
     observers::ReturnValueObserver,
 };
@@ -40,12 +40,13 @@ pub(crate) fn build_fast_objective<A, AO, B, BO>(
     map_b: &B,
     rv_a: &ReturnValueObserver,
     rv_b: &ReturnValueObserver,
+    policy: ResultPolicy,
 ) -> DifferentialObjective<A, AO, B, BO>
 where
     A: Named + AsRef<AO>,
     B: Named + AsRef<BO>,
 {
-    DifferentialObjective::new(map_a, map_b, rv_a, rv_b)
+    DifferentialObjective::new(map_a, map_b, rv_a, rv_b, policy)
 }
 
 pub(crate) type Objective<C> =
@@ -76,7 +77,9 @@ where
 mod tests {
     use super::{build_feedback, build_objective};
     use crate::{
-        driver::args::RunMode, feedbacks::diffray_feedback::Mode, observers::ReturnValueObserver,
+        driver::args::RunMode,
+        feedbacks::{diffray_feedback::Mode, semantic::ResultPolicy},
+        observers::ReturnValueObserver,
     };
     use libafl::observers::{HitcountsMapObserver, StdMapObserver};
     use libafl_bolts::Named;
@@ -143,8 +146,13 @@ mod tests {
         let rv_a = ReturnValueObserver::new("first_return");
         let rv_b = ReturnValueObserver::new("second_return");
 
-        let objective =
-            crate::driver::pipeline::build_direct_objective(&map_a, &map_b, &rv_a, &rv_b);
+        let objective = crate::driver::pipeline::build_direct_objective(
+            &map_a,
+            &map_b,
+            &rv_a,
+            &rv_b,
+            ResultPolicy::ZeroNonzero,
+        );
 
         assert_eq!(objective.name().as_ref(), "DifferentialObjective");
     }

@@ -1,7 +1,9 @@
 use crate::{
     feedbacks::diffray_feedback::DiffrayFeedback,
-    feedbacks::semantic::SemanticValue,
-    feedbacks::signature::{compute_signature, DifferentialSignature, ExitClass},
+    feedbacks::semantic::{ResultPolicy, SemanticValue},
+    feedbacks::signature::{
+        compute_signature_v1, compute_signature_v2, DifferentialSignature, ExitClass,
+    },
     observers::ReturnValueObserver,
     utils::logging::{error, info, warn},
 };
@@ -80,12 +82,27 @@ fn exit_class_pair(kind: ExitKind) -> (ExitClass, ExitClass) {
 }
 
 fn semantic_difference(
+    policy: ResultPolicy,
     exit_a: ExitClass,
     exit_b: ExitClass,
     rv_a: Option<SemanticValue>,
     rv_b: Option<SemanticValue>,
 ) -> bool {
-    exit_a != exit_b || rv_a.map(|value| value == 0) != rv_b.map(|value| value == 0)
+    exit_a != exit_b || policy.differs(rv_a, rv_b)
+}
+
+fn legacy_result(value: Option<SemanticValue>) -> Result<Option<i32>, libafl::Error> {
+    value
+        .map(|value| {
+            u32::try_from(value)
+                .map(|legacy| legacy as i32)
+                .map_err(|_| {
+                    libafl::Error::illegal_argument(
+                        "signature v1 cannot encode a semantic value above u32::MAX",
+                    )
+                })
+        })
+        .transpose()
 }
 
 fn persisted_elapsed_nanos(path: &Path) -> Option<u64> {
@@ -132,7 +149,9 @@ fn signature_observation<C, EX>(
     feedback: &DiffrayFeedback<C>,
     executor: &EX,
     exit_kind: ExitKind,
-) -> Option<(DifferentialSignature, [Option<SemanticValue>; 2], bool)>
+    policy: ResultPolicy,
+    signature_version: u8,
+) -> Result<Option<(DifferentialSignature, [Option<SemanticValue>; 2], bool)>, libafl::Error>
 where
     C: MapObserver + for<'it> AsIter<'it, Item = C::Entry>,
     C::Entry: Into<u8> + Copy,
@@ -140,8 +159,18 @@ where
     EX::Observers: MatchNameRef,
 {
     let observers = executor.observers();
-    let map_a = observers.get(feedback.map_refs.first()?)?;
-    let map_b = observers.get(feedback.map_refs.get(1)?)?;
+    let Some(map_a_handle) = feedback.map_refs.first() else {
+        return Ok(None);
+    };
+    let Some(map_b_handle) = feedback.map_refs.get(1) else {
+        return Ok(None);
+    };
+    let Some(map_a) = observers.get(map_a_handle) else {
+        return Ok(None);
+    };
+    let Some(map_b) = observers.get(map_b_handle) else {
+        return Ok(None);
+    };
     let bytes_a: Vec<u8> = map_a.as_iter().map(|value| (*value).into()).collect();
     let bytes_b: Vec<u8> = map_b.as_iter().map(|value| (*value).into()).collect();
     let rv_a_handle = Handle::<ReturnValueObserver>::new(Cow::Borrowed("first_return"));
@@ -153,11 +182,27 @@ where
         .get(&rv_b_handle)
         .and_then(ReturnValueObserver::last_value);
     let (exit_a, exit_b) = exit_class_pair(exit_kind);
-    Some((
-        compute_signature(exit_a, exit_b, rv_a, rv_b, &bytes_a, &bytes_b),
+    let signature = match signature_version {
+        1 => compute_signature_v1(
+            exit_a,
+            exit_b,
+            legacy_result(rv_a)?,
+            legacy_result(rv_b)?,
+            &bytes_a,
+            &bytes_b,
+        ),
+        2 => compute_signature_v2(policy, exit_a, exit_b, rv_a, rv_b, &bytes_a, &bytes_b),
+        _ => {
+            return Err(libafl::Error::illegal_argument(
+                "unsupported signature version",
+            ))
+        }
+    };
+    Ok(Some((
+        signature,
         [rv_a, rv_b],
-        semantic_difference(exit_a, exit_b, rv_a, rv_b),
-    ))
+        semantic_difference(policy, exit_a, exit_b, rv_a, rv_b),
+    )))
 }
 
 fn reset_replay_maps<C, EX>(
@@ -202,6 +247,8 @@ pub(crate) fn run_replay_cov<C, EM, EX, F, S>(
     fuzzer: &mut F,
     executor: &mut EX,
     manager: &mut EM,
+    policy: ResultPolicy,
+    signature_version: u8,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     C: MapObserver + for<'it> AsIter<'it, Item = C::Entry>,
@@ -273,9 +320,13 @@ where
             match fuzzer.execute_input(state, executor, manager, &input) {
                 Ok(exit_kind) => {
                     last_execution_succeeded = true;
-                    if let Some((signature, return_pair, differential)) =
-                        signature_observation(feedback, executor, exit_kind)
-                    {
+                    if let Some((signature, return_pair, differential)) = signature_observation(
+                        feedback,
+                        executor,
+                        exit_kind,
+                        policy,
+                        signature_version,
+                    )? {
                         signatures.push(signature.to_hex());
                         return_pairs.push(return_pair);
                         differential_outcomes.push(differential);
@@ -354,7 +405,11 @@ where
         &signature_index_path,
         serde_json::to_vec_pretty(&json!({
             "schema_version": 1,
-            "signature_version": 1,
+            "signature_version": signature_version,
+            "result_policy": match policy {
+                ResultPolicy::ZeroNonzero => "zero-nonzero",
+                ResultPolicy::Exact => "exact",
+            },
             "records": signature_records,
         }))?,
     )?;

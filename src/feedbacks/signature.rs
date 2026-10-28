@@ -1,8 +1,9 @@
-use crate::feedbacks::semantic::SemanticValue;
+use crate::feedbacks::semantic::{ResultPolicy, SemanticValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const DIFFERENTIAL_SIGNATURE_VERSION: u8 = 1;
+pub const DIFFERENTIAL_SIGNATURE_VERSION: u8 = 2;
+pub const RESULT_ABI_VERSION: u8 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct DifferentialSignature([u8; 32]);
@@ -63,6 +64,24 @@ impl From<DifferentialSignature> for DifferentialSignatureMetadata {
 
 libafl_bolts::impl_serdeany!(DifferentialSignatureMetadata);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResultPolicyMetadata {
+    pub policy: ResultPolicy,
+    pub result_abi_version: u8,
+}
+
+impl ResultPolicyMetadata {
+    #[must_use]
+    pub const fn new(policy: ResultPolicy) -> Self {
+        Self {
+            policy,
+            result_abi_version: RESULT_ABI_VERSION,
+        }
+    }
+}
+
+libafl_bolts::impl_serdeany!(ResultPolicyMetadata);
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DiscoveryElapsedMetadata {
     pub nanos: u64,
@@ -96,16 +115,15 @@ pub fn register_metadata_types() {
         DifferentialSignatureMetadata::register();
         DiscoveryElapsedMetadata::register();
         DifferentialSignatureSetMetadata::register();
+        ResultPolicyMetadata::register();
     }
 }
 
-fn encode_optional_return(hasher: &mut blake3::Hasher, value: Option<SemanticValue>) {
+fn encode_optional_i32(hasher: &mut blake3::Hasher, value: Option<i32>) {
     match value {
         Some(value) => {
             hasher.update(&[1]);
-            // Signature v1 encoded the legacy i32 bit pattern. Keep that exact
-            // wire format until the explicit v2 signature transition.
-            hasher.update(&(value as u32).to_le_bytes());
+            hasher.update(&value.to_le_bytes());
         }
         None => {
             hasher.update(&[0]);
@@ -114,7 +132,38 @@ fn encode_optional_return(hasher: &mut blake3::Hasher, value: Option<SemanticVal
 }
 
 #[must_use]
-pub fn compute_signature(
+pub fn compute_signature_v1(
+    exit_a: ExitClass,
+    exit_b: ExitClass,
+    rv_a: Option<i32>,
+    rv_b: Option<i32>,
+    map_a: &[u8],
+    map_b: &[u8],
+) -> DifferentialSignature {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&[1, exit_a.as_byte(), exit_b.as_byte()]);
+    encode_optional_i32(&mut hasher, rv_a);
+    encode_optional_i32(&mut hasher, rv_b);
+    hasher.update(blake3::hash(map_a).as_bytes());
+    hasher.update(blake3::hash(map_b).as_bytes());
+    DifferentialSignature(*hasher.finalize().as_bytes())
+}
+
+fn encode_optional_u64(hasher: &mut blake3::Hasher, value: Option<SemanticValue>) {
+    match value {
+        Some(value) => {
+            hasher.update(&[1]);
+            hasher.update(&value.to_le_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
+}
+
+#[must_use]
+pub fn compute_signature_v2(
+    policy: ResultPolicy,
     exit_a: ExitClass,
     exit_b: ExitClass,
     rv_a: Option<SemanticValue>,
@@ -125,11 +174,12 @@ pub fn compute_signature(
     let mut hasher = blake3::Hasher::new();
     hasher.update(&[
         DIFFERENTIAL_SIGNATURE_VERSION,
+        policy.signature_byte(),
         exit_a.as_byte(),
         exit_b.as_byte(),
     ]);
-    encode_optional_return(&mut hasher, rv_a);
-    encode_optional_return(&mut hasher, rv_b);
+    encode_optional_u64(&mut hasher, rv_a);
+    encode_optional_u64(&mut hasher, rv_b);
     hasher.update(blake3::hash(map_a).as_bytes());
     hasher.update(blake3::hash(map_b).as_bytes());
     DifferentialSignature(*hasher.finalize().as_bytes())
@@ -138,17 +188,17 @@ pub fn compute_signature(
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_signature, DifferentialSignatureMetadata, DifferentialSignatureSetMetadata,
-        DiscoveryElapsedMetadata, ExitClass,
+        compute_signature_v1, compute_signature_v2, DifferentialSignatureMetadata,
+        DifferentialSignatureSetMetadata, DiscoveryElapsedMetadata, ExitClass,
     };
-    use crate::feedbacks::semantic::legacy_value;
+    use crate::feedbacks::semantic::ResultPolicy;
 
     #[test]
     fn signature_v1_matches_fixed_vector() {
-        let signature = compute_signature(
+        let signature = compute_signature_v1(
             ExitClass::Crash,
             ExitClass::Timeout,
-            Some(legacy_value(-7)),
+            Some(-7),
             None,
             &[0, 1, 2, 3],
             &[4, 5, 6],
@@ -164,15 +214,48 @@ mod tests {
     }
 
     #[test]
+    fn semantic_policy_v2_hashes_full_values_and_policy() {
+        let base = compute_signature_v2(
+            ResultPolicy::Exact,
+            ExitClass::Ok,
+            ExitClass::Ok,
+            Some(1),
+            Some(2),
+            &[1],
+            &[2],
+        );
+        let high = compute_signature_v2(
+            ResultPolicy::Exact,
+            ExitClass::Ok,
+            ExitClass::Ok,
+            Some(0x1_0000_0001),
+            Some(2),
+            &[1],
+            &[2],
+        );
+        let other_policy = compute_signature_v2(
+            ResultPolicy::ZeroNonzero,
+            ExitClass::Ok,
+            ExitClass::Ok,
+            Some(1),
+            Some(2),
+            &[1],
+            &[2],
+        );
+        assert_ne!(base, high);
+        assert_ne!(base, other_policy);
+    }
+
+    #[test]
     fn signature_distinguishes_none_from_zero() {
-        let none = compute_signature(ExitClass::Ok, ExitClass::Ok, None, None, &[1], &[2]);
-        let zero = compute_signature(ExitClass::Ok, ExitClass::Ok, Some(0), None, &[1], &[2]);
+        let none = compute_signature_v1(ExitClass::Ok, ExitClass::Ok, None, None, &[1], &[2]);
+        let zero = compute_signature_v1(ExitClass::Ok, ExitClass::Ok, Some(0), None, &[1], &[2]);
         assert_ne!(none, zero);
     }
 
     #[test]
     fn signature_preserves_target_order() {
-        let ab = compute_signature(
+        let ab = compute_signature_v1(
             ExitClass::Crash,
             ExitClass::Ok,
             Some(1),
@@ -180,7 +263,7 @@ mod tests {
             &[1, 2],
             &[3, 4],
         );
-        let ba = compute_signature(
+        let ba = compute_signature_v1(
             ExitClass::Ok,
             ExitClass::Crash,
             Some(2),
@@ -193,7 +276,7 @@ mod tests {
 
     #[test]
     fn signature_changes_with_either_map() {
-        let original = compute_signature(
+        let original = compute_signature_v1(
             ExitClass::Ok,
             ExitClass::Ok,
             Some(1),
@@ -201,7 +284,7 @@ mod tests {
             &[1, 2],
             &[3, 4],
         );
-        let changed_a = compute_signature(
+        let changed_a = compute_signature_v1(
             ExitClass::Ok,
             ExitClass::Ok,
             Some(1),
@@ -209,7 +292,7 @@ mod tests {
             &[9, 2],
             &[3, 4],
         );
-        let changed_b = compute_signature(
+        let changed_b = compute_signature_v1(
             ExitClass::Ok,
             ExitClass::Ok,
             Some(1),
@@ -238,7 +321,8 @@ mod tests {
 
     #[test]
     fn restored_signature_set_rejects_a_local_duplicate() {
-        let signature = compute_signature(ExitClass::Ok, ExitClass::Crash, None, None, &[1], &[2]);
+        let signature =
+            compute_signature_v1(ExitClass::Ok, ExitClass::Crash, None, None, &[1], &[2]);
         let mut original = DifferentialSignatureSetMetadata::default();
         assert!(original.insert(signature));
 

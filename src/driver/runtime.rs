@@ -6,6 +6,8 @@ use crate::driver::{
 };
 
 pub(crate) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    args.validate_semantic_options()
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
     if pipeline::fast_client_requested(&args) {
         let identity = ClientIdentity::single_client(&args);
         run_fast_client(&args, identity)

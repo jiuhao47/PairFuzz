@@ -1,5 +1,36 @@
 pub type SemanticValue = u64;
 
+#[derive(
+    clap::ValueEnum, serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Eq, PartialEq,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResultPolicy {
+    ZeroNonzero,
+    Exact,
+}
+
+impl ResultPolicy {
+    #[must_use]
+    pub const fn differs(self, a: Option<SemanticValue>, b: Option<SemanticValue>) -> bool {
+        match (a, b) {
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+            (Some(a), Some(b)) => match self {
+                Self::ZeroNonzero => (a == 0) != (b == 0),
+                Self::Exact => a != b,
+            },
+        }
+    }
+
+    #[must_use]
+    pub const fn signature_byte(self) -> u8 {
+        match self {
+            Self::ZeroNonzero => 0,
+            Self::Exact => 1,
+        }
+    }
+}
+
 #[must_use]
 pub const fn legacy_value(value: i32) -> SemanticValue {
     (value as u32) as SemanticValue
@@ -97,11 +128,21 @@ pub mod legacy_option {
 
 #[cfg(test)]
 mod tests {
-    use super::{legacy_value, SemanticValue};
+    use super::{legacy_value, ResultPolicy, SemanticValue};
 
     #[test]
     fn legacy_values_are_zero_extended() {
         let value: SemanticValue = legacy_value(-1);
         assert_eq!(value, 0xffff_ffff);
+    }
+
+    #[test]
+    fn semantic_policy_exact_distinguishes_full_width_values() {
+        let low = Some(1_u64);
+        let high = Some(0x1_0000_0001_u64);
+        assert!(!ResultPolicy::ZeroNonzero.differs(low, high));
+        assert!(ResultPolicy::Exact.differs(low, high));
+        assert!(ResultPolicy::ZeroNonzero.differs(None, Some(1)));
+        assert!(ResultPolicy::ZeroNonzero.differs(None, Some(0)));
     }
 }

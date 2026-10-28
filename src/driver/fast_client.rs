@@ -95,6 +95,7 @@ pub(crate) fn run_fast_client(
         &map_observer_b,
         &rv_observer_a,
         &rv_observer_b,
+        args.result_policy,
     );
     let scheduler_observer_a = map_observer_a.clone();
 

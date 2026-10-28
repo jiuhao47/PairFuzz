@@ -519,7 +519,15 @@ def generate_signature_index(
     solution_dir: Path,
     target_a: Path,
     target_b: Path,
+    signature_version: int = 1,
+    result_policy: str = "zero-nonzero",
 ) -> dict[str, dict[str, Any]]:
+    if signature_version not in (1, 2):
+        raise ValueError("signature_version must be 1 or 2")
+    if result_policy not in ("zero-nonzero", "exact"):
+        raise ValueError("result_policy must be zero-nonzero or exact")
+    if signature_version == 1 and result_policy != "zero-nonzero":
+        raise ValueError("signature version 1 requires zero-nonzero policy")
     if not solution_dir.is_dir():
         return {}
     fuzzer = repository_root / "target" / "debug" / "diffray"
@@ -548,6 +556,10 @@ def generate_signature_index(
             "disabled",
             "--simple-monitor",
             "disabled",
+            "--signature-version",
+            str(signature_version),
+            "--result-policy",
+            result_policy,
         ]
         completed = subprocess.run(
             command,
@@ -567,8 +579,10 @@ def generate_signature_index(
         if not index_path.is_file():
             raise RuntimeError(f"signature replay did not produce {index_path}")
         payload = json.loads(index_path.read_text(encoding="utf-8"))
-    if payload.get("signature_version") != 1 or not isinstance(
-        payload.get("records"), list
+    if (
+        payload.get("signature_version") != signature_version
+        or payload.get("result_policy") != result_policy
+        or not isinstance(payload.get("records"), list)
     ):
         raise RuntimeError("unsupported signature replay index")
     return {record["path"]: record for record in payload["records"]}

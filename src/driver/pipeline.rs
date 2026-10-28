@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crate::driver::args::Args;
 use crate::{
-    feedbacks::differential_objective::DifferentialObjective, observers::ReturnValueObserver,
+    feedbacks::{differential_objective::DifferentialObjective, semantic::ResultPolicy},
+    observers::ReturnValueObserver,
 };
 use libafl::{
     feedback_or,
@@ -243,12 +244,13 @@ pub(crate) fn build_direct_objective<A, AO, B, BO>(
     map_b: &B,
     rv_a: &ReturnValueObserver,
     rv_b: &ReturnValueObserver,
+    policy: ResultPolicy,
 ) -> DifferentialObjective<A, AO, B, BO>
 where
     A: Named + AsRef<AO>,
     B: Named + AsRef<BO>,
 {
-    crate::feedbacks::factory::build_fast_objective(map_a, map_b, rv_a, rv_b)
+    crate::feedbacks::factory::build_fast_objective(map_a, map_b, rv_a, rv_b, policy)
 }
 
 #[cfg(test)]

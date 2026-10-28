@@ -1,3 +1,4 @@
+use crate::feedbacks::semantic::ResultPolicy;
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
@@ -180,12 +181,19 @@ pub struct Args {
     /// Interval between AFL-compatible statistics updates.
     #[arg(long, default_value_t = 15u64)]
     pub stats_interval_secs: u64,
+    /// Semantic result comparison policy.
+    #[arg(long, value_enum, default_value_t = ResultPolicy::ZeroNonzero)]
+    pub result_policy: ResultPolicy,
+    /// Behavioral signature format used by replay output.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=2), default_value_t = 2)]
+    pub signature_version: u8,
     // legacy flags removed: use --persistent-mode and --simple-monitor instead
 }
 
 #[cfg(test)]
 mod fast_pipeline_tests {
     use super::{Args, MutatorChoice, PipelineChoice, ScheduleChoice};
+    use crate::feedbacks::semantic::ResultPolicy;
     use clap::Parser;
 
     #[test]
@@ -211,9 +219,36 @@ mod fast_pipeline_tests {
         let mopt = Args::try_parse_from(["diffray", "--mutator", "mopt"]);
         assert_eq!(mopt.unwrap().mutator, MutatorChoice::MOpt);
     }
+
+    #[test]
+    fn semantic_policy_exact_rejects_legacy_fuzzing_before_startup() {
+        let exact = Args::try_parse_from(["diffray", "--result-policy", "exact"]).unwrap();
+        assert_eq!(exact.result_policy, ResultPolicy::Exact);
+        assert!(exact.validate_semantic_options().is_err());
+
+        let fast =
+            Args::try_parse_from(["diffray", "--pipeline", "fast", "--result-policy", "exact"])
+                .unwrap();
+        assert!(fast.validate_semantic_options().is_ok());
+    }
 }
 
 impl Args {
+    pub fn validate_semantic_options(&self) -> Result<(), String> {
+        if self.result_policy == ResultPolicy::Exact
+            && self.pipeline == PipelineChoice::Legacy
+            && self.mode != RunMode::ReplayCov
+        {
+            return Err(
+                "--result-policy exact requires --pipeline fast or --mode replay-cov".into(),
+            );
+        }
+        if self.signature_version == 1 && self.result_policy != ResultPolicy::ZeroNonzero {
+            return Err("--signature-version 1 requires --result-policy zero-nonzero".into());
+        }
+        Ok(())
+    }
+
     /// Return the effective persistent setting. `--no-persistent` takes precedence if set.
     pub fn persistent_enabled(&self) -> bool {
         // Consult the enum: Auto -> default true, Enabled -> true, Disabled -> false

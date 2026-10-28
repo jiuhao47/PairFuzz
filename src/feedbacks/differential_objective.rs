@@ -1,10 +1,11 @@
 use crate::{
     feedbacks::{
         objectives::{CrashInfo, ExitInfo},
-        semantic::SemanticValue,
+        semantic::{ResultPolicy, SemanticValue},
         signature::{
-            compute_signature, DifferentialSignature, DifferentialSignatureMetadata,
+            compute_signature_v2, DifferentialSignature, DifferentialSignatureMetadata,
             DifferentialSignatureSetMetadata, DiscoveryElapsedMetadata, ExitClass,
+            ResultPolicyMetadata,
         },
     },
     observers::ReturnValueObserver,
@@ -90,7 +91,7 @@ impl CandidateEvaluator {
         self.map_scans = 0;
     }
 
-    fn semantic_candidate(input: &Evaluation<'_>) -> bool {
+    fn semantic_candidate(input: &Evaluation<'_>, policy: ResultPolicy) -> bool {
         let exceptional = matches!(
             input.exit_a,
             ExitClass::Crash | ExitClass::Timeout | ExitClass::Oom
@@ -98,24 +99,25 @@ impl CandidateEvaluator {
             input.exit_b,
             ExitClass::Crash | ExitClass::Timeout | ExitClass::Oom
         );
-        let return_difference =
-            input.rv_a.map(|value| value == 0) != input.rv_b.map(|value| value == 0);
+        let return_difference = policy.differs(input.rv_a, input.rv_b);
         exceptional || return_difference
     }
 
     fn evaluate(
         &mut self,
         input: Evaluation<'_>,
+        policy: ResultPolicy,
         known: &HashSet<DifferentialSignature>,
         history_a: &[u8],
         history_b: &[u8],
     ) -> bool {
         self.reset();
-        if !Self::semantic_candidate(&input) {
+        if !Self::semantic_candidate(&input, policy) {
             return false;
         }
 
-        let signature = compute_signature(
+        let signature = compute_signature_v2(
+            policy,
             input.exit_a,
             input.exit_b,
             input.rv_a,
@@ -164,6 +166,7 @@ pub struct DifferentialObjective<A, AO, B, BO> {
     rv_a: Handle<ReturnValueObserver>,
     rv_b: Handle<ReturnValueObserver>,
     evaluator: CandidateEvaluator,
+    policy: ResultPolicy,
     last_result: Option<bool>,
     maps: PhantomData<(AO, BO)>,
 }
@@ -179,6 +182,7 @@ where
         map_b: &B,
         rv_a: &ReturnValueObserver,
         rv_b: &ReturnValueObserver,
+        policy: ResultPolicy,
     ) -> Self {
         Self {
             name: Cow::Borrowed("DifferentialObjective"),
@@ -187,6 +191,7 @@ where
             rv_a: rv_a.handle(),
             rv_b: rv_b.handle(),
             evaluator: CandidateEvaluator::default(),
+            policy,
             last_result: None,
             maps: PhantomData,
         }
@@ -208,6 +213,9 @@ where
         state.add_named_metadata_checked(OBJECTIVE_B, MapFeedbackMetadata::<u8>::default())?;
         if !state.has_metadata::<DifferentialSignatureSetMetadata>() {
             state.add_metadata(DifferentialSignatureSetMetadata::default());
+        }
+        if !state.has_metadata::<ResultPolicyMetadata>() {
+            state.add_metadata(ResultPolicyMetadata::new(self.policy));
         }
         Ok(())
     }
@@ -285,7 +293,7 @@ where
             initial_a: 0,
             initial_b: 0,
         };
-        if !CandidateEvaluator::semantic_candidate(&semantic_probe) {
+        if !CandidateEvaluator::semantic_candidate(&semantic_probe, self.policy) {
             self.last_result = Some(false);
             return Ok(false);
         }
@@ -326,6 +334,7 @@ where
                 initial_a: map_a.initial(),
                 initial_b: map_b.initial(),
             },
+            self.policy,
             known,
             history_a,
             history_b,
@@ -361,6 +370,7 @@ where
         let elapsed = current_time().saturating_sub(*state.start_time());
         let nanos = elapsed.as_nanos().min(u128::from(u64::MAX)) as u64;
         testcase.add_metadata(DifferentialSignatureMetadata::from(candidate.signature));
+        testcase.add_metadata(ResultPolicyMetadata::new(self.policy));
         testcase.add_metadata(DiscoveryElapsedMetadata { nanos });
         let exceptional = matches!(
             candidate.exit_a,
@@ -397,8 +407,8 @@ mod tests {
     use super::{
         concatenated_map_novelty, direct_dual_map_novelty, CandidateEvaluator, Evaluation,
     };
-    use crate::feedbacks::semantic::{legacy_value, SemanticValue};
-    use crate::feedbacks::signature::{compute_signature, ExitClass};
+    use crate::feedbacks::semantic::{legacy_value, ResultPolicy, SemanticValue};
+    use crate::feedbacks::signature::{compute_signature_v2, ExitClass};
     use std::collections::HashSet;
 
     fn evaluation<'a>(
@@ -422,11 +432,12 @@ mod tests {
     }
 
     #[test]
-    fn rejected_candidate_cannot_leak_metadata() {
+    fn semantic_admission_rejected_candidate_cannot_leak_metadata() {
         let mut evaluator = CandidateEvaluator::default();
         let known = HashSet::new();
         assert!(evaluator.evaluate(
             evaluation(ExitClass::Ok, ExitClass::Ok, Some(0), Some(1), &[1], &[0],),
+            ResultPolicy::ZeroNonzero,
             &known,
             &[0],
             &[0],
@@ -435,6 +446,7 @@ mod tests {
 
         assert!(!evaluator.evaluate(
             evaluation(ExitClass::Ok, ExitClass::Ok, Some(0), Some(0), &[1], &[0],),
+            ResultPolicy::ZeroNonzero,
             &known,
             &[0],
             &[0],
@@ -447,6 +459,7 @@ mod tests {
         let mut evaluator = CandidateEvaluator::default();
         assert!(evaluator.evaluate(
             evaluation(ExitClass::Crash, ExitClass::Timeout, None, None, &[1], &[0],),
+            ResultPolicy::ZeroNonzero,
             &HashSet::new(),
             &[0],
             &[0],
@@ -457,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_nonzero_difference_is_detected() {
+    fn semantic_admission_zero_nonzero_difference_is_detected() {
         let mut evaluator = CandidateEvaluator::default();
         assert!(evaluator.evaluate(
             evaluation(
@@ -468,6 +481,7 @@ mod tests {
                 &[0],
                 &[1],
             ),
+            ResultPolicy::ZeroNonzero,
             &HashSet::new(),
             &[0],
             &[0],
@@ -475,7 +489,26 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_input_skips_both_objective_map_scans() {
+    fn semantic_admission_exact_requires_new_objective_coverage() {
+        let input = evaluation(
+            ExitClass::Ok,
+            ExitClass::Ok,
+            Some(1),
+            Some(0x1_0000_0001),
+            &[1],
+            &[0],
+        );
+        let mut evaluator = CandidateEvaluator::default();
+        assert!(evaluator.evaluate(input, ResultPolicy::Exact, &HashSet::new(), &[0], &[0],));
+        assert!(evaluator.pending().is_some());
+
+        assert!(!evaluator.evaluate(input, ResultPolicy::Exact, &HashSet::new(), &[1], &[0],));
+        assert!(evaluator.pending().is_none());
+        assert_eq!(evaluator.map_scans(), 2);
+    }
+
+    #[test]
+    fn semantic_admission_ordinary_input_skips_both_objective_map_scans() {
         let mut evaluator = CandidateEvaluator::default();
         assert!(!evaluator.evaluate(
             evaluation(
@@ -486,6 +519,7 @@ mod tests {
                 &[9; 64],
                 &[9; 64],
             ),
+            ResultPolicy::ZeroNonzero,
             &HashSet::new(),
             &[0; 64],
             &[0; 64],
@@ -494,9 +528,10 @@ mod tests {
     }
 
     #[test]
-    fn known_signature_is_rejected_before_objective_map_scans() {
+    fn semantic_admission_known_signature_is_rejected_before_objective_map_scans() {
         let input = evaluation(ExitClass::Ok, ExitClass::Ok, Some(0), Some(1), &[1], &[2]);
-        let signature = compute_signature(
+        let signature = compute_signature_v2(
+            ResultPolicy::ZeroNonzero,
             input.exit_a,
             input.exit_b,
             input.rv_a,
@@ -508,16 +543,18 @@ mod tests {
         known.insert(signature);
         let mut evaluator = CandidateEvaluator::default();
 
-        assert!(!evaluator.evaluate(input, &known, &[0], &[0]));
+        assert!(!evaluator.evaluate(input, ResultPolicy::ZeroNonzero, &known, &[0], &[0]));
         assert_eq!(evaluator.map_scans(), 0);
     }
 
     #[test]
-    fn accepted_candidate_attaches_signature_and_elapsed_metadata() {
+    fn semantic_admission_accepted_candidate_attaches_signature_and_elapsed_metadata() {
         use crate::{
             feedbacks::{
                 objectives::ExitInfo,
-                signature::{DifferentialSignatureMetadata, DiscoveryElapsedMetadata},
+                signature::{
+                    DifferentialSignatureMetadata, DiscoveryElapsedMetadata, ResultPolicyMetadata,
+                },
             },
             observers::ReturnValueObserver,
         };
@@ -554,7 +591,13 @@ mod tests {
         rv_shmem_b[..8].copy_from_slice(&1_u64.to_ne_bytes());
         rv_a.set_shmem(rv_shmem_a).unwrap();
         rv_b.set_shmem(rv_shmem_b).unwrap();
-        let mut objective = super::DifferentialObjective::new(&map_a, &map_b, &rv_a, &rv_b);
+        let mut objective = super::DifferentialObjective::new(
+            &map_a,
+            &map_b,
+            &rv_a,
+            &rv_b,
+            ResultPolicy::ZeroNonzero,
+        );
         let mut feedback = ConstFeedback::new(false);
         let mut state = StdState::new(
             StdRand::with_seed(7),
@@ -588,6 +631,10 @@ mod tests {
 
         assert!(testcase.has_metadata::<DifferentialSignatureMetadata>());
         assert!(testcase.has_metadata::<DiscoveryElapsedMetadata>());
+        assert_eq!(
+            testcase.metadata::<ResultPolicyMetadata>().unwrap().policy,
+            ResultPolicy::ZeroNonzero
+        );
         let exit = testcase.metadata::<ExitInfo>().unwrap();
         assert_eq!(exit.rv_a, Some(0));
         assert_eq!(exit.rv_b, Some(1));

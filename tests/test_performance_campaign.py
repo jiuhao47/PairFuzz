@@ -435,6 +435,22 @@ class AggregationTests(unittest.TestCase):
 
 
 class EvidenceCompatibilityTests(unittest.TestCase):
+    def test_signature_replay_accepts_explicit_version_and_policy(self):
+        campaign = load_campaign_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(
+                campaign.generate_signature_index(
+                    root,
+                    root / "missing",
+                    root / "a",
+                    root / "b",
+                    signature_version=2,
+                    result_policy="exact",
+                ),
+                {},
+            )
+
     def test_backfill_signatures_preserves_environment_and_updates_v1_metrics(self):
         campaign = load_campaign_module()
         with tempfile.TemporaryDirectory() as directory:

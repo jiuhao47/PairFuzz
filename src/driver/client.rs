@@ -400,6 +400,8 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
             &mut fuzzer,
             &mut differential_executor,
             &mut mgr,
+            args.result_policy,
+            args.signature_version,
         )?;
         return Ok(());
     }

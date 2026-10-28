@@ -63,6 +63,13 @@ real-targets-check: real-json-verify
     python3 scripts/real_targets.py verify --pair all --profile release --manifest-map run/real-targets/release-manifests.json
     python3 -m unittest tests.test_real_target_sources tests.test_real_target_semantic tests.test_real_target_png tests.test_real_target_bmp tests.test_real_target_x509 tests.test_real_target_campaigns -v
 
+contest-paper:
+    mkdir -p run/contest-paper
+    latexmk -xelatex -interaction=nonstopmode -halt-on-error -file-line-error -outdir=run/contest-paper docs/contest/submission-paper.tex
+
+contest-paper-clean:
+    rm -rf run/contest-paper
+
 check: contest-build real-json-build
     cargo check --all-targets --workspace --locked
     cargo test --workspace --locked

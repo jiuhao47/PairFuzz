@@ -174,6 +174,8 @@ class RepositoryLayoutTests(unittest.TestCase):
                 "contest-demo",
                 "contest-replay",
                 "contest-verify",
+                "contest-paper",
+                "contest-paper-clean",
                 "real-json-build",
                 "real-json-demo",
                 "real-json-replay",

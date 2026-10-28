@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-28",
+  "sources": [
+    {
+      "name": "imagemagick",
+      "version": "7.1.2-34",
+      "tag": "7.1.2-34",
+      "resolved_commit": "fbaaaaaaa9198df72105ce6eb05436b5b78eea67",
+      "url": "https://codeload.github.com/ImageMagick/ImageMagick/tar.gz/refs/tags/7.1.2-34",
+      "sha256": "f5163a573a1c1bff16358d0a592b2fb168ad0fd3b9dc5ff57dc7820eebc5cf79",
+      "archive": "tar.gz",
+      "license": "Apache-2.0",
+      "verification_reference": "https://github.com/ImageMagick/ImageMagick/releases/tag/7.1.2-34"
+    },
+    {
+      "name": "graphicsmagick",
+      "version": "1.3.48",
+      "tag": "1.3.48",
+      "resolved_commit": null,
+      "url": "https://downloads.sourceforge.net/project/graphicsmagick/graphicsmagick/1.3.48/GraphicsMagick-1.3.48.tar.xz",
+      "sha256": "9218eb78179110f91371066ab75cb3b4dd034b9bb464b29ce9bab7a11979232b",
+      "archive": "tar.xz",
+      "license": "MIT",
+      "verification_reference": "https://sourceforge.net/projects/graphicsmagick/files/graphicsmagick/1.3.48/"
+    },
+    {
+      "name": "libpng",
+      "version": "1.6.59",
+      "tag": "v1.6.59",
+      "resolved_commit": "a543b51f2de2904f3436830394b1013782f7f9e6",
+      "url": "https://codeload.github.com/pnggroup/libpng/tar.gz/refs/tags/v1.6.59",
+      "sha256": "2540302a1844ad2b2b501977abecfa850f265f97b78f065a712ab4074a89f5b5",
+      "archive": "tar.gz",
+      "license": "libpng-2.0",
+      "verification_reference": "https://github.com/pnggroup/libpng/releases/tag/v1.6.59"
+    },
+    {
+      "name": "libspng",
+      "version": "0.7.4",
+      "tag": "v0.7.4",
+      "resolved_commit": "5c2183e3e81bf9d989dce3162cd903f986ef9c6e",
+      "url": "https://codeload.github.com/randy408/libspng/tar.gz/refs/tags/v0.7.4",
+      "sha256": "47ec02be6c0a6323044600a9221b049f63e1953faf816903e7383d4dc4234487",
+      "archive": "tar.gz",
+      "license": "BSD-2-Clause",
+      "verification_reference": "https://github.com/randy408/libspng/releases/tag/v0.7.4"
+    },
+    {
+      "name": "openssl",
+      "version": "4.1.0",
+      "tag": "openssl-4.1.0",
+      "resolved_commit": "ad2c6be0cf142e3d8ce78fcdb25070674d28130f",
+      "url": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-4.1.0",
+      "sha256": "2a54158eb6861c07cefc92f1a1d68b12d5ecc0883d53c61a092995b221c7d5fe",
+      "archive": "tar.gz",
+      "license": "Apache-2.0",
+      "verification_reference": "https://github.com/openssl/openssl/releases/tag/openssl-4.1.0"
+    },
+    {
+      "name": "wolfssl",
+      "version": "5.9.4-stable",
+      "tag": "v5.9.4-stable",
+      "resolved_commit": "25ada78b639375fcb252be6fef0f9ad568d46ce2",
+      "url": "https://codeload.github.com/wolfSSL/wolfssl/tar.gz/refs/tags/v5.9.4-stable",
+      "sha256": "7256bfc89b183a75183806c7debfa203443873b0b4a562e1b80d68e01b45ac57",
+      "archive": "tar.gz",
+      "license": "GPL-3.0-or-later",
+      "verification_reference": "https://github.com/wolfSSL/wolfssl/releases/tag/v5.9.4-stable"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.1",
+      "tag": "v1.3.1",
+      "resolved_commit": "925af44f3cde53c6b076611c297850091b5dc7bb",
+      "url": "https://codeload.github.com/madler/zlib/tar.gz/refs/tags/v1.3.1",
+      "sha256": "17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c",
+      "archive": "tar.gz",
+      "license": "Zlib",
+      "verification_reference": "https://github.com/madler/zlib/releases/tag/v1.3.1"
+    },
+    {
+      "name": "xxhash",
+      "version": "0.8.3",
+      "tag": "v0.8.3",
+      "resolved_commit": "e626a72bc2321cd320e953a0ccf1584cad60f363",
+      "url": "https://raw.githubusercontent.com/Cyan4973/xxHash/v0.8.3/xxhash.h",
+      "sha256": "17973c0dc49d9854ca26caa191f0e12f7a424b68858d9a78de3860d959d85e4b",
+      "archive": "raw",
+      "filename": "xxhash.h",
+      "license": "BSD-2-Clause",
+      "verification_reference": "https://github.com/Cyan4973/xxHash/releases/tag/v0.8.3"
+    },
+    {
+      "name": "xxhash-license",
+      "version": "0.8.3",
+      "tag": "v0.8.3",
+      "resolved_commit": "e626a72bc2321cd320e953a0ccf1584cad60f363",
+      "url": "https://raw.githubusercontent.com/Cyan4973/xxHash/v0.8.3/LICENSE",
+      "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a",
+      "archive": "raw",
+      "filename": "xxhash.LICENSE",
+      "license": "BSD-2-Clause",
+      "verification_reference": "https://github.com/Cyan4973/xxHash/releases/tag/v0.8.3"
+    }
+  ]
+}

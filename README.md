@@ -1,125 +1,139 @@
-# DiffRay：基于 Rust 的双目标差分模糊测试原型
+# DiffRay：基于 Rust 的双目标差分模糊测试系统
 
-DiffRay 使用同一份输入驱动两个程序实现，分别收集覆盖信息和语义返回值，
-通过反馈指导输入变异，并保存值得复现的行为差异。核心由 **Rust 2021 + LibAFL**
-实现，被测程序通过插桩和 harness 接入。
+DiffRay 用同一输入驱动两个程序实现，隔离收集两侧覆盖图和语义返回值，通过反馈引导
+语料保留与变异，并把值得审计的行为差异连同元数据保存下来。核心调度、状态管理、
+双目标执行、反馈、进程生命周期和回放由 **Rust 2021 + LibAFL 0.16.1** 实现；本地
+C/C++ 目标通过 forkserver、共享内存和 SanitizerCoverage 接入。
 
-这是为 Rust 软件原型系统大赛整理的经典版本，基于历史提交
-`75c1e02`（2026-02-06）。参见[来源与依赖](docs/contest/provenance.md)。
+本参赛版本从 2026 年 2 月的经典双目标实现恢复，并继续完成了 LibAFL 升级、快速单
+客户端管线、完整 `u64` 语义结果、稳定签名和三组原生目标接入。历史与本次新增内容的
+边界见[来源与依赖](docs/contest/provenance.md)。
 
-## 五分钟真实库演示
+## 环境
 
-准备 Linux x86_64 环境，安装 Rust/rustup、Python 3、Make、GCC 与 Clang/LLVM。
-Ubuntu 24.04 的编译依赖可用以下命令安装：
+推荐 Linux x86_64（当前验证环境为 Ubuntu 24.04），需要 Rust/rustup、Python 3、
+Make、GCC、Clang/LLVM、Git 和 [just](https://github.com/casey/just)。仓库通过
+`rust-toolchain.toml` 固定 Rust **1.93.1**，通过 gitlink 固定 LibAFL **0.16.1**；根项目
+与 `app/compiler/` 各自使用锁文件。
+
+Ubuntu 可先安装基础依赖：
 
 ```bash
 sudo apt-get install build-essential clang-18 llvm-18-dev \
   libclang-18-dev libclang-rt-18-dev pkg-config python3 git
 git submodule update --init LibAFL
-rustup toolchain install 1.91.1 --profile minimal --component rustfmt
+rustup toolchain install 1.93.1 --profile minimal --component rustfmt
 cargo install just --locked
 export PATH="/usr/lib/llvm-18/bin:$PATH"
 export LLVM_CONFIG=/usr/lib/llvm-18/bin/llvm-config
 ```
 
-仓库的 `rust-toolchain.toml` 固定使用 Rust 1.91.1。首次构建需要网络下载依赖；
-根项目与 `app/compiler` 均保留各自的 `Cargo.lock`。
+首次 Rust 构建需要取得锁定 crate。原生 PNG/BMP/X.509 发布门禁还会下载锁定的上游
+源码并消耗较多磁盘与构建时间；它不是下面最小用例的前置条件。
+
+## 最小运行用例：cJSON 与 mjson
+
+cJSON 1.7.19 与 mjson 1.2.7 是评分和快速复现使用的最小运行用例。两侧共同契约把
+“完整输入是 JSON 对象”映射为 `0`，把无效 JSON 或非对象映射为 `1`，空输入映射为
+`100`。
 
 ```bash
-# 校验固定源码并构建 DiffRay、cJSON 1.7.19 与 mjson 1.2.7。
+# 构建 DiffRay 和两个固定版本目标。
 just real-json-build
 
-# 单独检查两个适配器的共同契约和供应链清单。
+# 校验第三方字节、共同契约、五个一致种子和固定真实差异。
 just real-json-verify
 
-# 从两侧行为一致的种子出发，执行 30 秒差分模糊测试。
-just real-json-demo 30
-
-# 稳定复现仓库中的已知真实解析差异。
+# 稳定复现仓库中的已知解析差异。
 just real-json-replay
+
+# 可选：从两侧行为一致的种子开始运行 30 秒有界 campaign。
+just real-json-demo 30
 ```
 
-两个目标都把“完整输入是 JSON 对象”映射为返回值 `0`，把无效 JSON 或非对象
-映射为 `1`，空输入映射为 `100`。最新 mjson 对部分非标准字符串转义较宽松，
-因此 `examples/real-json/known-difference.json` 会得到 **cJSON=1、mjson=0**。
-这是库之间的兼容性差异，不自动等于安全漏洞。
+固定夹具 `examples/real-json/known-difference.json` 的预期结果是
+**cJSON=1、mjson=0**。这是两个解析器的兼容性差异，不自动等于安全漏洞。有限时长
+campaign 具有随机性；若没有保存解，脚本会保留日志而不会用固定夹具冒充随机发现。
+保存样本只有在 forkserver 外独立复现、且元数据与返回值一致后才计数。详见
+[真实 JSON 演示](docs/contest/real-json-demo.md)。
 
-每次 fuzz 会创建独立的 `run/real-json/campaign-*` 目录，保存差分输入、隐藏的
-`.*.metadata`、日志与 `summary.json`。脚本只统计能够在 forkserver 外再次得到
-不同返回值、且元数据与重放一致的样本。30 秒运行仍有随机性；固定样本的 replay
-用于稳定展示。完整说明见[真实库演示](docs/contest/real-json-demo.md)。
+## 扩展验证：规范化原生语义
 
-原有合成数字解析器仍作为快速冒烟测试保留：`just contest-verify`、
-`just contest-demo 30` 和 `just contest-replay`。
+DiffRay 还完整支持三组从固定源码构建的原生目标：
 
-## 系统如何工作
+| 操作 | 目标 A | 目标 B | 规范化结果 |
+| --- | --- | --- | --- |
+| PNG 解码 | libpng 1.6.59 | libspng 0.7.4 | 尺寸与 RGBA8 |
+| BMP 解码 | ImageMagick 7.1.2-34 | GraphicsMagick 1.3.48 | 尺寸与 RGBA8 |
+| DER X.509 解析 | OpenSSL 4.1.0 | wolfSSL 5.9.4 | 重编码 DER |
+
+harness 将结果类别和规范化结果指纹编码进完整 `u64`。fast 管线使用
+`result-policy=exact`、signature v2 和原子差分目标：先比较语义码，再仅为候选计算双侧
+覆盖签名；保存仍要求新的差分目标覆盖。独立 replay 连续执行三次，并用规范化
+SHA-256 审计紧凑指纹。
+
+完整发布门禁为：
+
+```bash
+just real-targets-check
+```
+
+该命令会取得并校验八个锁定来源，构建 ASan/release 目标，并运行 PNG、BMP、X.509
+契约与既有 JSON 验证，因而需要网络、Docker 可用的 Clang 工具链、数 GiB 临时磁盘和
+较长构建时间。单个 pair 的 fetch/build/verify/run/replay 命令、许可证和故障排查见
+[原生语义差分目标](docs/contest/real-native-targets.md)。特别是分发链接 wolfSSL 的产物
+前必须履行对应 GPL-3.0-or-later 义务。
+
+## 系统结构
 
 ```mermaid
 flowchart LR
-    A[种子语料] --> B[调度与 Havoc 变异]
+    A[种子与磁盘语料] --> B[调度 / Havoc / MOpt]
     B --> C[同一输入]
-    C --> D[目标 A Forkserver]
-    C --> E[目标 B Forkserver]
-    D --> F[A 覆盖图与返回值]
-    E --> G[B 覆盖图与返回值]
-    F --> H[反馈与差异判定]
+    C --> D[目标 A forkserver]
+    C --> E[目标 B forkserver]
+    D --> F[A 覆盖图 + u64 语义码]
+    E --> G[B 覆盖图 + u64 语义码]
+    F --> H[语料反馈与原子差分目标]
     G --> H
-    H -->|新颖输入| B
-    H -->|候选差异| I[保存输入与元数据]
-    I --> J[独立复现]
+    H -->|新颖语料| B
+    H -->|语义候选且目标覆盖新颖| I[保存输入与元数据]
+    I --> J[独立三次回放与签名审计]
 ```
 
-- 两侧各自拥有覆盖图和返回值共享内存，避免将两个目标的观测混为一谈。
-- `DiffExecutor` 顺序执行两个 forkserver，反馈决定哪些输入进入后续变异队列。
-- 当前主入口的语义判据为 **一侧返回 0、另一侧返回非 0**，不是比较任意输出文本。
-- 保存条件为“崩溃/超时或语义差异”并结合组合覆盖图的新颖性筛选。
-  保存结果需要复现，不能将候选差异直接当作漏洞。
+- 两侧覆盖图和语义共享内存彼此隔离，子进程每次执行前清零观测状态。
+- legacy 管线保留历史 QueueScheduler/Havoc 行为；fast 管线提供缓存磁盘语料、校准、
+  加权调度、确定性 campaign seed、Havoc/MOpt 与 token 字典。
+- JSON 最小用例沿用零/非零返回值判据；原生目标比较完整 `u64` 语义码。
+- 候选差异不是漏洞结论；短时 smoke 的零保存解也不能证明两个库完全等价。
 
-## 已有反馈模式
+## 验证与开发
 
-`--mode` 切换种子保留策略；差异判据由主入口单独构造。
-
-| 模式 | 反馈依据 |
-| --- | --- |
-| `single-cov` | 任一侧的覆盖新颖性；参赛演示默认模式 |
-| `combo-cov` | 两侧覆盖索引集合的组合新颖性 |
-| `single-rv` / `combo-rv` | 单侧返回值 / 两侧返回值元组的新颖性 |
-| `single-pl` / `combo-pl` | 单侧覆盖索引数量 / 两侧数量组合的新颖性 |
-| `single-rv-cov` | 返回值零/非零状态差异与单侧 `(返回值, 覆盖索引集合)` 新颖性 |
-| `replay-cov` | 对已有语料执行覆盖回放，不进入无限 fuzz 循环 |
-
-这些是历史实现提供的模式；本次演示验收以 `single-cov` 为准。
-覆盖索引数量和集合不等于完整有序执行路径。
-
-## 项目导航
-
-| 位置 | 内容 |
-| --- | --- |
-| [src/](src/) | Rust 驱动、反馈、观察器和差异目标 |
-| [app/compiler/](app/compiler/) | 原有编译器包装器、forkserver 与返回值运行时 |
-| [examples/real-json/](examples/real-json/) | cJSON/mjson 适配器、种子与已知差异 |
-| [third_party/](third_party/) | 固定的上游解析器源码、许可证与校验清单 |
-| [scripts/real_json_demo.py](scripts/real_json_demo.py) | 真实库构建、限时 fuzz、元数据校验与复现入口 |
-| [examples/contest/](examples/contest/) | 自包含合成冒烟目标 |
-| [scripts/contest_demo.py](scripts/contest_demo.py) | 合成演示入口 |
-| [tests/](tests/) | 供应链、目标契约、进程清理与仓库结构回归测试 |
-| [真实库演示说明](docs/contest/real-json-demo.md) | 目标契约、现场命令、结果解释与安全边界 |
-| [参赛介绍与演示讲稿](docs/contest/README.md) | 项目简介、展示顺序与待补充信息 |
-| [验证记录](docs/contest/verification.md) | 本次环境、执行结果与已知限制 |
-| [项目结构](docs/STRUCTURE.md) | 与当前经典版本对应的模块说明 |
-
-当前分支是精简参赛交付，只保留上述可构建路径；完整研究工作区的只读恢复点
-记录在[来源说明](docs/contest/provenance.md)，不构成本项目的运行依赖。
-
-## 开发验证
+普通回归门禁不会重新构建所有大型原生库：
 
 ```bash
 just check
 ```
 
-Rust 1.98 会触发旧 LibAFL 的新增 lint 错误，请先使用固定工具链。
-Clang 18 下上游可选 `dump-cfg-pass.cc` 可能给出跳过警告；本演示使用
-SanitizerCoverage `trace-pc-guard`，不依赖该 pass。
+它构建并验证合成/真实 JSON 目标，执行 Rust 与 Python 测试。可选 LLVM CFG pass 未找到
+时 LibAFL 会给出警告；当前目标使用 `trace-pc-guard`，不依赖该 pass。原生目标的完整
+发布门禁单独使用 `just real-targets-check`。
 
-DiffRay 原创实现与 LibAFL 等上游组件的归属见[来源说明](docs/contest/provenance.md)。
-正式提交前仍需补充比赛规定的团队信息、材料格式与授权文件。
+## 项目导航
+
+| 位置 | 内容 |
+| --- | --- |
+| [src/](src/) | Rust 运行时、legacy/fast 客户端、反馈、语义目标和观察器 |
+| [app/compiler/](app/compiler/) | 插桩包装器、forkserver 静态运行时和 `u64` 语义共享内存 ABI |
+| [examples/real-json/](examples/real-json/) | cJSON/mjson 最小用例、种子与固定差异 |
+| [examples/real-targets/](examples/real-targets/) | PNG/BMP/X.509 适配器、契约和小型夹具 |
+| [scripts/](scripts/) | 构建、验证、campaign、回放和证据导出入口 |
+| [third_party/](third_party/) | JSON vendored 字节、原生来源锁和许可证清单 |
+| [tests/](tests/) | 供应链、ABI、契约、进程生命周期、证据和结构回归 |
+| [docs/contest/README.md](docs/contest/README.md) | 参赛总览和演示讲稿 |
+| [docs/contest/verification.md](docs/contest/verification.md) | 验证环境、结果与限制 |
+| [docs/contest/performance/README.md](docs/contest/performance/README.md) | 性能测量口径和已提交证据 |
+| [docs/STRUCTURE.md](docs/STRUCTURE.md) | 当前仓库模块结构 |
+
+当前仓库尚待项目权利人选择原创代码的根许可证；第三方许可证不能替代该决定。正式提交
+还需要团队信息、公开仓库 URL、固定评审 commit/tag、报名表、签字承诺书和最终稿件。

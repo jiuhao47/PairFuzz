@@ -26,7 +26,8 @@ impl ClientIdentity {
         let campaign_seed = args
             .campaign_seed
             .unwrap_or_else(libafl_bolts::current_nanos);
-        let rng_seed = crate::driver::random::derive_client_seed(campaign_seed, 0, 0);
+        let core_id = args.client_core_id.unwrap_or(0);
+        let rng_seed = crate::driver::random::derive_client_seed(campaign_seed, 0, core_id);
         crate::utils::logging::info(
             "main",
             &format!(
@@ -42,7 +43,7 @@ impl ClientIdentity {
         );
         Self {
             stable_index: 0,
-            core_id: None,
+            core_id: args.client_core_id.map(|value| value as usize),
             rng_seed,
             output_dir: args.output_dir.clone(),
         }

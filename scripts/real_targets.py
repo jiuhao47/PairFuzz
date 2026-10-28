@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from real_targets_lib.builds import build_pair
+from real_targets_lib.campaigns import replay_pair, run_pair, verify_pair
 from real_targets_lib.registry import pair_names, pair_spec
 from real_targets_lib.sources import fetch_source, load_lock, source_entries
 
@@ -34,8 +35,42 @@ def command_fetch(args):
 
 
 def command_build(args):
+    if args.pair != "all":
+        print(build_pair(ROOT, args.pair, args.profile))
+        return
+    pairs = pair_names() if args.pair == "all" else (args.pair,)
+    results = {}
+    for pair in pairs:
+        try:
+            results[pair] = str(build_pair(ROOT, pair, args.profile))
+        except RuntimeError as error:
+            raise RuntimeError(f"cannot build {pair}: {error}") from error
+    print(json.dumps(results, indent=2, sort_keys=True))
+
+
+def command_verify(args):
+    pairs = pair_names() if args.pair == "all" else (args.pair,)
+    results = {}
+    for pair in pairs:
+        try:
+            results[pair] = str(verify_pair(ROOT, pair, args.profile))
+        except RuntimeError as error:
+            raise RuntimeError(f"cannot verify {pair}: {error}") from error
+    print(json.dumps(results, indent=2, sort_keys=True))
+
+
+def command_run(args):
     manifest = build_pair(ROOT, args.pair, args.profile)
-    print(manifest)
+    print(run_pair(ROOT, args.pair, manifest, args.seconds, args.cpu, args.seed))
+
+
+def command_replay(args):
+    from real_targets_lib.campaigns import load_build_manifest
+
+    load_build_manifest(args.build_manifest, expected_pair=args.pair)
+    output = ROOT / "run" / "real-targets" / "replay" / args.pair / str(__import__("time").time_ns())
+    result = replay_pair(args.build_manifest, args.input, output)
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 def parser():
@@ -45,9 +80,25 @@ def parser():
     fetch.add_argument("--pair", choices=(*pair_names(), "all"), required=True)
     fetch.set_defaults(handler=command_fetch)
     build = commands.add_parser("build", help="build one target pair from locked sources")
-    build.add_argument("--pair", choices=pair_names(), required=True)
+    build.add_argument("--pair", choices=(*pair_names(), "all"), required=True)
     build.add_argument("--profile", choices=("asan", "release"), required=True)
     build.set_defaults(handler=command_build)
+    verify = commands.add_parser("verify", help="replay the locked contract fixture suite")
+    verify.add_argument("--pair", choices=(*pair_names(), "all"), required=True)
+    verify.add_argument("--profile", choices=("asan", "release"), required=True)
+    verify.set_defaults(handler=command_verify)
+    run = commands.add_parser("run", help="run one bounded audited campaign")
+    run.add_argument("--pair", choices=pair_names(), required=True)
+    run.add_argument("--profile", choices=("asan", "release"), required=True)
+    run.add_argument("--seconds", type=float, required=True)
+    run.add_argument("--cpu", type=int, required=True)
+    run.add_argument("--seed", type=int, required=True)
+    run.set_defaults(handler=command_run)
+    replay = commands.add_parser("replay", help="audit one input with manifest-selected targets")
+    replay.add_argument("--pair", choices=pair_names(), required=True)
+    replay.add_argument("--build-manifest", type=Path, required=True)
+    replay.add_argument("--input", type=Path, required=True)
+    replay.set_defaults(handler=command_replay)
     return result
 
 

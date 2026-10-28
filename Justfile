@@ -31,6 +31,21 @@ performance-smoke cpu: performance-build
 performance-baseline cpu: performance-build
     python3 scripts/performance_campaign.py run --cpu {{quote(cpu)}}
 
+real-targets-fetch pair="all":
+    python3 scripts/real_targets.py fetch --pair {{quote(pair)}}
+
+real-targets-build pair="png" profile="asan":
+    python3 scripts/real_targets.py build --pair {{quote(pair)}} --profile {{quote(profile)}}
+
+real-targets-verify pair="png" profile="asan":
+    python3 scripts/real_targets.py verify --pair {{quote(pair)}} --profile {{quote(profile)}}
+
+real-targets-run pair="png" seconds="30" cpu="0" profile="release" seed="138977575630630":
+    python3 scripts/real_targets.py run --pair {{quote(pair)}} --profile {{quote(profile)}} --seconds {{quote(seconds)}} --cpu {{quote(cpu)}} --seed {{quote(seed)}}
+
+real-targets-replay pair input manifest:
+    python3 scripts/real_targets.py replay --pair {{quote(pair)}} --input {{quote(input)}} --build-manifest {{quote(manifest)}}
+
 check: contest-build real-json-build
     cargo check --all-targets --workspace --locked
     cargo test --workspace --locked

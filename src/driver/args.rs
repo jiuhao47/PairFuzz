@@ -175,6 +175,9 @@ pub struct Args {
     /// Campaign seed used to derive a stable, client-specific RNG stream.
     #[arg(long)]
     pub campaign_seed: Option<u64>,
+    /// Stable logical core identity used for deterministic per-client seed derivation.
+    #[arg(long)]
+    pub client_core_id: Option<u32>,
     /// AFL-compatible dictionary file. May be supplied more than once.
     #[arg(long = "dict", action = clap::ArgAction::Append)]
     pub dicts: Vec<PathBuf>,
@@ -218,6 +221,12 @@ mod fast_pipeline_tests {
         assert_eq!(havoc.unwrap().mutator, MutatorChoice::Havoc);
         let mopt = Args::try_parse_from(["diffray", "--mutator", "mopt"]);
         assert_eq!(mopt.unwrap().mutator, MutatorChoice::MOpt);
+    }
+
+    #[test]
+    fn client_core_identity_parses() {
+        let args = Args::try_parse_from(["diffray", "--client-core-id", "31"]).unwrap();
+        assert_eq!(args.client_core_id, Some(31));
     }
 
     #[test]

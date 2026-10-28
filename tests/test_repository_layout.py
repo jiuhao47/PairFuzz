@@ -98,7 +98,12 @@ class RepositoryLayoutTests(unittest.TestCase):
             "README.md",
             "Justfile",
             "docs/contest/README.md",
+            "docs/contest/real-native-targets.md",
             "docs/contest/performance/README.md",
+            "docs/contest/performance/native-png-smoke.json",
+            "examples/real-targets/png/contract.json",
+            "scripts/real_targets.py",
+            "third_party/real-targets.lock.json",
         )
         for relative in required:
             with self.subTest(path=relative):
@@ -170,6 +175,11 @@ class RepositoryLayoutTests(unittest.TestCase):
                 "performance-build",
                 "performance-smoke",
                 "performance-baseline",
+                "real-targets-fetch",
+                "real-targets-build",
+                "real-targets-verify",
+                "real-targets-run",
+                "real-targets-replay",
             },
         )
 
@@ -272,6 +282,7 @@ class RepositoryLayoutTests(unittest.TestCase):
             "app/compiler/",
             "examples/real-json/",
             "examples/contest/",
+            "examples/real-targets/",
             "scripts/",
             "tests/",
             "third_party/",
@@ -282,6 +293,7 @@ class RepositoryLayoutTests(unittest.TestCase):
             "driver/target.rs",
             "driver/replay.rs",
             "feedbacks/factory.rs",
+            "real-native-targets.md",
         )
         for path in retained:
             with self.subTest(path=path):

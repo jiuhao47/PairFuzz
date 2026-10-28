@@ -686,6 +686,7 @@ def _build_x509(root: Path, spec, profile: str) -> Path:
     tracked = [root / spec.target_a, root / spec.target_b, root / spec.contract_path]
     tracked.extend(sorted((root / "examples/real-targets/common").glob("*.c")))
     tracked.extend(sorted((root / "examples/real-targets/common").glob("*.h")))
+    tracked.extend(sorted((root / "examples/real-targets/x509").glob("*.h")))
     inputs = {
         "profile": profile,
         "compiler": {"path": str(wrapper.relative_to(root)), "version": compiler_version},
@@ -815,7 +816,7 @@ def _build_x509(root: Path, spec, profile: str) -> Path:
             run(
                 [
                     str(wrapper), *flags.compile, *definitions, *compile_flags,
-                    "-I", str(common), str(common / "semantic.c"),
+                    "-I", str(common), "-I", str(root / "examples/real-targets/x509"), str(common / "semantic.c"),
                     str(common / "harness_io.c"), str(adapter), *link_flags,
                     *flags.link, "-o", str(output),
                 ],

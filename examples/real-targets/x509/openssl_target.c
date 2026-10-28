@@ -1,9 +1,13 @@
 #include "operation.h"
 
 #include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/objects.h>
 #include <openssl/x509.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "x509_facts.h"
 
 int target_init(void) { return OPENSSL_init_crypto(OPENSSL_INIT_NO_LOAD_CONFIG, NULL) == 1 ? 0 : -1; }
 const char *target_operation(void) { return "certificate.x509.parse.der"; }
@@ -50,4 +54,20 @@ void target_execute(const uint8_t *input, size_t length,
   result->class_id = DIFFRAY_RESULT_ACCEPTED;
   result->normalized = encoded;
   result->normalized_len = (size_t)encoded_length;
+}
+
+int target_replay_facts(const uint8_t *input, size_t length,
+                        char output[DIFFRAY_FACTS_LIMIT]) {
+  const unsigned char *cursor = input;
+  ERR_clear_error();
+  X509 *certificate = d2i_X509(NULL, &cursor, (long)length);
+  if (certificate == NULL || cursor != input + length) {
+    X509_free(certificate);
+    ERR_clear_error();
+    return -1;
+  }
+  int status = x509_write_facts(certificate, output);
+  X509_free(certificate);
+  ERR_clear_error();
+  return status;
 }

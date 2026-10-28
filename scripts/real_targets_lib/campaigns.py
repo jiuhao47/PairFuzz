@@ -365,7 +365,15 @@ def verify_pair(root: Path, pair: str, profile: str) -> Path:
         if fixture.get("matching"):
             for role in ("a", "b"):
                 report = first[role]
-                if report["class"] != fixture["expected_class"] or [report["width"], report["height"]] != fixture["dimensions"] or report["normalized_sha256"] != fixture["canonical_sha256"]:
+                dimensions_match = "dimensions" not in fixture or [
+                    report["width"],
+                    report["height"],
+                ] == fixture["dimensions"]
+                if (
+                    report["class"] != fixture["expected_class"]
+                    or not dimensions_match
+                    or report["normalized_sha256"] != fixture["canonical_sha256"]
+                ):
                     raise CampaignError(f"fixture {fixture['name']} does not match its canonical expectation for {role}")
         else:
             for role in ("a", "b"):

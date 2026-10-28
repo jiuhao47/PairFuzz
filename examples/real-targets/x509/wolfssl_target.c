@@ -4,7 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wolfssl/options.h>
+#include <wolfssl/openssl/evp.h>
+#include <wolfssl/openssl/objects.h>
 #include <wolfssl/openssl/ssl.h>
+
+#include "x509_facts.h"
 
 int target_init(void) { return wolfSSL_Init() == WOLFSSL_SUCCESS ? 0 : -1; }
 const char *target_operation(void) { return "certificate.x509.parse.der"; }
@@ -49,4 +53,18 @@ void target_execute(const uint8_t *input, size_t length,
   result->class_id = DIFFRAY_RESULT_ACCEPTED;
   result->normalized = encoded;
   result->normalized_len = (size_t)encoded_length;
+}
+
+int target_replay_facts(const uint8_t *input, size_t length,
+                        char output[DIFFRAY_FACTS_LIMIT]) {
+  if (length > INT_MAX) return -1;
+  const unsigned char *cursor = input;
+  WOLFSSL_X509 *certificate = wolfSSL_d2i_X509(NULL, &cursor, (int)length);
+  if (certificate == NULL || cursor != input + length) {
+    wolfSSL_X509_free(certificate);
+    return -1;
+  }
+  int status = x509_write_facts(certificate, output);
+  wolfSSL_X509_free(certificate);
+  return status;
 }

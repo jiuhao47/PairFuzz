@@ -25,6 +25,24 @@ kgxwES3d8jPNuGILVATRJ83sI86M49ZbHzP5iO+FeUE3bJ9m6Ml1BvEQf9pGSjFBcRt0mpStT/Nn
 fmFEDSAkqT8Ngkd1/pS/rynVSLPYUnebnYNqu1GFHiNJa2gUbQd8uKQL5BStNPsxolLiRg==
 """
 
+X509_RSA_PRIVATE_KEY_PEM = b"""-----BEGIN PRIVATE KEY-----
+MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBANnsTBKbW7NtQhdO
+k2m0GJXRqTmcdJW611WFzrzOtWQQmcSXIzFNvhdvhnJN+lxJxIsd9WzmopvXmrKw
+qTHY1nvALrLkUooCUNeS+aIcuXLuAeRWJs9OvYPReNHxWKTQsJLA6Gp9jOU8IKxD
+vX+TjZ2WDnn1qOEjfuHdiYKs9P8ZAgMBAAECgYB6yusSkPfa4nWbLGtj5Fb2FG2G
+SOJofB9Z0Uvsl40eFTyPyZnK7kNucSkQv1+TIP3eZcMk2dBGf/ZrOaActlIj3j1D
+V84dnU5TcVDPTIVVNyiI7pSeMFT2UPZZzDNuTU+kZXBTYMsHrK4kq2eOpON8PLLg
+WVlLSjw/3Z4KxgbgAQJBAPrOlqXc4zEzC7QWXuKanPAMoR1mEN9lf2++JR4wgpT8
+3ERXc7t0AndGQbrNRdUm8bm2/Xm6hBDaryPoyQdTQLECQQDeb2f3WcYERynum9Op
+VvLa7GNzHPCJKn6SqtmeRJEliFT0NvKlfcNTV9sNEYrZj7QRQYt7+aUlOTPgdr1j
+2H7pAkBk0ywInZXPr3+i8+NNIW65qboTQXbC9+CVIVF2o3W7QzOhXa6uyuI65MmD
+uQW7vJ4sVH3ts6dnxyHlQ62c/kDhAkAEeE6pjNdK3Lc+AUmmnIWy2o9BD/LRftYe
+UmqfIJeeHng+lCAaLUXQlfJj99dHefjPY/bOnfywm86sExbJO9+JAkEAq5nvfViu
+PL+NAR2DX3AO2KriacQOtPJuaWZNeGe8Obpx6tQ2ri1zzOMWd6I8hfVTPQHbTpFt
+Q0tc3R1K1ugJvQ==
+-----END PRIVATE KEY-----
+"""
+
 
 def chunk(kind, data, bad_crc=False):
     crc = binascii.crc32(kind + data) & 0xFFFFFFFF
@@ -387,24 +405,221 @@ def generate_bmp(output):
 
 
 def generate_x509(output):
+    from datetime import datetime, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID, ObjectIdentifier
+
     seeds = output / "seeds"
     seeds.mkdir(parents=True, exist_ok=True)
-    probe = base64.b64decode(X509_PROBE_DER_BASE64)
-    (seeds / "rsa-self-signed.der").write_bytes(probe)
+    fixtures = []
+    rejected = {"a": "rejected", "b": "rejected"}
+    resource = {"a": "resource-limit", "b": "resource-limit"}
+
+    def der_length(length):
+        if length < 0x80:
+            return bytes([length])
+        encoded = length.to_bytes((length.bit_length() + 7) // 8, "big")
+        return bytes([0x80 | len(encoded)]) + encoded
+
+    def tlv(payload, tag=0x30):
+        return bytes([tag]) + der_length(len(payload)) + payload
+
+    def read_tlv(payload, offset=0):
+        tag = payload[offset]
+        first = payload[offset + 1]
+        if first < 0x80:
+            header = 2
+            length = first
+        else:
+            count = first & 0x7F
+            header = 2 + count
+            length = int.from_bytes(payload[offset + 2 : offset + header], "big")
+        end = offset + header + length
+        return tag, offset + header, end
+
+    def canonical_der(der):
+        return b"\x02" + struct.pack("<Q", len(der)) + der
+
+    def add_matching(name, der):
+        path = seeds / f"{name}.der"
+        path.write_bytes(der)
+        fixtures.append(
+            {
+                "name": name,
+                "path": f"seeds/{name}.der",
+                "sha256": hashlib.sha256(der).hexdigest(),
+                "matching": True,
+                "expected_class": "accepted",
+                "canonical_sha256": hashlib.sha256(canonical_der(der)).hexdigest(),
+            }
+        )
+
+    def add_invalid(name, payload, expected=rejected, suffix="der"):
+        path = seeds / f"{name}.{suffix}"
+        path.write_bytes(payload)
+        fixtures.append(
+            {
+                "name": name,
+                "path": f"seeds/{name}.{suffix}",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "expected_by_target": expected,
+            }
+        )
+
+    key = serialization.load_pem_private_key(X509_RSA_PRIVATE_KEY_PEM, None)
+    base_name = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay deterministic X509"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+        ]
+    )
+
+    def certificate(
+        name,
+        *,
+        serial,
+        subject=None,
+        public_key=None,
+        not_before=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        not_after=datetime(2034, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        extensions=(),
+    ):
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(subject or base_name)
+            .issuer_name(base_name)
+            .public_key(public_key or key.public_key())
+            .serial_number(serial)
+            .not_valid_before(not_before)
+            .not_valid_after(not_after)
+        )
+        for extension, critical in extensions:
+            builder = builder.add_extension(extension, critical)
+        der = builder.sign(key, hashes.SHA256()).public_bytes(serialization.Encoding.DER)
+        add_matching(name, der)
+        return der
+
+    rsa_v3 = certificate(
+        "rsa-v3",
+        serial=1,
+        extensions=((x509.BasicConstraints(ca=False, path_length=None), True),),
+    )
+    certificate(
+        "ec-public-key",
+        serial=2,
+        public_key=ec.derive_private_key(7, ec.SECP256R1()).public_key(),
+    )
+    certificate("long-serial", serial=(1 << 158) + 0x12345)
+    multi_name = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay quoted + name"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "Parser Unit"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+        ]
+    )
+    certificate("multi-valued-name", serial=4, subject=multi_name)
+    certificate(
+        "time-variants",
+        serial=5,
+        not_before=datetime(2048, 12, 31, 23, 59, 58, tzinfo=timezone.utc),
+        not_after=datetime(2051, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+    )
+    certificate(
+        "unknown-oid",
+        serial=6,
+        extensions=(
+            (
+                x509.UnrecognizedExtension(
+                    ObjectIdentifier("1.3.6.1.4.1.55555.1"), b"\x05\x00"
+                ),
+                False,
+            ),
+        ),
+    )
+    certificate(
+        "dns-san",
+        serial=7,
+        extensions=((x509.SubjectAlternativeName([x509.DNSName("diffray.invalid")]), False),),
+    )
+    certificate(
+        "unicode-name",
+        serial=8,
+        subject=x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay Unicode"),
+                x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "解析器"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+            ]
+        ),
+    )
+    certificate(
+        "embedded-nul-name",
+        serial=9,
+        subject=x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay\x00NUL"),
+                x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "Parser"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+            ]
+        ),
+    )
+
+    # A certificate without the optional [0] EXPLICIT version is DER v1. The
+    # signature is intentionally not verified by this parse/re-encode target.
+    outer_tag, outer_start, outer_end = read_tlv(rsa_v3)
+    tbs_tag, tbs_start, tbs_end = read_tlv(rsa_v3, outer_start)
+    assert outer_tag == tbs_tag == 0x30 and rsa_v3[tbs_start : tbs_start + 5] == b"\xa0\x03\x02\x01\x02"
+    v1_tbs = tlv(rsa_v3[tbs_start + 5 : tbs_end])
+    rsa_v1 = tlv(v1_tbs + rsa_v3[tbs_end:outer_end])
+    add_invalid("rsa-v1", rsa_v1, expected={"a": "accepted", "b": "rejected"})
+
+    add_invalid("trailing-byte", rsa_v3 + b"\x00")
+    add_invalid("truncated-tbs", rsa_v3[:tbs_end - 1])
+    add_invalid("truncated-signature", rsa_v3[:-9])
+    tbs_children = []
+    cursor = tbs_start
+    while cursor < tbs_end:
+        tag, value_start, child_end = read_tlv(rsa_v3, cursor)
+        tbs_children.append((tag, cursor, value_start, child_end))
+        cursor = child_end
+    for label, child in zip(
+        ("version", "serial", "algorithm", "issuer", "validity", "subject", "spki", "extensions"),
+        tbs_children,
+    ):
+        _, child_start, value_start, child_end = child
+        cut = max(value_start, child_start + (child_end - child_start) // 2)
+        add_invalid(f"truncated-{label}", rsa_v3[:cut])
+    add_invalid("non-certificate", tlv(b"\x02\x01\x01"))
+    pem = b"-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(rsa_v3) + b"-----END CERTIFICATE-----\n"
+    add_invalid("pem", pem, suffix="pem")
+    add_invalid(
+        "indefinite-length",
+        b"\x30\x80" + rsa_v3[outer_start:outer_end] + b"\x00\x00",
+        expected={"a": "accepted", "b": "rejected"},
+    )
+    outer_body = rsa_v3[outer_start:outer_end]
+    add_invalid(
+        "nonminimal-length",
+        b"\x30\x83\x00" + len(outer_body).to_bytes(2, "big") + outer_body,
+        expected={"a": "accepted", "b": "rejected"},
+    )
+    add_invalid("overflow-length", b"\x30\x88" + b"\xff" * 8)
+    add_invalid("empty", b"")
+    add_invalid("exact-1mib", rsa_v3 + bytes(1048576 - len(rsa_v3)))
+    add_invalid("over-1mib", bytes(1048577), expected=resource)
+
+    # Preserve the task-1 probe name as an alias seed without using it as a
+    # second fixture identity.
+    (seeds / "rsa-self-signed.der").write_bytes(base64.b64decode(X509_PROBE_DER_BASE64))
     (output / "fixtures.json").write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "generator": "scripts/generate_real_target_fixtures.py",
-                "fixtures": [
-                    {
-                        "name": "rsa-self-signed",
-                        "path": "seeds/rsa-self-signed.der",
-                        "sha256": hashlib.sha256(probe).hexdigest(),
-                        "matching": True,
-                        "expected_class": "accepted",
-                    }
-                ],
+                "fixtures": fixtures,
             },
             indent=2,
             sort_keys=True,

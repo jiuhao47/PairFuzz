@@ -114,6 +114,10 @@ static int replay(const char *input_path, const char *output_path) {
 
   struct diffray_operation_result result;
   execute_operation(bytes, length, &result);
+  if (result.class_id == DIFFRAY_RESULT_ACCEPTED && target_replay_facts != NULL &&
+      target_replay_facts(bytes, length, result.facts_json) != 0) {
+    strcpy(result.facts_json, "{\"version\":null,\"serial_hex\":null,\"subject\":null,\"issuer\":null,\"not_before\":null,\"not_after\":null,\"public_key_algorithm_oid\":null,\"signature_algorithm_oid\":null}");
+  }
   free(bytes);
   uint64_t code = diffray_semantic_code(&result, active_schema);
   unlink(output_path);

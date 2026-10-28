@@ -14,6 +14,12 @@ void target_execute(const uint8_t *input, size_t length,
                     struct diffray_operation_result *result);
 void target_cleanup(void);
 
+#if defined(__GNUC__) || defined(__clang__)
+int target_replay_facts(const uint8_t *input, size_t length,
+                        char output[DIFFRAY_FACTS_LIMIT])
+    __attribute__((weak));
+#endif
+
 #ifdef __cplusplus
 }
 #endif

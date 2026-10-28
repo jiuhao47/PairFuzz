@@ -1,11 +1,256 @@
 {
   "fixtures": [
     {
+      "canonical_sha256": "7fdbe8e6dd42d2811d23a1ba64149a93782ea78748216a8d3db850d1c9f2bbb0",
       "expected_class": "accepted",
       "matching": true,
-      "name": "rsa-self-signed",
-      "path": "seeds/rsa-self-signed.der",
-      "sha256": "ede0a121b1cf3ff1c10b4ee1f6de7c84aa0e5c298648c8311136026c28cb77e1"
+      "name": "rsa-v3",
+      "path": "seeds/rsa-v3.der",
+      "sha256": "441b2a43f17aa4383c41f429e536e5bbe2354721b88efad153802907e660eb77"
+    },
+    {
+      "canonical_sha256": "a7e2e85cf63bcd1161aaabb71e720e792b6afc7a09b4fad32eca6c800ad88894",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "ec-public-key",
+      "path": "seeds/ec-public-key.der",
+      "sha256": "4a45202d6a89c2b16f996ff37cfc9b1937477dea855bd47feb3a40df8aa3eb47"
+    },
+    {
+      "canonical_sha256": "1705f9a61b4b396c394aa138608888744a738f2f1639a57aa743059a533cd032",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "long-serial",
+      "path": "seeds/long-serial.der",
+      "sha256": "58549edf7e40e7ce06ef93f678b1966b813af8aa663a1482d399447be9491bcc"
+    },
+    {
+      "canonical_sha256": "af343e7066c578823ee39a673770772e8cf1bc161c58ee73260a2fbed5c67572",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "multi-valued-name",
+      "path": "seeds/multi-valued-name.der",
+      "sha256": "9a2684530efeff9bbce2be387e8cd34ec9ea18c879f81319aa1c337115ec5ee5"
+    },
+    {
+      "canonical_sha256": "00b6808e075ec1c3fe31205ff7ac79d8d2d01256e8144d562aa97bd9c33df95d",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "time-variants",
+      "path": "seeds/time-variants.der",
+      "sha256": "5ac91465c113abb5037af1c1ce24729de7f8291b97e2041efaa2d35f111a4389"
+    },
+    {
+      "canonical_sha256": "ee9a7c8840b188b56972524a8e1bcfc2bc833d0b2f85540fdb219500a2216812",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "unknown-oid",
+      "path": "seeds/unknown-oid.der",
+      "sha256": "f27afc309ea4d2e6a03711ee4b71e8aadf1172717168e2c90b73e452ac2d8638"
+    },
+    {
+      "canonical_sha256": "aa2a82dd1df185851419f241b5e71a3eea60ce757026d32bf73e1c623062ea77",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "dns-san",
+      "path": "seeds/dns-san.der",
+      "sha256": "2073969e5dd79266ba6009354c083e7ac6b8ad335bdd325e0c87e9c4110a931e"
+    },
+    {
+      "canonical_sha256": "75de02a5943e1c51c6d36b03a9c4ec4aa61d64ebd0aadc514fb20206950bb32a",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "unicode-name",
+      "path": "seeds/unicode-name.der",
+      "sha256": "3fb66cae18db01992126499979f847214aebdde2f5e81741db856764115f5126"
+    },
+    {
+      "canonical_sha256": "e9ec17b830221b34c11d98dfd10012f7eed5fa5b122252f785ee71fa9a642d43",
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "embedded-nul-name",
+      "path": "seeds/embedded-nul-name.der",
+      "sha256": "34cfd890e5fd8200250c27f520ba06fbf9c94ff1cecbe9642b56ca6cda7cf200"
+    },
+    {
+      "expected_by_target": {
+        "a": "accepted",
+        "b": "rejected"
+      },
+      "name": "rsa-v1",
+      "path": "seeds/rsa-v1.der",
+      "sha256": "2e082aefed9b7d0d5c327350b3473b5ebbfd97dc62d920bf3802969b075d7e0d"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "trailing-byte",
+      "path": "seeds/trailing-byte.der",
+      "sha256": "35dc35e349a8b82818be365cba6e466173fae8e8e84c8edc4e3ca3537f88769a"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-tbs",
+      "path": "seeds/truncated-tbs.der",
+      "sha256": "f648cf8711c3b93f90c5ad302b3d89f0864dfccc34c81f94a42e2c986dd93288"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-signature",
+      "path": "seeds/truncated-signature.der",
+      "sha256": "5dc016c8c00032de407025641cee3c362925853de423ac05f1c63489d450202c"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-version",
+      "path": "seeds/truncated-version.der",
+      "sha256": "2adb5aedde771c263e598499d9fee50a737085199bcf61c536b4bc2cac86aedf"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-serial",
+      "path": "seeds/truncated-serial.der",
+      "sha256": "6b9ac61afca272c25b538bb228afe4fffdff31f8020c90e6fa794fb064308c9d"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-algorithm",
+      "path": "seeds/truncated-algorithm.der",
+      "sha256": "76ff514a7811153602fcd721b248f0397dc65fb076658dd7e96cd585427f82f6"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-issuer",
+      "path": "seeds/truncated-issuer.der",
+      "sha256": "cf79849f052d0d67788622c8ef4c997102bc972cc0ddcee3053480cf628b725e"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-validity",
+      "path": "seeds/truncated-validity.der",
+      "sha256": "0c2a3fbb796b3921ffc8cbdf9f6ec7a837e5f9a5366a8a2ce6d7f26646a0ee21"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-subject",
+      "path": "seeds/truncated-subject.der",
+      "sha256": "3aaaea995eae36e6e9bc292e10ca8d94113b4a212d840edd80de18f80eda31d1"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-spki",
+      "path": "seeds/truncated-spki.der",
+      "sha256": "d24457d8b7877accec05b9370299132c418772a93301b0abbb00ba729a1a6de8"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "truncated-extensions",
+      "path": "seeds/truncated-extensions.der",
+      "sha256": "242483a05f557a819b3ecc898ab9bafd824e0cd137c24a82d715386de7bb9705"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "non-certificate",
+      "path": "seeds/non-certificate.der",
+      "sha256": "1b65f68a522c858715f5dd951cd0402dc16691778814bf0759822b7a257421d0"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "pem",
+      "path": "seeds/pem.pem",
+      "sha256": "7b5b25802598e52c7bdb8456ea382b52704d3d67489bc312138c06710dff8d7a"
+    },
+    {
+      "expected_by_target": {
+        "a": "accepted",
+        "b": "rejected"
+      },
+      "name": "indefinite-length",
+      "path": "seeds/indefinite-length.der",
+      "sha256": "8afc4234e484a49ee66efde9817fe7d96df8e06f6d44771086c240bfa5046bb8"
+    },
+    {
+      "expected_by_target": {
+        "a": "accepted",
+        "b": "rejected"
+      },
+      "name": "nonminimal-length",
+      "path": "seeds/nonminimal-length.der",
+      "sha256": "b53d042177f958df2dda23f00c132bad9533e5ae4e397a7ff2b0035a30f9f961"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "overflow-length",
+      "path": "seeds/overflow-length.der",
+      "sha256": "5f4aaf9f0d234cf2a2f98585a6aa99c85fee54d714c9971a45f1f3a8b568999a"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "empty",
+      "path": "seeds/empty.der",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "expected_by_target": {
+        "a": "rejected",
+        "b": "rejected"
+      },
+      "name": "exact-1mib",
+      "path": "seeds/exact-1mib.der",
+      "sha256": "e1c380220a34d776b7b9770889a886f30681b05cf412d8e2164b82be6303f408"
+    },
+    {
+      "expected_by_target": {
+        "a": "resource-limit",
+        "b": "resource-limit"
+      },
+      "name": "over-1mib",
+      "path": "seeds/over-1mib.der",
+      "sha256": "2cb74edba754a81d121c9db6833704a8e7d417e5b13d1a19f4a52f007d644264"
     }
   ],
   "generator": "scripts/generate_real_target_fixtures.py",

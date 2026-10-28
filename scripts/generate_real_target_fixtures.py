@@ -2,6 +2,7 @@
 """Generate deterministic PNG fixtures and independent RGBA8 expectations."""
 
 import argparse
+import base64
 import binascii
 import hashlib
 import json
@@ -10,6 +11,19 @@ import zlib
 from pathlib import Path
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+X509_PROBE_DER_BASE64 = """
+MIICMTCCAZqgAwIBAgIBATANBgkqhkiG9w0BAQsFADA0MRswGQYDVQQDDBJEaWZmUmF5IFg1MDkg
+UHJvYmUxFTATBgNVBAoMDERpZmZSYXkgVGVzdDAeFw0yNjEwMjgwNzA1NDJaFw0zNjEwMjUwNzA1
+NDJaMDQxGzAZBgNVBAMMEkRpZmZSYXkgWDUwOSBQcm9iZTEVMBMGA1UECgwMRGlmZlJheSBUZXN0
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDZ7EwSm1uzbUIXTpNptBiV0ak5nHSVutdVhc68
+zrVkEJnElyMxTb4Xb4ZyTfpcScSLHfVs5qKb15qysKkx2NZ7wC6y5FKKAlDXkvmiHLly7gHkVibP
+Tr2D0XjR8Vik0LCSwOhqfYzlPCCsQ71/k42dlg559ajhI37h3YmCrPT/GQIDAQABo1MwUTAdBgNV
+HQ4EFgQU2aJ/pQzWp6g4HzggnXE2LxzUIYswHwYDVR0jBBgwFoAU2aJ/pQzWp6g4HzggnXE2LxzU
+IYswDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOBgQCDUi0Fw71znzLdXuHyqo1V3VKx
+kgxwES3d8jPNuGILVATRJ83sI86M49ZbHzP5iO+FeUE3bJ9m6Ml1BvEQf9pGSjFBcRt0mpStT/Nn
+fmFEDSAkqT8Ngkd1/pS/rynVSLPYUnebnYNqu1GFHiNJa2gUbQd8uKQL5BStNPsxolLiRg==
+"""
 
 
 def chunk(kind, data, bad_crc=False):
@@ -372,15 +386,44 @@ def generate_bmp(output):
     )
 
 
+def generate_x509(output):
+    seeds = output / "seeds"
+    seeds.mkdir(parents=True, exist_ok=True)
+    probe = base64.b64decode(X509_PROBE_DER_BASE64)
+    (seeds / "rsa-self-signed.der").write_bytes(probe)
+    (output / "fixtures.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generator": "scripts/generate_real_target_fixtures.py",
+                "fixtures": [
+                    {
+                        "name": "rsa-self-signed",
+                        "path": "seeds/rsa-self-signed.der",
+                        "sha256": hashlib.sha256(probe).hexdigest(),
+                        "matching": True,
+                        "expected_class": "accepted",
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pair", choices=("png", "bmp"), required=True)
+    parser.add_argument("--pair", choices=("png", "bmp", "x509"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.pair == "png":
         generate(arguments.output)
-    else:
+    elif arguments.pair == "bmp":
         generate_bmp(arguments.output)
+    else:
+        generate_x509(arguments.output)
 
 
 if __name__ == "__main__":

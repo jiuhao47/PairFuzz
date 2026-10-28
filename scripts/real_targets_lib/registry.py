@@ -52,6 +52,7 @@ _PAIRS = {
         _BASE / "x509/seeds",
         _BASE / "x509/contract.json",
         ("openssl", "wolfssl", "xxhash", "xxhash-license"),
+        True,
     ),
 }
 

@@ -1,0 +1,13 @@
+{
+  "fixtures": [
+    {
+      "expected_class": "accepted",
+      "matching": true,
+      "name": "rsa-self-signed",
+      "path": "seeds/rsa-self-signed.der",
+      "sha256": "ede0a121b1cf3ff1c10b4ee1f6de7c84aa0e5c298648c8311136026c28cb77e1"
+    }
+  ],
+  "generator": "scripts/generate_real_target_fixtures.py",
+  "schema_version": 1
+}

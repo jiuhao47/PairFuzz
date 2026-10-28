@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -16,6 +17,7 @@ from scripts.real_targets_lib.builds import (
     clean_build_environment,
     profile_flags,
 )
+from scripts.real_targets_lib import builds as native_builds
 from scripts.real_targets_lib.registry import pair_spec
 from scripts.real_targets_lib.sources import SourceError, fetch_source, load_lock
 
@@ -256,6 +258,94 @@ class BmpBuildTests(unittest.TestCase):
                 self.assertEqual(configuration["threads"], 1)
                 self.assertEqual(configuration["memory_limit_bytes"], 64 * 1024 * 1024)
                 self.assertEqual(configuration["map_limit_bytes"], 64 * 1024 * 1024)
+
+
+class X509BuildTests(unittest.TestCase):
+    def test_registry_and_lock_pin_the_approved_x509_pair(self):
+        x509 = pair_spec("x509")
+        self.assertTrue(x509.build_supported)
+        self.assertEqual(x509.operation, "certificate.x509.parse.der")
+        self.assertEqual((x509.library_a, x509.library_b), ("openssl", "wolfssl"))
+        lock = load_lock(ROOT / "third_party/real-targets.lock.json")
+        entries = {entry["name"]: entry for entry in lock["sources"]}
+        self.assertEqual(
+            (entries["openssl"]["tag"], entries["openssl"]["sha256"], entries["openssl"]["license"]),
+            (
+                "openssl-4.1.0",
+                "2a54158eb6861c07cefc92f1a1d68b12d5ecc0883d53c61a092995b221c7d5fe",
+                "Apache-2.0",
+            ),
+        )
+        self.assertEqual(
+            (entries["wolfssl"]["tag"], entries["wolfssl"]["sha256"], entries["wolfssl"]["license"]),
+            (
+                "v5.9.4-stable",
+                "7256bfc89b183a75183806c7debfa203443873b0b4a562e1b80d68e01b45ac57",
+                "GPL-3.0-or-later",
+            ),
+        )
+
+    def test_minimal_x509_configurations_are_fingerprinted(self):
+        configure = getattr(native_builds, "x509_build_configuration", None)
+        self.assertIsNotNone(configure, "x509 build configuration is missing")
+        openssl = configure("openssl", Path("/install/openssl"))
+        wolfssl = configure("wolfssl", Path("/install/wolfssl"))
+        self.assertIn("no-shared", openssl["configure"])
+        self.assertIn("no-apps", openssl["configure"])
+        self.assertIn("no-tests", openssl["configure"])
+        self.assertIn("no-module", openssl["configure"])
+        self.assertIn("no-dso", openssl["configure"])
+        self.assertIn("--disable-shared", wolfssl["configure"])
+        self.assertIn("--disable-examples", wolfssl["configure"])
+        self.assertIn("--disable-crypttests", wolfssl["configure"])
+        self.assertIn("--enable-opensslextra", wolfssl["configure"])
+        self.assertIn("--enable-certgen", wolfssl["configure"])
+        for configuration in (openssl, wolfssl):
+            self.assertFalse(configuration["trust_store"])
+            self.assertEqual(
+                configuration["required_symbols"],
+                ["d2i_X509", "i2d_X509", "X509_free"],
+            )
+
+    def test_explicit_native_gate_records_probes_symbols_and_coverage(self):
+        profile = os.environ.get("DIFFRAY_X509_TEST_PROFILE")
+        if profile is None:
+            self.skipTest("native X509 integration is exercised by its explicit profile gate")
+        completed = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "scripts/real_targets.py"),
+                "build",
+                "--pair",
+                "x509",
+                "--profile",
+                profile,
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        manifest_path = Path(completed.stdout.strip())
+        manifest = json.loads(manifest_path.read_text())
+        self.assertEqual((manifest["pair"], manifest["profile"]), ("x509", profile))
+        self.assertEqual(manifest["operation"], "certificate.x509.parse.der")
+        self.assertEqual(set(manifest["api_probes"]), {"openssl", "wolfssl"})
+        self.assertTrue(all(manifest["api_probes"].values()))
+        for library in ("openssl", "wolfssl"):
+            self.assertTrue(manifest["coverage_archives"][library])
+            self.assertEqual(
+                manifest["required_symbols"][library],
+                ["d2i_X509", "i2d_X509", "X509_free"],
+            )
+        build_root = manifest_path.parent.resolve()
+        for target in manifest["targets"].values():
+            path = (ROOT / target["path"]).resolve()
+            self.assertTrue(path.is_relative_to(build_root))
+            self.assertTrue(path.is_file())
+        command_text = "\n".join(" ".join(command["argv"]) for command in manifest["commands"])
+        self.assertNotIn(" make test", command_text)
+        self.assertNotIn(" apps/openssl", command_text)
 
 
 if __name__ == "__main__":

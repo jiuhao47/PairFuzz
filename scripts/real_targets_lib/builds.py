@@ -106,6 +106,55 @@ def magick_build_configuration(library: str, prefix: Path) -> dict:
     }
 
 
+def x509_build_configuration(library: str, prefix: Path) -> dict:
+    required_symbols = ["d2i_X509", "i2d_X509", "X509_free"]
+    if library == "openssl":
+        configure = (
+            "linux-x86_64",
+            "no-shared",
+            "no-pinshared",
+            "no-asm",
+            "no-apps",
+            "no-tests",
+            "no-module",
+            "no-dso",
+            "no-engine",
+            "no-legacy",
+            "no-fips",
+            "no-comp",
+            "no-async",
+            "no-sock",
+            "no-ui-console",
+            "no-stdio",
+            "no-threads",
+            f"--prefix={prefix}",
+            f"--openssldir={prefix / 'configuration-disabled'}",
+        )
+        definitions = ("OPENSSL_NO_AUTOLOAD_CONFIG",)
+    elif library == "wolfssl":
+        configure = (
+            "--disable-shared",
+            "--enable-static",
+            "--disable-examples",
+            "--disable-crypttests",
+            "--disable-benchmark",
+            "--disable-filesystem",
+            "--disable-asm",
+            "--enable-opensslextra",
+            "--enable-certgen",
+            f"--prefix={prefix}",
+        )
+        definitions = ("WOLFSSL_NO_DEFAULT_CERTS",)
+    else:
+        raise ValueError(f"unknown X509 library {library!r}")
+    return {
+        "configure": configure,
+        "definitions": definitions,
+        "required_symbols": required_symbols,
+        "trust_store": False,
+    }
+
+
 def build_fingerprint(inputs: dict) -> str:
     encoded = json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     return hashlib.sha256(encoded).hexdigest()
@@ -180,6 +229,8 @@ def build_pair(root: Path, pair: str, profile: str) -> Path:
         return _build_png(root, spec, profile)
     if pair == "bmp":
         return _build_bmp(root, spec, profile)
+    if pair == "x509":
+        return _build_x509(root, spec, profile)
     raise AssertionError("implemented pair is missing its builder")
 
 
@@ -332,6 +383,16 @@ def _pkg_config_flags(pkgconfig: Path, package: str, option: str) -> list[str]:
         check=True,
     )
     return shlex.split(completed.stdout)
+
+
+def _pkg_config_directory(prefix: Path) -> Path:
+    candidates = [
+        path for path in (prefix / "lib/pkgconfig", prefix / "lib64/pkgconfig")
+        if path.is_dir()
+    ]
+    if len(candidates) != 1:
+        raise RuntimeError(f"expected one pkg-config directory below {prefix}, got {candidates}")
+    return candidates[0]
 
 
 def _build_bmp(root: Path, spec, profile: str) -> Path:
@@ -508,7 +569,7 @@ def _build_bmp(root: Path, spec, profile: str) -> Path:
             "b": ("graphicsmagick", "GraphicsMagick", root / spec.target_b),
         }
         for role, (name, package, adapter) in packages.items():
-            pkgconfig = install / name / "lib/pkgconfig"
+            pkgconfig = _pkg_config_directory(install / name)
             compile_flags = _pkg_config_flags(pkgconfig, package, "--cflags")
             link_flags = _pkg_config_flags(pkgconfig, package, "--libs")
             output = targets / f"bmp-{role}"
@@ -581,6 +642,249 @@ def _build_bmp(root: Path, spec, profile: str) -> Path:
                     "delegates": "none",
                 },
                 "coverage_archives": coverage_archives,
+                "targets": target_records,
+            }
+        )
+
+
+def _build_x509(root: Path, spec, profile: str) -> Path:
+    lock = load_lock(root / "third_party" / "real-targets.lock.json")
+    entries = source_entries(lock)
+    cache = root / "run" / "real-targets" / "sources"
+    sources = {
+        name: fetch_source(entries[name], cache) for name in ("openssl", "wolfssl")
+    }
+    wrapper = root / "app/compiler/target/debug/libafl_forkserver_cc"
+    cxx_wrapper = root / "app/compiler/target/debug/libafl_forkserver_cxx"
+    tool_path = root / "run/toolchain/bin"
+    subprocess.run(
+        ["cargo", "build", "--locked", "--manifest-path", str(root / "app/compiler/Cargo.toml")],
+        cwd=root,
+        env={**os.environ, "PATH": str(tool_path) + os.pathsep + os.environ["PATH"]},
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    compiler_env = {
+        **os.environ,
+        "PATH": str(tool_path) + os.pathsep + os.environ["PATH"],
+        "DIFFRAY_TARGET_PROFILE": profile,
+    }
+    compiler_version = subprocess.run(
+        [str(wrapper), "--version"],
+        env=compiler_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    probe_cc = "/usr/bin/cc"
+    probe_cxx = "/usr/bin/c++"
+    flags = profile_flags(profile)
+    configurations = {
+        name: x509_build_configuration(name, Path(f"/fingerprint/{name}"))
+        for name in ("openssl", "wolfssl")
+    }
+    tracked = [root / spec.target_a, root / spec.target_b, root / spec.contract_path]
+    tracked.extend(sorted((root / "examples/real-targets/common").glob("*.c")))
+    tracked.extend(sorted((root / "examples/real-targets/common").glob("*.h")))
+    inputs = {
+        "profile": profile,
+        "compiler": {"path": str(wrapper.relative_to(root)), "version": compiler_version},
+        "configure_probe_compiler": {"cc": probe_cc, "cxx": probe_cxx},
+        "flags": {"compile": flags.compile, "link": flags.link},
+        "preprocessor_flags": ("-D_GNU_SOURCE",),
+        "dependencies": {name: entries[name] for name in spec.dependencies},
+        "sources": {str(path.relative_to(root)): _sha256(path) for path in tracked},
+        "build_logic": {
+            str(path.relative_to(root)): _sha256(path)
+            for path in (
+                root / "scripts/real_targets.py",
+                root / "scripts/real_targets_lib/builds.py",
+                root / "scripts/real_targets_lib/registry.py",
+            )
+        },
+        "seeds": {
+            str(path.relative_to(root)): _sha256(path)
+            for path in sorted((root / spec.seed_dir).glob("*"))
+            if path.is_file()
+        },
+        "wrapper_runtime_sha256": _sha256(
+            root / "app/compiler/target/debug/liblibforkserver_libafl_cc.a"
+        ),
+        "configure": configurations,
+        "runtime_policy": {"trust_store": False, "configuration": "disabled"},
+    }
+    fingerprint = build_fingerprint(inputs)
+    build_root = root / "run/real-targets/build" / spec.name / profile / fingerprint
+    manifest = build_root / "build.json"
+    if manifest.is_file():
+        recorded = json.loads(manifest.read_text())
+        if recorded.get("status") == "complete" and all(
+            (root / value["path"]).is_file() for value in recorded["targets"].values()
+        ):
+            return manifest
+    if build_root.exists():
+        shutil.rmtree(build_root)
+    work = build_root / "work"
+    install = build_root / "install"
+    targets = build_root / "targets"
+    for path in (work, install, targets):
+        path.mkdir(parents=True)
+    base_env = clean_build_environment(
+        compiler_env,
+        profile=profile,
+        cc=str(wrapper),
+        cxx=str(cxx_wrapper),
+        ar="/usr/bin/ar",
+        ranlib="/usr/bin/ranlib",
+    )
+    base_env["CFLAGS"] = " ".join(flags.compile)
+    base_env["CXXFLAGS"] = " ".join(flags.compile)
+    base_env["CPPFLAGS"] = "-D_GNU_SOURCE"
+    base_env["LDFLAGS"] = " ".join(flags.link)
+    probe_env = dict(base_env)
+    probe_env.update({"CC": probe_cc, "CXX": probe_cxx, "LDFLAGS": ""})
+    actual_configurations = {
+        name: x509_build_configuration(name, install / name)
+        for name in ("openssl", "wolfssl")
+    }
+    identity = {"schema_version": 1, "fingerprint": fingerprint, "fingerprint_inputs": inputs}
+    with BuildManifestTransaction(build_root, identity) as transaction:
+        def run(argv, *, cwd, env=None):
+            effective = dict(base_env if env is None else env)
+            recorded_environment = {
+                key: effective[key]
+                for key in sorted(effective)
+                if key in {
+                    "PATH", "CC", "CXX", "AR", "RANLIB", "CFLAGS", "CXXFLAGS",
+                    "CPPFLAGS", "LDFLAGS", "DIFFRAY_TARGET_PROFILE",
+                }
+            }
+            transaction.record_command(argv, recorded_environment)
+            with (build_root / "build.log").open("a", encoding="utf-8") as log:
+                subprocess.run(
+                    argv,
+                    cwd=cwd,
+                    env=effective,
+                    check=True,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+
+        openssl_source = work / "source-openssl"
+        shutil.copytree(_source_root(sources["openssl"]), openssl_source)
+        openssl_install = install / "openssl"
+        run(
+            ["perl", str(openssl_source / "Configure"), *actual_configurations["openssl"]["configure"]],
+            cwd=openssl_source,
+            env=probe_env,
+        )
+        run(
+            ["make", "--jobs=4", f"CC={wrapper}", f"CXX={cxx_wrapper}", "build_libs"],
+            cwd=openssl_source,
+        )
+        run(
+            ["make", f"CC={wrapper}", f"CXX={cxx_wrapper}", "install_dev"],
+            cwd=openssl_source,
+        )
+
+        wolfssl_source = work / "source-wolfssl"
+        shutil.copytree(_source_root(sources["wolfssl"]), wolfssl_source)
+        wolfssl_install = install / "wolfssl"
+        run([str(wolfssl_source / "autogen.sh")], cwd=wolfssl_source, env=probe_env)
+        run(
+            [str(wolfssl_source / "configure"), *actual_configurations["wolfssl"]["configure"]],
+            cwd=wolfssl_source,
+            env=probe_env,
+        )
+        run(
+            ["make", "--jobs=4", f"CC={wrapper}", f"CXX={cxx_wrapper}", "install"],
+            cwd=wolfssl_source,
+        )
+
+        common = root / "examples/real-targets/common"
+        packages = {
+            "a": ("openssl", "libcrypto", root / spec.target_a),
+            "b": ("wolfssl", "wolfssl", root / spec.target_b),
+        }
+        for role, (name, package, adapter) in packages.items():
+            pkgconfig = _pkg_config_directory(install / name)
+            compile_flags = _pkg_config_flags(pkgconfig, package, "--cflags")
+            link_flags = _pkg_config_flags(pkgconfig, package, "--libs")
+            definitions = [f"-D{definition}" for definition in actual_configurations[name]["definitions"]]
+            output = targets / f"x509-{role}"
+            run(
+                [
+                    str(wrapper), *flags.compile, *definitions, *compile_flags,
+                    "-I", str(common), str(common / "semantic.c"),
+                    str(common / "harness_io.c"), str(adapter), *link_flags,
+                    *flags.link, "-o", str(output),
+                ],
+                cwd=root,
+            )
+
+        seed = next(iter(sorted((root / spec.seed_dir).glob("*.der"))), None)
+        if seed is None:
+            raise RuntimeError("X509 API probe requires a DER seed")
+        api_probes = {}
+        target_records = {}
+        for role, (name, _package, _adapter) in packages.items():
+            path = targets / f"x509-{role}"
+            normalized = build_root / f"probe-{role}.canonical"
+            completed = subprocess.run(
+                [str(path), "--replay", str(seed), "--normalized-output", str(normalized)],
+                cwd=root,
+                env={name: value for name, value in os.environ.items() if not name.startswith(("__AFL_", "__DIFFRAY_"))},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            api_probes[name] = completed.returncode == 0 and normalized.is_file()
+            if not api_probes[name]:
+                raise RuntimeError(f"{name} X509 decode/re-encode API probe failed: {completed.stderr}")
+            normalized.unlink()
+            ldd = subprocess.run(["ldd", str(path)], capture_output=True, text=True, check=True).stdout
+            target_records[role] = {
+                "path": str(path.relative_to(root)), "sha256": _sha256(path), "ldd": ldd,
+            }
+
+        archive_paths = {
+            "openssl": sorted(openssl_install.rglob("*.a")),
+            "wolfssl": sorted(wolfssl_install.rglob("*.a")),
+        }
+        coverage_archives = {}
+        required_symbols = {}
+        symbol_spellings = {
+            "openssl": ("d2i_X509", "i2d_X509", "X509_free"),
+            "wolfssl": ("wolfSSL_d2i_X509", "wolfSSL_i2d_X509", "wolfSSL_X509_free"),
+        }
+        for name, archives in archive_paths.items():
+            coverage_archives[name] = []
+            symbol_text = ""
+            for archive in archives:
+                nm = subprocess.run(["nm", str(archive)], capture_output=True, text=True, check=True).stdout
+                symbol_text += nm
+                if "__sanitizer_cov_trace_pc_guard" in nm:
+                    coverage_archives[name].append(str(archive.relative_to(root)))
+            missing = [symbol for symbol in symbol_spellings[name] if symbol not in symbol_text]
+            if missing:
+                raise RuntimeError(f"{name} X509 archive is missing symbols: {missing}")
+            required_symbols[name] = list(actual_configurations[name]["required_symbols"])
+        return transaction.complete(
+            {
+                "pair": spec.name,
+                "operation": spec.operation,
+                "profile": profile,
+                "source_sha256": {name: entries[name]["sha256"] for name in spec.dependencies},
+                "target_source_sha256": inputs["sources"],
+                "seed_sha256": inputs["seeds"],
+                "effective_flags": inputs["flags"],
+                "compiler": inputs["compiler"],
+                "licenses": {name: entries[name]["license"] for name in spec.dependencies},
+                "configure": actual_configurations,
+                "runtime_environment": {"trust_store": False, "configuration": "disabled"},
+                "required_symbols": required_symbols,
+                "coverage_archives": coverage_archives,
+                "api_probes": api_probes,
                 "targets": target_records,
             }
         )

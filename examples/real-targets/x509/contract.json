@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "operation": "certificate.x509.parse.der",
+  "semantic_schema": 2,
+  "input_limit": 1048576,
+  "normalized_output_limit": 1048576,
+  "input_format": "one complete DER X.509 certificate",
+  "complete_consumption": true,
+  "canonical_output": "library re-encoded DER",
+  "shared_der_prefilter": false,
+  "trust_verification": false
+}

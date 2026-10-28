@@ -79,7 +79,7 @@ just real-targets-check
 ```
 
 该命令会取得并校验八个锁定来源，构建 ASan/release 目标，并运行 PNG、BMP、X.509
-契约与既有 JSON 验证，因而需要网络、Docker 可用的 Clang 工具链、数 GiB 临时磁盘和
+契约与既有 JSON 验证，因而需要网络、本地可用的 Clang/LLVM 工具链、数 GiB 临时磁盘和
 较长构建时间。单个 pair 的 fetch/build/verify/run/replay 命令、许可证和故障排查见
 [原生语义差分目标](docs/contest/real-native-targets.md)。特别是分发链接 wolfSSL 的产物
 前必须履行对应 GPL-3.0-or-later 义务。
@@ -98,7 +98,7 @@ flowchart LR
     G --> H
     H -->|新颖语料| B
     H -->|语义候选且目标覆盖新颖| I[保存输入与元数据]
-    I --> J[独立三次回放与签名审计]
+    I --> J[独立回放：JSON 返回值与元数据 / 原生三次签名审计]
 ```
 
 - 两侧覆盖图和语义共享内存彼此隔离，子进程每次执行前清零观测状态。

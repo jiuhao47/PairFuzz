@@ -11,6 +11,7 @@ from pathlib import Path
 
 from scripts.real_targets_lib.builds import (
     BuildManifestTransaction,
+    magick_build_configuration,
     build_fingerprint,
     clean_build_environment,
     profile_flags,
@@ -233,6 +234,28 @@ class BuildProvenanceTests(unittest.TestCase):
             data = json.loads(manifest.read_text())
             self.assertEqual(data["status"], "complete")
             self.assertIn("-O3", data["commands"][0]["argv"])
+
+
+class BmpBuildTests(unittest.TestCase):
+    def test_registry_enables_the_locked_bmp_pair(self):
+        bmp = pair_spec("bmp")
+        self.assertTrue(bmp.build_supported)
+        self.assertEqual(bmp.operation, "image.bmp.decode.rgba8")
+        self.assertEqual((bmp.library_a, bmp.library_b), ("imagemagick", "graphicsmagick"))
+
+    def test_magick_configurations_disable_modules_delegates_and_openmp(self):
+        for library in ("imagemagick", "graphicsmagick"):
+            with self.subTest(library=library):
+                configuration = magick_build_configuration(library, Path("/install"))
+                joined = " ".join(configuration["configure"])
+                self.assertIn("--disable-shared", joined)
+                self.assertIn("--disable-openmp", joined)
+                self.assertIn("--without-modules", joined)
+                self.assertIn("--without-xml", joined)
+                self.assertEqual(configuration["coder_allowlist"], ["BMP"])
+                self.assertEqual(configuration["threads"], 1)
+                self.assertEqual(configuration["memory_limit_bytes"], 64 * 1024 * 1024)
+                self.assertEqual(configuration["map_limit_bytes"], 64 * 1024 * 1024)
 
 
 if __name__ == "__main__":

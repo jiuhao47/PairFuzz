@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "operation": "image.bmp.decode.rgba8",
+  "semantic_schema": 1,
+  "input_limit": 1048576,
+  "max_dimension": 4096,
+  "max_pixels": 4194304,
+  "max_rgba_bytes": 16777216,
+  "accepted_signatures": ["BM"],
+  "unsupported_signatures": ["BA"],
+  "allowed_compressions": [0, 1, 2, 3, 6],
+  "unsupported_compressions": [4, 5],
+  "multiple_images": "unsupported",
+  "alpha": "straight; BI_RGB-32 unused alpha normalizes to 255",
+  "orientation": "top-left-row-major",
+  "apply_color_profiles": false,
+  "apply_gamma": false
+}

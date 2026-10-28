@@ -103,12 +103,69 @@ def generate(output):
     (output / "fixtures.json").write_text(json.dumps({"schema_version": 1, "generator": "scripts/generate_real_target_fixtures.py", "fixtures": fixtures}, indent=2, sort_keys=True) + "\n")
 
 
+def make_bmp(width, height, pixels, *, bits_per_pixel=24, compression=0):
+    offset = 14 + 40
+    size = offset + len(pixels)
+    return (
+        b"BM"
+        + struct.pack("<IHHI", size, 0, 0, offset)
+        + struct.pack(
+            "<IiiHHIIiiII",
+            40,
+            width,
+            height,
+            1,
+            bits_per_pixel,
+            compression,
+            len(pixels),
+            0,
+            0,
+            0,
+            0,
+        )
+        + pixels
+    )
+
+
+def generate_bmp(output):
+    seeds = output / "seeds"
+    seeds.mkdir(parents=True, exist_ok=True)
+    # Bottom-up BGR rows with one byte of row padding: red, then green.
+    payload = make_bmp(2, 1, bytes([0, 0, 255, 0, 255, 0, 0, 0]))
+    path = seeds / "rgb24-2x1.bmp"
+    path.write_bytes(payload)
+    fixtures = [
+        {
+            "name": "rgb24-2x1",
+            "path": "seeds/rgb24-2x1.bmp",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "scope": "decode",
+            "dimensions": [2, 1],
+        }
+    ]
+    (output / "fixtures.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generator": "scripts/generate_real_target_fixtures.py",
+                "fixtures": fixtures,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pair", choices=("png",), required=True)
+    parser.add_argument("--pair", choices=("png", "bmp"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
-    generate(arguments.output)
+    if arguments.pair == "png":
+        generate(arguments.output)
+    else:
+        generate_bmp(arguments.output)
 
 
 if __name__ == "__main__":

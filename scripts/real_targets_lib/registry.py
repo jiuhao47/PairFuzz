@@ -40,6 +40,7 @@ _PAIRS = {
         _BASE / "bmp/seeds",
         _BASE / "bmp/contract.json",
         ("imagemagick", "graphicsmagick", "xxhash", "xxhash-license"),
+        True,
     ),
     "x509": PairSpec(
         "x509",

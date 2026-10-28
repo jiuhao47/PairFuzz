@@ -1,0 +1,16 @@
+{
+  "fixtures": [
+    {
+      "dimensions": [
+        2,
+        1
+      ],
+      "name": "rgb24-2x1",
+      "path": "seeds/rgb24-2x1.bmp",
+      "scope": "decode",
+      "sha256": "99ea9f7424a0b75f49d66e7842c0bebb90c12a60641ba163bb124ca54fd59254"
+    }
+  ],
+  "generator": "scripts/generate_real_target_fixtures.py",
+  "schema_version": 1
+}

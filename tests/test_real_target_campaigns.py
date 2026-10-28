@@ -14,7 +14,14 @@ from scripts.real_targets_lib.campaigns import (
     load_build_manifest,
     replay_pair,
     run_pair,
+    verify_manifests,
 )
+from scripts.real_targets_lib.evidence import (
+    EvidenceError,
+    write_native_summary,
+    write_smoke_evidence,
+)
+from scripts.real_targets_lib.registry import pair_names
 
 
 class NativeCampaignTests(unittest.TestCase):
@@ -375,6 +382,255 @@ class BmpCampaignTests(unittest.TestCase):
         self.assertEqual(log_a.read_text().splitlines().count(solution), 3)
         self.assertEqual(log_b.read_text().splitlines().count(solution), 3)
         self.assertEqual(json.loads((result / "summary.json").read_text())["stable_signatures"], 1)
+
+
+class X509CampaignTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="diffray x509 campaign ")
+        self.root = Path(self.temporary.name)
+        (self.root / "third_party").mkdir()
+        (self.root / "run/build").mkdir(parents=True)
+        self.input = self.root / "certificate.der"
+        self.input.write_bytes(b"der")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def executable(self, relative, body):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env python3\n" + body)
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        return path
+
+    def manifest(self, target_a, target_b):
+        def record(path):
+            return {
+                "path": str(path.relative_to(self.root)),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+
+        payload = {
+            "schema_version": 1,
+            "status": "complete",
+            "pair": "x509",
+            "operation": "certificate.x509.parse.der",
+            "profile": "asan",
+            "targets": {"a": record(target_a), "b": record(target_b)},
+        }
+        path = self.root / "run/build/x509.json"
+        path.write_text(json.dumps(payload))
+        return path
+
+    def target(self, name, *, exit_code=0):
+        if exit_code:
+            body = f"import sys; sys.exit({exit_code})\n"
+        else:
+            body = (
+                "import json,pathlib,sys\n"
+                "pathlib.Path(sys.argv[4]).write_bytes(b'canonical')\n"
+                "print(json.dumps({'schema_version':1,'operation':'certificate.x509.parse.der','class':'accepted','semantic_code':'0000000000000001','width':0,'height':0,'normalized_length':9,'facts':{},'diagnostic':''}))\n"
+            )
+        return self.executable(f"targets/{name}", body)
+
+    def test_registry_order_is_png_bmp_x509(self):
+        self.assertEqual(pair_names(), ("png", "bmp", "x509"))
+
+    def test_stable_crash_replay_has_matching_exits_and_no_normalized_file(self):
+        crash = self.target("crash", exit_code=7)
+        accepted = self.target("accepted")
+        result = replay_pair(self.manifest(crash, accepted), self.input, self.root / "audit")
+        self.assertTrue(result["stable"])
+        self.assertTrue(result["differential"])
+        self.assertEqual([run["a"]["exit_code"] for run in result["runs"]], [7, 7, 7])
+        self.assertEqual([run["a"]["normalized_sha256"] for run in result["runs"]], [None, None, None])
+
+
+class FinalGateTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="diffray final gate ")
+        self.root = Path(self.temporary.name)
+        (self.root / "third_party").mkdir()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_verify_all_attempts_every_pair_and_preserves_failure_report(self):
+        manifests = {pair: self.root / f"{pair}.json" for pair in pair_names()}
+        attempts = []
+
+        def verifier(_root, pair, profile, manifest):
+            attempts.append((pair, profile, manifest))
+            if pair == "bmp":
+                raise CampaignError("broken fixture")
+            path = self.root / f"{pair}-summary.json"
+            path.write_text(json.dumps({"status": "complete"}))
+            return path
+
+        with mock.patch(
+            "scripts.real_targets_lib.campaigns.verify_pair", side_effect=verifier
+        ):
+            with self.assertRaisesRegex(CampaignError, "bmp") as raised:
+                verify_manifests(self.root, manifests, "release")
+        self.assertEqual([attempt[0] for attempt in attempts], list(pair_names()))
+        report = Path(str(raised.exception).split("evidence: ", 1)[1])
+        payload = json.loads(report.read_text())
+        self.assertEqual(payload["attempted"], list(pair_names()))
+        self.assertEqual(payload["results"]["bmp"]["status"], "failed")
+
+    def evidence(self, pair, *, seed=7, profiles=("asan", "release"), complete=True):
+        path = self.root / f"{pair}.json"
+        payload = {
+            "schema_version": 1,
+            "label": "smoke-not-performance-ranking",
+            "pair": pair,
+            "operation": {
+                "png": "image.png.decode.rgba8",
+                "bmp": "image.bmp.decode.rgba8",
+                "x509": "certificate.x509.parse.der",
+            }[pair],
+            "campaign_seed": seed,
+            "source_versions": {"library": "1.0"},
+            "profiles": {},
+        }
+        for profile in profiles:
+            payload["profiles"][profile] = {
+                "profile": profile,
+                "logical_cpu": 3,
+                "wall_seconds": 10.0,
+                "executions": 100,
+                "throughput_executions_per_wall_second": 10.0,
+                "solutions_saved": 1,
+                "stable_signatures": 1 if complete else 0,
+                "unstable_or_unreproducible": 0 if complete else 1,
+                "replay_completeness": {
+                    "saved": 1,
+                    "audited": 1 if complete else 0,
+                    "three_run_complete": 1 if complete else 0,
+                },
+                "build_manifest_sha256": "a" * 64,
+                "target_sha256": {"a": "b" * 64, "b": "c" * 64},
+            }
+        path.write_text(json.dumps(payload))
+        return path
+
+    def test_native_summary_rejects_mixed_seed_profile_or_incomplete_replay(self):
+        evidences = [self.evidence(pair) for pair in pair_names()]
+        summary = self.root / "summary.json"
+        write_native_summary(evidences, summary)
+        payload = json.loads(summary.read_text())
+        self.assertEqual([item["pair"] for item in payload["pairs"]], list(pair_names()))
+        self.assertTrue(all(Path(item["evidence"]).name.endswith(".json") for item in payload["pairs"]))
+
+        with self.assertRaisesRegex(EvidenceError, "seed"):
+            write_native_summary(
+                [self.evidence("png"), self.evidence("bmp", seed=8), self.evidence("x509")],
+                summary,
+            )
+        with self.assertRaisesRegex(EvidenceError, "profiles"):
+            write_native_summary(
+                [self.evidence("png"), self.evidence("bmp", profiles=("release",)), self.evidence("x509")],
+                summary,
+            )
+        with self.assertRaisesRegex(EvidenceError, "replay"):
+            write_native_summary(
+                [self.evidence("png"), self.evidence("bmp", complete=False), self.evidence("x509")],
+                summary,
+            )
+
+    def test_smoke_export_rejects_a_mixed_build_manifest(self):
+        dependencies = ("zlib", "libpng", "libspng", "xxhash", "xxhash-license")
+        (self.root / "third_party/real-targets.lock.json").write_text(
+            json.dumps(
+                {
+                    "sources": [
+                        {"name": name, "version": "1", "sha256": name * 8}
+                        for name in dependencies
+                    ]
+                }
+            )
+        )
+        summaries = {}
+        for profile in ("asan", "release"):
+            directory = self.root / "run" / profile
+            directory.mkdir(parents=True)
+            manifest = directory / "build.json"
+            manifest_payload = {
+                "pair": "png",
+                "profile": profile,
+                "fingerprint": profile[0] * 64,
+                "source_sha256": {name: name * 8 for name in dependencies},
+                "targets": {
+                    "a": {"sha256": "a" * 64},
+                    "b": {"sha256": "b" * 64},
+                },
+            }
+            manifest.write_text(json.dumps(manifest_payload))
+            manifest_sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
+            (directory / "campaign.json").write_text(
+                json.dumps(
+                    {
+                        "manifest": str(manifest),
+                        "seconds": 10,
+                        "cpu": 3,
+                    }
+                )
+            )
+            summary = directory / "summary.json"
+            summary.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "status": "complete",
+                        "pair": "png",
+                        "profile": profile,
+                        "operation": "image.png.decode.rgba8",
+                        "seed": 7,
+                        "seed_sha256": {"seed": "c" * 64},
+                        "build_manifest_sha256": manifest_sha,
+                        "target_sha256": {"a": "a" * 64, "b": "b" * 64},
+                        "wall_seconds": 10.0,
+                        "cpu_seconds": 9.0,
+                        "peak_rss_kb": 1,
+                        "executions": 100,
+                        "solutions_saved": 0,
+                        "stable_signatures": 0,
+                        "unstable_or_unreproducible": 0,
+                        "zero_solutions": True,
+                        "replays": [],
+                    }
+                )
+            )
+            summaries[profile] = summary
+        output = self.root / "smoke.json"
+        write_smoke_evidence(self.root, "png", summaries, output, host={})
+        release = json.loads(summaries["release"].read_text())
+        release["target_sha256"]["b"] = "d" * 64
+        summaries["release"].write_text(json.dumps(release))
+        with self.assertRaisesRegex(EvidenceError, "manifest"):
+            write_smoke_evidence(self.root, "png", summaries, output, host={})
+
+    def test_final_recipe_and_docs_cover_all_release_obligations(self):
+        justfile = (Path(__file__).parents[1] / "Justfile").read_text()
+        documentation = (Path(__file__).parents[1] / "docs/contest/real-native-targets.md").read_text()
+        self.assertIn("real-targets-check", justfile)
+        for required in (
+            "fetch --pair all",
+            "--profile asan",
+            "--profile release",
+            "real-json-verify",
+            "verify --pair all",
+        ):
+            self.assertIn(required, justfile)
+        for required in (
+            "OpenSSL",
+            "wolfSSL",
+            "GPL-3.0-or-later",
+            "certificate.x509.parse.der",
+            "每个差分覆盖路径保存首个语义差异",
+            "adapter-error",
+        ):
+            self.assertIn(required, documentation)
 
 
 if __name__ == "__main__":

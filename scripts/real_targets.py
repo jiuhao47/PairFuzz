@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from real_targets_lib.builds import build_pair
-from real_targets_lib.campaigns import replay_pair, run_pair, verify_pair
+from real_targets_lib.campaigns import replay_pair, run_pair, verify_manifests, verify_pair
 from real_targets_lib.registry import pair_names, pair_spec
 from real_targets_lib.sources import fetch_source, load_lock, source_entries
 
@@ -49,6 +49,22 @@ def command_build(args):
 
 
 def command_verify(args):
+    if args.pair == "all":
+        if args.manifest_map is None:
+            raise RuntimeError("verify --pair all requires --manifest-map and never builds implicitly")
+        try:
+            payload = json.loads(args.manifest_map.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"cannot read manifest map {args.manifest_map}: {error}") from error
+        if not isinstance(payload, dict):
+            raise RuntimeError("manifest map must be a JSON object")
+        manifests = {
+            pair: Path(payload[pair])
+            for pair in pair_names()
+            if pair in payload
+        }
+        print(verify_manifests(ROOT, manifests, args.profile))
+        return
     pairs = pair_names() if args.pair == "all" else (args.pair,)
     results = {}
     for pair in pairs:
@@ -86,6 +102,7 @@ def parser():
     verify = commands.add_parser("verify", help="replay the locked contract fixture suite")
     verify.add_argument("--pair", choices=(*pair_names(), "all"), required=True)
     verify.add_argument("--profile", choices=("asan", "release"), required=True)
+    verify.add_argument("--manifest-map", type=Path)
     verify.set_defaults(handler=command_verify)
     run = commands.add_parser("run", help="run one bounded audited campaign")
     run.add_argument("--pair", choices=pair_names(), required=True)

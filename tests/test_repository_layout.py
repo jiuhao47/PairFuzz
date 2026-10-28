@@ -101,8 +101,14 @@ class RepositoryLayoutTests(unittest.TestCase):
             "docs/contest/real-native-targets.md",
             "docs/contest/performance/README.md",
             "docs/contest/performance/native-png-smoke.json",
+            "docs/contest/performance/native-bmp-smoke.json",
+            "docs/contest/performance/native-x509-smoke.json",
+            "docs/contest/performance/native-targets-summary.json",
             "examples/real-targets/png/contract.json",
+            "examples/real-targets/bmp/contract.json",
+            "examples/real-targets/x509/contract.json",
             "scripts/real_targets.py",
+            "scripts/real_targets_lib/evidence.py",
             "third_party/real-targets.lock.json",
         )
         for relative in required:
@@ -178,8 +184,12 @@ class RepositoryLayoutTests(unittest.TestCase):
                 "real-targets-fetch",
                 "real-targets-build",
                 "real-targets-verify",
+                "real-targets-verify-all",
                 "real-targets-run",
                 "real-targets-replay",
+                "real-targets-x509-run",
+                "real-targets-x509-replay",
+                "real-targets-check",
             },
         )
 

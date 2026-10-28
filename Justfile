@@ -40,11 +40,28 @@ real-targets-build pair="png" profile="asan":
 real-targets-verify pair="png" profile="asan":
     python3 scripts/real_targets.py verify --pair {{quote(pair)}} --profile {{quote(profile)}}
 
+real-targets-verify-all profile manifest_map:
+    python3 scripts/real_targets.py verify --pair all --profile {{quote(profile)}} --manifest-map {{quote(manifest_map)}}
+
 real-targets-run pair="png" seconds="30" cpu="0" profile="release" seed="138977575630630":
     python3 scripts/real_targets.py run --pair {{quote(pair)}} --profile {{quote(profile)}} --seconds {{quote(seconds)}} --cpu {{quote(cpu)}} --seed {{quote(seed)}}
 
 real-targets-replay pair input manifest:
     python3 scripts/real_targets.py replay --pair {{quote(pair)}} --input {{quote(input)}} --build-manifest {{quote(manifest)}}
+
+real-targets-x509-run seconds="30" cpu="0" profile="release" seed="138977575630630":
+    python3 scripts/real_targets.py run --pair x509 --profile {{quote(profile)}} --seconds {{quote(seconds)}} --cpu {{quote(cpu)}} --seed {{quote(seed)}}
+
+real-targets-x509-replay input manifest:
+    python3 scripts/real_targets.py replay --pair x509 --input {{quote(input)}} --build-manifest {{quote(manifest)}}
+
+real-targets-check: real-json-verify
+    python3 scripts/real_targets.py fetch --pair all
+    python3 scripts/real_targets.py build --pair all --profile asan > run/real-targets/asan-manifests.json
+    python3 scripts/real_targets.py verify --pair all --profile asan --manifest-map run/real-targets/asan-manifests.json
+    python3 scripts/real_targets.py build --pair all --profile release > run/real-targets/release-manifests.json
+    python3 scripts/real_targets.py verify --pair all --profile release --manifest-map run/real-targets/release-manifests.json
+    python3 -m unittest tests.test_real_target_sources tests.test_real_target_semantic tests.test_real_target_png tests.test_real_target_bmp tests.test_real_target_x509 tests.test_real_target_campaigns -v
 
 check: contest-build real-json-build
     cargo check --all-targets --workspace --locked

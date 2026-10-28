@@ -346,10 +346,11 @@ def run_pair(root: Path, pair: str, manifest: Path, seconds: float, cpu: int, se
     return campaign_root
 
 
-def verify_pair(root: Path, pair: str, profile: str) -> Path:
-    from .builds import build_pair
+def verify_pair(root: Path, pair: str, profile: str, manifest_path: Path | None = None) -> Path:
+    if manifest_path is None:
+        from .builds import build_pair
 
-    manifest_path = build_pair(root, pair, profile)
+        manifest_path = build_pair(root, pair, profile)
     build = load_build_manifest(manifest_path, expected_pair=pair, expected_profile=profile)
     fixtures_path = root / f"examples/real-targets/{pair}/fixtures.json"
     if not fixtures_path.is_file():
@@ -383,3 +384,52 @@ def verify_pair(root: Path, pair: str, profile: str) -> Path:
     summary = {"schema_version": 1, "status": "complete", "pair": pair, "profile": profile, "manifest": str(build.path), "fixtures": records}
     _write_json(verify_root / "summary.json", summary)
     return verify_root / "summary.json"
+
+
+def verify_manifests(root: Path, manifests: dict[str, Path], profile: str) -> Path:
+    from .registry import pair_names
+
+    expected = pair_names()
+    if set(manifests) != set(expected):
+        raise CampaignError(
+            f"manifest map must contain exactly {', '.join(expected)}"
+        )
+    verify_root = (
+        root.resolve()
+        / "run/real-targets/verify/all"
+        / profile
+        / str(time.time_ns())
+    )
+    verify_root.mkdir(parents=True)
+    results = {}
+    failures = []
+    for pair in expected:
+        try:
+            summary = verify_pair(root, pair, profile, Path(manifests[pair]))
+            results[pair] = {"status": "complete", "summary": str(summary)}
+        except (
+            CampaignError,
+            RuntimeError,
+            OSError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as error:
+            failures.append(pair)
+            results[pair] = {"status": "failed", "error": str(error)}
+    aggregate = verify_root / "summary.json"
+    _write_json(
+        aggregate,
+        {
+            "schema_version": 1,
+            "status": "failed" if failures else "complete",
+            "profile": profile,
+            "attempted": list(expected),
+            "results": results,
+        },
+    )
+    if failures:
+        raise CampaignError(
+            f"cannot verify {', '.join(failures)}; evidence: {aggregate}"
+        )
+    return aggregate

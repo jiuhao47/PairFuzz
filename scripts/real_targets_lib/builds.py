@@ -172,7 +172,7 @@ def clean_build_environment(base: dict, *, profile: str, cc: str, cxx: str, ar: 
             "CXX": cxx,
             "AR": ar,
             "RANLIB": ranlib,
-            "DIFFRAY_TARGET_PROFILE": profile,
+            "PAIRFUZZ_TARGET_PROFILE": profile,
         }
     )
     return environment
@@ -263,7 +263,7 @@ def _build_png(root: Path, spec, profile: str) -> Path:
         check=True,
         stdout=subprocess.DEVNULL,
     )
-    compiler_env = {**os.environ, "PATH": str(tool_path) + os.pathsep + os.environ["PATH"], "DIFFRAY_TARGET_PROFILE": profile}
+    compiler_env = {**os.environ, "PATH": str(tool_path) + os.pathsep + os.environ["PATH"], "PAIRFUZZ_TARGET_PROFILE": profile}
     compiler_version = subprocess.run([str(wrapper), "--version"], env=compiler_env, capture_output=True, text=True, check=True).stdout.strip()
     flags = profile_flags(profile)
     lock_subset = {name: entries[name] for name in spec.dependencies}
@@ -321,7 +321,7 @@ def _build_png(root: Path, spec, profile: str) -> Path:
     with BuildManifestTransaction(build_root, {"schema_version": 1, "fingerprint": fingerprint, "fingerprint_inputs": inputs}) as transaction:
         def run(argv, env=None):
             effective = dict(base_env if env is None else env)
-            transaction.record_command(argv, {key: effective[key] for key in sorted(effective) if key in {"PATH", "CC", "CXX", "AR", "RANLIB", "CFLAGS", "LDFLAGS", "DIFFRAY_TARGET_PROFILE"}})
+            transaction.record_command(argv, {key: effective[key] for key in sorted(effective) if key in {"PATH", "CC", "CXX", "AR", "RANLIB", "CFLAGS", "LDFLAGS", "PAIRFUZZ_TARGET_PROFILE"}})
             with (build_root / "build.log").open("a", encoding="utf-8") as log:
                 subprocess.run(argv, cwd=root, env=effective, check=True, stdout=log, stderr=subprocess.STDOUT)
 
@@ -416,7 +416,7 @@ def _build_bmp(root: Path, spec, profile: str) -> Path:
     compiler_env = {
         **os.environ,
         "PATH": str(tool_path) + os.pathsep + os.environ["PATH"],
-        "DIFFRAY_TARGET_PROFILE": profile,
+        "PAIRFUZZ_TARGET_PROFILE": profile,
     }
     compiler_version = subprocess.run(
         [str(wrapper), "--version"],
@@ -535,7 +535,7 @@ def _build_bmp(root: Path, spec, profile: str) -> Path:
                     "CXXFLAGS",
                     "CPPFLAGS",
                     "LDFLAGS",
-                    "DIFFRAY_TARGET_PROFILE",
+                    "PAIRFUZZ_TARGET_PROFILE",
                 }
             }
             transaction.record_command(argv, recorded_environment)
@@ -583,7 +583,7 @@ def _build_bmp(root: Path, spec, profile: str) -> Path:
                     str(common),
                     "-I",
                     str(bmp),
-                    f'-DDIFFRAY_MAGICK_CONFIG_PATH="{config_path}"',
+                    f'-DPAIRFUZZ_MAGICK_CONFIG_PATH="{config_path}"',
                     str(common / "semantic.c"),
                     str(common / "harness_io.c"),
                     str(bmp / "bmp_scope.c"),
@@ -667,7 +667,7 @@ def _build_x509(root: Path, spec, profile: str) -> Path:
     compiler_env = {
         **os.environ,
         "PATH": str(tool_path) + os.pathsep + os.environ["PATH"],
-        "DIFFRAY_TARGET_PROFILE": profile,
+        "PAIRFUZZ_TARGET_PROFILE": profile,
     }
     compiler_version = subprocess.run(
         [str(wrapper), "--version"],
@@ -757,7 +757,7 @@ def _build_x509(root: Path, spec, profile: str) -> Path:
                 for key in sorted(effective)
                 if key in {
                     "PATH", "CC", "CXX", "AR", "RANLIB", "CFLAGS", "CXXFLAGS",
-                    "CPPFLAGS", "LDFLAGS", "DIFFRAY_TARGET_PROFILE",
+                    "CPPFLAGS", "LDFLAGS", "PAIRFUZZ_TARGET_PROFILE",
                 }
             }
             transaction.record_command(argv, recorded_environment)
@@ -834,7 +834,7 @@ def _build_x509(root: Path, spec, profile: str) -> Path:
             completed = subprocess.run(
                 [str(path), "--replay", str(seed), "--normalized-output", str(normalized)],
                 cwd=root,
-                env={name: value for name, value in os.environ.items() if not name.startswith(("__AFL_", "__DIFFRAY_"))},
+                env={name: value for name, value in os.environ.items() if not name.startswith(("__AFL_", "__PAIRFUZZ_"))},
                 capture_output=True,
                 text=True,
                 check=False,

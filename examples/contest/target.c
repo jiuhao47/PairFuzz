@@ -7,8 +7,8 @@
 #define ACCEPT_HEX 0
 #endif
 
-#ifdef DIFFRAY_INIT
-DIFFRAY_INIT();
+#ifdef PAIRFUZZ_INIT
+PAIRFUZZ_INIT();
 #endif
 
 /* This synthetic pair differs only in hexadecimal syntax acceptance. */
@@ -47,13 +47,13 @@ static int parse_number(const uint8_t *data, size_t size) {
 }
 
 int main(void) {
-#ifdef DIFFRAY_INIT
+#ifdef PAIRFUZZ_INIT
     if (getenv("__AFL_SHM_ID") != NULL) {
         __AFL_INIT();
         const uint8_t *data = __AFL_FUZZ_TESTCASE_BUF;
         size_t size = __AFL_FUZZ_TESTCASE_LEN;
         int result = parse_number(data, size);
-        DIFFRAY_RETVAL(result);
+        PAIRFUZZ_RETVAL(result);
         return result;
     }
 #endif

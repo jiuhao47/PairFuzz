@@ -66,7 +66,7 @@ class BmpHeader(ctypes.Structure):
 class BmpScopeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="diffray-bmp-scope-")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz-bmp-scope-")
         library = Path(cls.temporary.name) / "libbmp_scope.so"
         subprocess.run(
             [
@@ -166,8 +166,8 @@ class BmpDecoderTests(unittest.TestCase):
     def setUpClass(cls):
         cls.contract = json.loads((BMP / "contract.json").read_text())
         cls.fixtures = json.loads((BMP / "fixtures.json").read_text())["fixtures"]
-        cls.profile = os.environ.get("DIFFRAY_BMP_TEST_PROFILE", "release")
-        cls.temporary = tempfile.TemporaryDirectory(prefix="diffray-bmp-contract-")
+        cls.profile = os.environ.get("PAIRFUZZ_BMP_TEST_PROFILE", "release")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz-bmp-contract-")
         cls.manifest = None
 
     @classmethod
@@ -239,7 +239,7 @@ class BmpDecoderTests(unittest.TestCase):
             **os.environ,
             "PATH": str(ROOT / "run/toolchain/bin") + os.pathsep + os.environ["PATH"],
             "PKG_CONFIG_PATH": str(pkgconfig),
-            "DIFFRAY_TARGET_PROFILE": self.profile,
+            "PAIRFUZZ_TARGET_PROFILE": self.profile,
         }
         cflags = subprocess.run(
             ["pkg-config", "--cflags", package],
@@ -270,7 +270,7 @@ class BmpDecoderTests(unittest.TestCase):
                 str(ROOT / "examples/real-targets/common"),
                 "-I",
                 str(BMP),
-                f'-DDIFFRAY_MAGICK_CONFIG_PATH="{build_root / "policy" / name}"',
+                f'-DPAIRFUZZ_MAGICK_CONFIG_PATH="{build_root / "policy" / name}"',
                 str(ROOT / "examples/real-targets/common/semantic.c"),
                 str(BMP / "bmp_scope.c"),
                 str(BMP / adapter),

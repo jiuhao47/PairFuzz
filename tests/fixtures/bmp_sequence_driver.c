@@ -7,7 +7,7 @@ static int read_file(const char *path, uint8_t **bytes, size_t *length) {
   FILE *input = fopen(path, "rb");
   if (input == NULL || fseek(input, 0, SEEK_END) != 0) return -1;
   long size = ftell(input);
-  if (size < 0 || (unsigned long)size > DIFFRAY_INPUT_LIMIT ||
+  if (size < 0 || (unsigned long)size > PAIRFUZZ_INPUT_LIMIT ||
       fseek(input, 0, SEEK_SET) != 0) {
     fclose(input);
     return -1;
@@ -31,13 +31,13 @@ int main(int argc, char **argv) {
     uint8_t *input = NULL;
     size_t length = 0;
     if (read_file(argv[index], &input, &length) != 0) return 3;
-    struct diffray_operation_result result;
-    diffray_operation_result_init(&result);
+    struct pairfuzz_operation_result result;
+    pairfuzz_operation_result_init(&result);
     target_execute(input, length, &result);
     free(input);
     printf("%u %016llx\n", (unsigned int)result.class_id,
-           (unsigned long long)diffray_semantic_code(&result, target_schema()));
-    diffray_result_release(&result);
+           (unsigned long long)pairfuzz_semantic_code(&result, target_schema()));
+    pairfuzz_result_release(&result);
   }
   target_cleanup();
   return 0;

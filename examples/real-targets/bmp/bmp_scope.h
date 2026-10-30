@@ -1,5 +1,5 @@
-#ifndef DIFFRAY_BMP_SCOPE_H
-#define DIFFRAY_BMP_SCOPE_H
+#ifndef PAIRFUZZ_BMP_SCOPE_H
+#define PAIRFUZZ_BMP_SCOPE_H
 
 #include <stddef.h>
 #include <stdint.h>

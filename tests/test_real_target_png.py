@@ -15,7 +15,7 @@ PNG = ROOT / "examples" / "real-targets" / "png"
 class PngContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if "discover" in sys.argv and os.environ.get("DIFFRAY_REAL_TARGET_INTEGRATION") != "1":
+        if "discover" in sys.argv and os.environ.get("PAIRFUZZ_REAL_TARGET_INTEGRATION") != "1":
             raise unittest.SkipTest("native PNG integration is exercised by its explicit release gate")
         cls.contract_path = PNG / "contract.json"
         cls.fixtures_path = PNG / "fixtures.json"
@@ -23,7 +23,7 @@ class PngContractTests(unittest.TestCase):
             raise AssertionError("PNG contract and fixtures must exist; this integration suite never skips")
         cls.contract = json.loads(cls.contract_path.read_text())
         cls.fixtures = json.loads(cls.fixtures_path.read_text())["fixtures"]
-        cls.profile = os.environ.get("DIFFRAY_PNG_TEST_PROFILE", "release")
+        cls.profile = os.environ.get("PAIRFUZZ_PNG_TEST_PROFILE", "release")
         completed = subprocess.run(
             [
                 "python3",
@@ -40,7 +40,7 @@ class PngContractTests(unittest.TestCase):
             check=True,
         )
         cls.manifest = json.loads(Path(completed.stdout.strip()).read_text())
-        cls.temporary = tempfile.TemporaryDirectory(prefix="diffray-png-contract-")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz-png-contract-")
 
     @classmethod
     def tearDownClass(cls):

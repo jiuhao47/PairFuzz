@@ -162,9 +162,12 @@ class RepositoryLayoutTests(unittest.TestCase):
                 self.assertIn(token, manifest)
         for token in (
             "-fsanitize-coverage=trace-pc-guard",
-            "DIFFRAY_INIT()",
-            "DIFFRAY_RETVAL(r)",
-            "DIFFRAY_RUN(fn)",
+            "PAIRFUZZ_INIT()",
+            "PAIRFUZZ_RETVAL(r)",
+            "PAIRFUZZ_RUN(fn)",
+            "PAIRFUZZ_RUN_SEMANTIC(fn)",
+            "pairfuzz_result_init(void)",
+            "pairfuzz_publish_result(uint64_t value)",
             "libforkserver_libafl_cc",
         ):
             with self.subTest(wrapper_token=token):

@@ -1,5 +1,5 @@
-#ifndef DIFFRAY_REAL_TARGET_OPERATION_H
-#define DIFFRAY_REAL_TARGET_OPERATION_H
+#ifndef PAIRFUZZ_REAL_TARGET_OPERATION_H
+#define PAIRFUZZ_REAL_TARGET_OPERATION_H
 
 #include "semantic.h"
 
@@ -11,12 +11,12 @@ int target_init(void);
 const char *target_operation(void);
 uint8_t target_schema(void);
 void target_execute(const uint8_t *input, size_t length,
-                    struct diffray_operation_result *result);
+                    struct pairfuzz_operation_result *result);
 void target_cleanup(void);
 
 #if defined(__GNUC__) || defined(__clang__)
 int target_replay_facts(const uint8_t *input, size_t length,
-                        char output[DIFFRAY_FACTS_LIMIT])
+                        char output[PAIRFUZZ_FACTS_LIMIT])
     __attribute__((weak));
 #endif
 

@@ -1,5 +1,5 @@
-#ifndef DIFFRAY_X509_FACTS_H
-#define DIFFRAY_X509_FACTS_H
+#ifndef PAIRFUZZ_X509_FACTS_H
+#define PAIRFUZZ_X509_FACTS_H
 
 #include "semantic.h"
 
@@ -57,7 +57,7 @@ static void x509_oid_text(const ASN1_OBJECT *object, char output[64]) {
 }
 
 static int x509_write_facts(X509 *certificate,
-                            char output[DIFFRAY_FACTS_LIMIT]) {
+                            char output[PAIRFUZZ_FACTS_LIMIT]) {
   char serial[65] = {0};
   char subject[96] = {0};
   char issuer[96] = {0};
@@ -101,13 +101,13 @@ static int x509_write_facts(X509 *certificate,
     return -1;
   }
   int written = snprintf(
-      output, DIFFRAY_FACTS_LIMIT,
+      output, PAIRFUZZ_FACTS_LIMIT,
       "{\"version\":%ld,\"serial_hex\":%s,\"subject\":%s,\"issuer\":%s,"
       "\"not_before\":%s,\"not_after\":%s,\"public_key_algorithm_oid\":%s,"
       "\"signature_algorithm_oid\":%s}",
       X509_get_version(certificate) + 1, serial_json, subject_json, issuer_json,
       before_json, after_json, public_json, signature_json);
-  return written > 0 && written < (int)DIFFRAY_FACTS_LIMIT ? 0 : -1;
+  return written > 0 && written < (int)PAIRFUZZ_FACTS_LIMIT ? 0 : -1;
 }
 
 #endif

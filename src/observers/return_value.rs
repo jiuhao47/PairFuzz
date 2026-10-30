@@ -114,7 +114,7 @@ where
             }
         }
 
-        // Keep debug logging for diagnostics, controlled by DIFFRAY_RV_OBS_DEBUG
+        // Keep debug logging for diagnostics, controlled by PAIRFUZZ_RV_OBS_DEBUG
         if rv_obs_debug_enabled() {
             if let Some(v) = self.last_value {
                 debug(

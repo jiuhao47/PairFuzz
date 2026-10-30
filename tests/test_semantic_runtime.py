@@ -21,7 +21,7 @@ class SemanticRuntimeTests(unittest.TestCase):
             + cls.environment["PATH"]
         )
         cls.environment["ASAN_OPTIONS"] = "abort_on_error=1:detect_leaks=false"
-        cls.build_dir = Path(tempfile.mkdtemp(prefix="diffray-semantic-runtime-"))
+        cls.build_dir = Path(tempfile.mkdtemp(prefix="pairfuzz-semantic-runtime-"))
         subprocess.run(
             [
                 "cargo",
@@ -54,22 +54,22 @@ class SemanticRuntimeTests(unittest.TestCase):
 
     @staticmethod
     def _region():
-        fd = os.memfd_create("diffray-semantic-result", flags=0)
+        fd = os.memfd_create("pairfuzz-semantic-result", flags=0)
         os.ftruncate(fd, 8)
         return fd, mmap.mmap(fd, 8)
 
     def _run(self, binary, role=None, regions=None, args=(), extra_env=None):
         env = self.environment.copy()
         for key in list(env):
-            if key.startswith("__DIFFRAY_"):
+            if key.startswith("__PAIRFUZZ_"):
                 del env[key]
         pass_fds = []
         if role is not None:
-            env["__DIFFRAY_RV_ROLE"] = role
+            env["__PAIRFUZZ_RV_ROLE"] = role
         if regions:
             for region_role, (fd, _mapping) in regions.items():
-                env[f"__DIFFRAY_RV_SHM_ID_{region_role}"] = str(fd)
-                env[f"__DIFFRAY_RV_SHM_ID_{region_role}_SIZE"] = "8"
+                env[f"__PAIRFUZZ_RV_SHM_ID_{region_role}"] = str(fd)
+                env[f"__PAIRFUZZ_RV_SHM_ID_{region_role}_SIZE"] = "8"
                 pass_fds.append(fd)
         if extra_env:
             env.update(extra_env)
@@ -131,7 +131,7 @@ class SemanticRuntimeTests(unittest.TestCase):
         self.assertNotEqual(partial.returncode, 0)
 
         invalid_role = self._run(
-            self.binaries["semantic-c"], extra_env={"__DIFFRAY_RV_ROLE": "C"}
+            self.binaries["semantic-c"], extra_env={"__PAIRFUZZ_RV_ROLE": "C"}
         )
         self.assertNotEqual(invalid_role.returncode, 0)
 
@@ -141,7 +141,7 @@ class SemanticRuntimeTests(unittest.TestCase):
                 self.binaries["semantic-c"],
                 "A",
                 {"A": (fd, mapping)},
-                extra_env={"__DIFFRAY_RV_SHM_ID_A_SIZE": "7"},
+                extra_env={"__PAIRFUZZ_RV_SHM_ID_A_SIZE": "7"},
             )
             self.assertNotEqual(short.returncode, 0)
         finally:
@@ -167,9 +167,9 @@ class SemanticRuntimeTests(unittest.TestCase):
         env = self.environment.copy()
         env.update(
             {
-                "__DIFFRAY_RV_ROLE": "A",
-                "__DIFFRAY_RV_SHM_ID_A": str(fd),
-                "__DIFFRAY_RV_SHM_ID_A_SIZE": "8",
+                "__PAIRFUZZ_RV_ROLE": "A",
+                "__PAIRFUZZ_RV_SHM_ID_A": str(fd),
+                "__PAIRFUZZ_RV_SHM_ID_A_SIZE": "8",
             }
         )
         try:
@@ -193,12 +193,35 @@ class SemanticRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             calls = trace.read_text(encoding="utf-8")
-            begin = calls.index("DIFFRAY_PUBLISH_BEGIN")
-            end = calls.index("DIFFRAY_PUBLISH_END")
+            begin = calls.index("PAIRFUZZ_PUBLISH_BEGIN")
+            end = calls.index("PAIRFUZZ_PUBLISH_END")
             publication = calls[begin:end]
             for syscall in ("mmap(", "munmap(", "msync(", "close("):
                 self.assertNotIn(syscall, publication)
             self.assertEqual(int.from_bytes(mapping[:], byteorder="little"), 0x1234)
+        finally:
+            mapping.close()
+            os.close(fd)
+
+    def test_semantic_transport_isolates_role_environment(self):
+        fd, mapping = self._region()
+        former_prefix = "__" + "DIFF" + "RAY_"
+        try:
+            completed = self._run(
+                self.binaries["semantic-c"],
+                "A",
+                {"A": (fd, mapping)},
+                ["check-env"],
+                extra_env={
+                    former_prefix + "RV_ROLE": "B",
+                    former_prefix + "RV_SHM_ID_A": "former-a",
+                    former_prefix + "RV_SHM_ID_B": "former-b",
+                    "__PAIRFUZZ_RV_SHM_ID_B": "opposite",
+                    "__PAIRFUZZ_RV_SHM_ID_B_SIZE": "8",
+                    "PAIRFUZZ_TEST_UNRELATED": "preserved",
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
         finally:
             mapping.close()
             os.close(fd)
@@ -209,7 +232,7 @@ class CompilerProfileTests(unittest.TestCase):
     def setUpClass(cls):
         cls.environment = os.environ.copy()
         cls.environment["PATH"] = str(ROOT / "run" / "toolchain" / "bin") + os.pathsep + cls.environment["PATH"]
-        cls.build_dir = Path(tempfile.mkdtemp(prefix="diffray-compiler-profile-"))
+        cls.build_dir = Path(tempfile.mkdtemp(prefix="pairfuzz-compiler-profile-"))
         subprocess.run(
             ["cargo", "build", "--locked", "--manifest-path", str(ROOT / "app" / "compiler" / "Cargo.toml")],
             cwd=ROOT,
@@ -219,9 +242,9 @@ class CompilerProfileTests(unittest.TestCase):
 
     def _compile(self, profile, name):
         env = self.environment.copy()
-        env.pop("DIFFRAY_TARGET_PROFILE", None)
+        env.pop("PAIRFUZZ_TARGET_PROFILE", None)
         if profile is not None:
-            env["DIFFRAY_TARGET_PROFILE"] = profile
+            env["PAIRFUZZ_TARGET_PROFILE"] = profile
         output = self.build_dir / name
         completed = subprocess.run(
             [str(COMPILER_TARGET / "libafl_forkserver_cc"), str(FIXTURES / "semantic.c"), "-o", str(output)],
@@ -250,13 +273,13 @@ class CompilerProfileTests(unittest.TestCase):
     def test_invalid_profile_and_probe_modes_are_clean(self):
         invalid, _ = self._compile("unknown", "invalid")
         self.assertNotEqual(invalid.returncode, 0)
-        self.assertIn(b"DIFFRAY_TARGET_PROFILE", invalid.stderr)
+        self.assertIn(b"PAIRFUZZ_TARGET_PROFILE", invalid.stderr)
         cases = (["--version"], ["-c", str(FIXTURES / "semantic.c"), "-o", str(self.build_dir / "probe.o")])
         for arguments in cases:
             completed = subprocess.run(
                 [str(COMPILER_TARGET / "libafl_forkserver_cc"), *arguments],
                 cwd=ROOT,
-                env={**self.environment, "DIFFRAY_TARGET_PROFILE": "release"},
+                env={**self.environment, "PAIRFUZZ_TARGET_PROFILE": "release"},
                 capture_output=True,
                 check=False,
             )

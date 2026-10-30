@@ -8,15 +8,15 @@ pub enum TargetProfile {
 
 impl TargetProfile {
     pub fn from_env() -> Result<Self, String> {
-        match std::env::var("DIFFRAY_TARGET_PROFILE") {
+        match std::env::var("PAIRFUZZ_TARGET_PROFILE") {
             Err(VarError::NotPresent) => Ok(Self::Asan),
             Ok(value) if value == "asan" => Ok(Self::Asan),
             Ok(value) if value == "release" => Ok(Self::Release),
             Ok(value) => Err(format!(
-                "invalid DIFFRAY_TARGET_PROFILE={value:?}; expected `asan` or `release`"
+                "invalid PAIRFUZZ_TARGET_PROFILE={value:?}; expected `asan` or `release`"
             )),
             Err(error) => Err(format!(
-                "invalid DIFFRAY_TARGET_PROFILE value: {error}; expected `asan` or `release`"
+                "invalid PAIRFUZZ_TARGET_PROFILE value: {error}; expected `asan` or `release`"
             )),
         }
     }

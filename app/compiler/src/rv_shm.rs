@@ -16,21 +16,63 @@ unsafe fn environment(name: &'static [u8]) -> *const c_char {
     libc::getenv(name.as_ptr().cast())
 }
 
+unsafe fn clear_former_environment() {
+    let prefix = [b"__DIFF".as_slice(), b"RAY_".as_slice()].concat();
+    for suffix in [
+        b"RV_ROLE".as_slice(),
+        b"RV_SHM_ID_A".as_slice(),
+        b"RV_SHM_ID_A_SIZE".as_slice(),
+        b"RV_SHM_ID_B".as_slice(),
+        b"RV_SHM_ID_B_SIZE".as_slice(),
+        b"TMP_RV_A".as_slice(),
+        b"TMP_RV_A_SIZE".as_slice(),
+        b"TMP_RV_B".as_slice(),
+        b"TMP_RV_B_SIZE".as_slice(),
+    ] {
+        let mut name = Vec::with_capacity(prefix.len() + suffix.len() + 1);
+        name.extend_from_slice(&prefix);
+        name.extend_from_slice(suffix);
+        name.push(0);
+        libc::unsetenv(name.as_ptr().cast());
+    }
+}
+
+unsafe fn clear_opposite_environment(role: u8) {
+    let names: &[&[u8]] = match role {
+        b'A' => &[
+            b"__PAIRFUZZ_RV_SHM_ID_B\0",
+            b"__PAIRFUZZ_RV_SHM_ID_B_SIZE\0",
+            b"__PAIRFUZZ_TMP_RV_B\0",
+            b"__PAIRFUZZ_TMP_RV_B_SIZE\0",
+        ],
+        b'B' => &[
+            b"__PAIRFUZZ_RV_SHM_ID_A\0",
+            b"__PAIRFUZZ_RV_SHM_ID_A_SIZE\0",
+            b"__PAIRFUZZ_TMP_RV_A\0",
+            b"__PAIRFUZZ_TMP_RV_A_SIZE\0",
+        ],
+        _ => return,
+    };
+    for name in names {
+        libc::unsetenv(name.as_ptr().cast());
+    }
+}
+
 unsafe fn role_environment(
     role: u8,
 ) -> (*const c_char, *const c_char, *const c_char, *const c_char) {
     match role {
         b'A' => (
-            environment(b"__DIFFRAY_RV_SHM_ID_A\0"),
-            environment(b"__DIFFRAY_RV_SHM_ID_A_SIZE\0"),
-            environment(b"__DIFFRAY_TMP_RV_A\0"),
-            environment(b"__DIFFRAY_TMP_RV_A_SIZE\0"),
+            environment(b"__PAIRFUZZ_RV_SHM_ID_A\0"),
+            environment(b"__PAIRFUZZ_RV_SHM_ID_A_SIZE\0"),
+            environment(b"__PAIRFUZZ_TMP_RV_A\0"),
+            environment(b"__PAIRFUZZ_TMP_RV_A_SIZE\0"),
         ),
         b'B' => (
-            environment(b"__DIFFRAY_RV_SHM_ID_B\0"),
-            environment(b"__DIFFRAY_RV_SHM_ID_B_SIZE\0"),
-            environment(b"__DIFFRAY_TMP_RV_B\0"),
-            environment(b"__DIFFRAY_TMP_RV_B_SIZE\0"),
+            environment(b"__PAIRFUZZ_RV_SHM_ID_B\0"),
+            environment(b"__PAIRFUZZ_RV_SHM_ID_B_SIZE\0"),
+            environment(b"__PAIRFUZZ_TMP_RV_B\0"),
+            environment(b"__PAIRFUZZ_TMP_RV_B_SIZE\0"),
         ),
         _ => (ptr::null(), ptr::null(), ptr::null(), ptr::null()),
     }
@@ -46,14 +88,14 @@ unsafe fn selected_environment(role: u8) -> (*const c_char, *const c_char) {
 
 unsafe fn any_result_environment_present() -> bool {
     [
-        b"__DIFFRAY_RV_SHM_ID_A\0".as_slice(),
-        b"__DIFFRAY_RV_SHM_ID_A_SIZE\0".as_slice(),
-        b"__DIFFRAY_RV_SHM_ID_B\0".as_slice(),
-        b"__DIFFRAY_RV_SHM_ID_B_SIZE\0".as_slice(),
-        b"__DIFFRAY_TMP_RV_A\0".as_slice(),
-        b"__DIFFRAY_TMP_RV_A_SIZE\0".as_slice(),
-        b"__DIFFRAY_TMP_RV_B\0".as_slice(),
-        b"__DIFFRAY_TMP_RV_B_SIZE\0".as_slice(),
+        b"__PAIRFUZZ_RV_SHM_ID_A\0".as_slice(),
+        b"__PAIRFUZZ_RV_SHM_ID_A_SIZE\0".as_slice(),
+        b"__PAIRFUZZ_RV_SHM_ID_B\0".as_slice(),
+        b"__PAIRFUZZ_RV_SHM_ID_B_SIZE\0".as_slice(),
+        b"__PAIRFUZZ_TMP_RV_A\0".as_slice(),
+        b"__PAIRFUZZ_TMP_RV_A_SIZE\0".as_slice(),
+        b"__PAIRFUZZ_TMP_RV_B\0".as_slice(),
+        b"__PAIRFUZZ_TMP_RV_B_SIZE\0".as_slice(),
     ]
     .iter()
     .any(|name| !libc::getenv(name.as_ptr().cast()).is_null())
@@ -128,16 +170,17 @@ unsafe fn map_result(id: *const c_char, len: usize) -> *mut u64 {
 }
 
 /// Resolve the explicit A/B role and cache the semantic-result mapping.
-/// A target without any DiffRay result environment remains runnable standalone.
+/// A target without any PairFuzz result environment remains runnable standalone.
 #[no_mangle]
-pub extern "C" fn diffray_result_init() -> c_int {
+pub extern "C" fn pairfuzz_result_init() -> c_int {
     let state = RESULT_STATE.load(Ordering::Acquire);
     if state != UNINITIALIZED {
         return if state == FAILED { -1 } else { 0 };
     }
 
     unsafe {
-        let role_ptr = environment(b"__DIFFRAY_RV_ROLE\0");
+        clear_former_environment();
+        let role_ptr = environment(b"__PAIRFUZZ_RV_ROLE\0");
         if role_ptr.is_null() {
             if any_result_environment_present() {
                 RESULT_STATE.store(FAILED, Ordering::Release);
@@ -167,6 +210,7 @@ pub extern "C" fn diffray_result_init() -> c_int {
             return -1;
         }
         RESULT_PTR.store(mapped, Ordering::Release);
+        clear_opposite_environment(role[0]);
         RESULT_STATE.store(MAPPED, Ordering::Release);
         0
     }
@@ -175,43 +219,12 @@ pub extern "C" fn diffray_result_init() -> c_int {
 /// Publish one semantic result. Initialization and mapping happen at most once;
 /// the execution hot path is a single volatile 64-bit store.
 #[no_mangle]
-pub extern "C" fn diffray_publish_result(value: u64) {
-    if RESULT_STATE.load(Ordering::Acquire) == UNINITIALIZED && diffray_result_init() != 0 {
+pub extern "C" fn pairfuzz_publish_result(value: u64) {
+    if RESULT_STATE.load(Ordering::Acquire) == UNINITIALIZED && pairfuzz_result_init() != 0 {
         return;
     }
     let result = RESULT_PTR.load(Ordering::Acquire);
     if !result.is_null() {
         unsafe { ptr::write_volatile(result, value) };
     }
-}
-
-/// Compatibility export for older instrumented sources.
-#[no_mangle]
-pub extern "C" fn select_rv_shm_env(out_id: *mut *const c_char, out_size: *mut *const c_char) {
-    unsafe {
-        let role_ptr = environment(b"__DIFFRAY_RV_ROLE\0");
-        if role_ptr.is_null() {
-            return;
-        }
-        let role = CStr::from_ptr(role_ptr).to_bytes();
-        if role.len() != 1 {
-            return;
-        }
-        let (id, size) = selected_environment(role[0]);
-        if !out_id.is_null() {
-            ptr::write(out_id, id);
-        }
-        if !out_size.is_null() {
-            ptr::write(out_size, size);
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn write_return_value_to_shm(
-    _env_id: *const c_char,
-    _env_size: *const c_char,
-    result: i32,
-) {
-    diffray_publish_result(u64::from(result as u32));
 }

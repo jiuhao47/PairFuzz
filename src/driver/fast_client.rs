@@ -118,14 +118,14 @@ pub(crate) fn run_fast_client(
             crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
                 &mut shmem_provider,
                 8,
-                "__DIFFRAY_RV_SHM_ID_A",
+                "__PAIRFUZZ_RV_SHM_ID_A",
             )?,
         );
         rv_shmem_b = Some(
             crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
                 &mut shmem_provider,
                 8,
-                "__DIFFRAY_RV_SHM_ID_B",
+                "__PAIRFUZZ_RV_SHM_ID_B",
             )?,
         );
     }

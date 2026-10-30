@@ -235,7 +235,7 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
         match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
             &mut shmem_provider,
             8,
-            "__DIFFRAY_RV_SHM_ID_A",
+            "__PAIRFUZZ_RV_SHM_ID_A",
         ) {
             Ok(s) => rv_shmem_a = Some(s),
             Err(e) => warn("main", &format!("failed to alloc rv shmem A: {}", e)),
@@ -243,7 +243,7 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
         match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
             &mut shmem_provider,
             8,
-            "__DIFFRAY_RV_SHM_ID_B",
+            "__PAIRFUZZ_RV_SHM_ID_B",
         ) {
             Ok(s) => rv_shmem_b = Some(s),
             Err(e) => warn("main", &format!("failed to alloc rv shmem B: {}", e)),

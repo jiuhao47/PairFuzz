@@ -25,7 +25,7 @@ FACT_KEYS = {
 class X509ContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.profile = os.environ.get("DIFFRAY_X509_TEST_PROFILE", "release")
+        cls.profile = os.environ.get("PAIRFUZZ_X509_TEST_PROFILE", "release")
         completed = subprocess.run(
             [
                 "python3",
@@ -46,7 +46,7 @@ class X509ContractTests(unittest.TestCase):
         cls.manifest = json.loads(cls.manifest_path.read_text())
         cls.fixtures = json.loads((X509 / "fixtures.json").read_text())["fixtures"]
         cls.by_name = {fixture["name"]: fixture for fixture in cls.fixtures}
-        cls.temporary = tempfile.TemporaryDirectory(prefix="diffray-x509-contract-")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz-x509-contract-")
 
     @classmethod
     def tearDownClass(cls):
@@ -70,7 +70,7 @@ class X509ContractTests(unittest.TestCase):
             env={
                 name: value
                 for name, value in os.environ.items()
-                if not name.startswith(("__AFL_", "__DIFFRAY_"))
+                if not name.startswith(("__AFL_", "__PAIRFUZZ_"))
             },
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)

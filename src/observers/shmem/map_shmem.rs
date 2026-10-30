@@ -6,7 +6,7 @@ use libafl_bolts::Named;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // Module-local debug helper. Controlled by the environment variable
-// `DIFFRAY_COVERAGE_COMBINER_DEBUG` (defined in `src/driver/env_var.rs`).
+// `PAIRFUZZ_COVERAGE_COMBINER_DEBUG` (defined in `src/driver/env_var.rs`).
 fn combiner_debug_log(tag: &str, msg: &str) {
     if crate::driver::env_var::env_bool_cached(crate::driver::env_var::COVERAGE_COMBINER_DEBUG) {
         crate::utils::logging::debug(tag, msg);

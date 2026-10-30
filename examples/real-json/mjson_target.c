@@ -7,8 +7,8 @@
 #include "mjson.h"
 #include "target_io.h"
 
-#ifdef DIFFRAY_INIT
-DIFFRAY_INIT();
+#ifdef PAIRFUZZ_INIT
+PAIRFUZZ_INIT();
 #endif
 
 int mjson_parse(const uint8_t *data, size_t size) {
@@ -40,9 +40,9 @@ int mjson_parse(const uint8_t *data, size_t size) {
 }
 
 int main(void) {
-#ifdef DIFFRAY_INIT
+#ifdef PAIRFUZZ_INIT
     if (getenv("__AFL_SHM_ID") != NULL) {
-        DIFFRAY_RUN(mjson_parse);
+        PAIRFUZZ_RUN(mjson_parse);
     }
 #endif
     return run_standalone(mjson_parse);

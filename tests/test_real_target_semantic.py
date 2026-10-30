@@ -77,7 +77,7 @@ def packed(class_id, payload):
 class SemanticContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="diffray-native-semantic-")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz-native-semantic-")
         cls.build = Path(cls.temporary.name)
         include = ["-I", str(COMMON)]
         subprocess.run(
@@ -197,7 +197,7 @@ class SemanticContractTests(unittest.TestCase):
         )
         for profile in ("asan", "release"):
             with self.subTest(profile=profile):
-                profile_environment = {**environment, "DIFFRAY_TARGET_PROFILE": profile}
+                profile_environment = {**environment, "PAIRFUZZ_TARGET_PROFILE": profile}
                 subprocess.run(
                     [
                         str(COMPILER_TARGET / "libafl_forkserver_cc"),
@@ -230,7 +230,7 @@ class SemanticContractTests(unittest.TestCase):
         environment = {
             name: value
             for name, value in os.environ.items()
-            if not name.startswith("__AFL_") and not name.startswith("__DIFFRAY_")
+            if not name.startswith("__AFL_") and not name.startswith("__PAIRFUZZ_")
         }
         first = subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
         second = subprocess.run(command, env=environment, capture_output=True, text=True, check=True)

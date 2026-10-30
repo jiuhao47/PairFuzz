@@ -42,11 +42,11 @@ static void json_string(const char *value) {
 }
 
 static int read_bounded(FILE *input, uint8_t **bytes, size_t *length) {
-  uint8_t *buffer = malloc(DIFFRAY_INPUT_LIMIT + 1u);
+  uint8_t *buffer = malloc(PAIRFUZZ_INPUT_LIMIT + 1u);
   if (buffer == NULL) return -1;
   size_t used = 0;
-  while (used < DIFFRAY_INPUT_LIMIT + 1u) {
-    size_t count = fread(buffer + used, 1, DIFFRAY_INPUT_LIMIT + 1u - used,
+  while (used < PAIRFUZZ_INPUT_LIMIT + 1u) {
+    size_t count = fread(buffer + used, 1, PAIRFUZZ_INPUT_LIMIT + 1u - used,
                          input);
     used += count;
     if (count == 0) {
@@ -63,15 +63,15 @@ static int read_bounded(FILE *input, uint8_t **bytes, size_t *length) {
 }
 
 static void execute_operation(const uint8_t *input, size_t length,
-                              struct diffray_operation_result *result) {
-  diffray_operation_result_init(result);
-  if (length > DIFFRAY_INPUT_LIMIT) {
-    result->class_id = DIFFRAY_RESULT_RESOURCE_LIMIT;
+                              struct pairfuzz_operation_result *result) {
+  pairfuzz_operation_result_init(result);
+  if (length > PAIRFUZZ_INPUT_LIMIT) {
+    result->class_id = PAIRFUZZ_RESULT_RESOURCE_LIMIT;
     strcpy(result->diagnostic, "input exceeds 1 MiB limit");
     return;
   }
   target_execute(input, length, result);
-  if (result->class_id != DIFFRAY_RESULT_ACCEPTED) {
+  if (result->class_id != PAIRFUZZ_RESULT_ACCEPTED) {
     free(result->normalized);
     result->normalized = NULL;
     result->normalized_len = 0;
@@ -81,10 +81,10 @@ static void execute_operation(const uint8_t *input, size_t length,
 }
 
 static uint64_t execute_for_fuzzer(const uint8_t *input, size_t length) {
-  struct diffray_operation_result result;
+  struct pairfuzz_operation_result result;
   execute_operation(input, length, &result);
-  uint64_t code = diffray_semantic_code(&result, active_schema);
-  diffray_result_release(&result);
+  uint64_t code = pairfuzz_semantic_code(&result, active_schema);
+  pairfuzz_result_release(&result);
   return code;
 }
 
@@ -112,23 +112,23 @@ static int replay(const char *input_path, const char *output_path) {
     return 3;
   }
 
-  struct diffray_operation_result result;
+  struct pairfuzz_operation_result result;
   execute_operation(bytes, length, &result);
-  if (result.class_id == DIFFRAY_RESULT_ACCEPTED && target_replay_facts != NULL &&
+  if (result.class_id == PAIRFUZZ_RESULT_ACCEPTED && target_replay_facts != NULL &&
       target_replay_facts(bytes, length, result.facts_json) != 0) {
     strcpy(result.facts_json, "{\"version\":null,\"serial_hex\":null,\"subject\":null,\"issuer\":null,\"not_before\":null,\"not_after\":null,\"public_key_algorithm_oid\":null,\"signature_algorithm_oid\":null}");
   }
   free(bytes);
-  uint64_t code = diffray_semantic_code(&result, active_schema);
+  uint64_t code = pairfuzz_semantic_code(&result, active_schema);
   unlink(output_path);
-  if (result.class_id == DIFFRAY_RESULT_ACCEPTED) {
+  if (result.class_id == PAIRFUZZ_RESULT_ACCEPTED) {
     uint8_t *canonical = NULL;
     size_t canonical_length = 0;
-    if (diffray_canonical_bytes(&result, active_schema, &canonical,
+    if (pairfuzz_canonical_bytes(&result, active_schema, &canonical,
                                 &canonical_length) != 0 ||
         write_file(output_path, canonical, canonical_length) != 0) {
       free(canonical);
-      diffray_result_release(&result);
+      pairfuzz_result_release(&result);
       fprintf(stderr, "cannot write normalized replay output %s\n", output_path);
       return 4;
     }
@@ -138,7 +138,7 @@ static int replay(const char *input_path, const char *output_path) {
   fputs("{\"schema_version\":1,\"operation\":", stdout);
   json_string(target_operation());
   fputs(",\"class\":", stdout);
-  json_string(diffray_result_class_name(result.class_id));
+  json_string(pairfuzz_result_class_name(result.class_id));
   printf(",\"semantic_code\":\"%016" PRIx64
          "\",\"width\":%" PRIu32 ",\"height\":%" PRIu32
          ",\"normalized_length\":%zu,\"facts\":",
@@ -154,21 +154,21 @@ static int replay(const char *input_path, const char *output_path) {
   if (result.diagnostic[0] != '\0') {
     fprintf(stderr, "%s\n", result.diagnostic);
   }
-  int status = result.class_id == DIFFRAY_RESULT_ADAPTER_ERROR ? 5 : 0;
-  diffray_result_release(&result);
+  int status = result.class_id == PAIRFUZZ_RESULT_ADAPTER_ERROR ? 5 : 0;
+  pairfuzz_result_release(&result);
   return status;
 }
 
-int diffray_harness_main(int argc, char **argv) {
+int pairfuzz_harness_main(int argc, char **argv) {
   if (target_init() != 0) {
     fputs("target initialization failed\n", stderr);
     return 70;
   }
   active_schema = target_schema();
   if (argc == 1) {
-#ifdef DIFFRAY_RUN_SEMANTIC
-    DIFFRAY_INIT();
-    DIFFRAY_RUN_SEMANTIC(execute_for_fuzzer);
+#ifdef PAIRFUZZ_RUN_SEMANTIC
+    PAIRFUZZ_INIT();
+    PAIRFUZZ_RUN_SEMANTIC(execute_for_fuzzer);
 #else
     uint8_t *input = NULL;
     size_t length = 0;
@@ -176,11 +176,11 @@ int diffray_harness_main(int argc, char **argv) {
       target_cleanup();
       return 3;
     }
-    struct diffray_operation_result result;
+    struct pairfuzz_operation_result result;
     execute_operation(input, length, &result);
     free(input);
-    (void)diffray_semantic_code(&result, active_schema);
-    diffray_result_release(&result);
+    (void)pairfuzz_semantic_code(&result, active_schema);
+    pairfuzz_result_release(&result);
     target_cleanup();
     return 0;
 #endif
@@ -196,4 +196,4 @@ int diffray_harness_main(int argc, char **argv) {
   return status;
 }
 
-int main(int argc, char **argv) { return diffray_harness_main(argc, argv); }
+int main(int argc, char **argv) { return pairfuzz_harness_main(argc, argv); }

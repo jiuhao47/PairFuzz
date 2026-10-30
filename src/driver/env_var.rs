@@ -34,13 +34,13 @@ pub fn env_opt_string(key: &str) -> Option<String> {
     env::var(key).ok()
 }
 
-// Commonly used DIFFRAY_* names
-pub const FEEDBACK_DEBUG: &str = "DIFFRAY_FEEDBACK_DEBUG";
-pub const APPEND_METADATA_DEBUG: &str = "DIFFRAY_APPEND_METADATA_DEBUG";
-pub const COLLECT_DEBUG: &str = "DIFFRAY_COLLECT_DEBUG";
-pub const LOG: &str = "DIFFRAY_LOG";
-pub const RV_OBS_DEBUG: &str = "DIFFRAY_RV_OBS_DEBUG";
-pub const COVERAGE_COMBINER_DEBUG: &str = "DIFFRAY_COVERAGE_COMBINER_DEBUG";
+// Commonly used PAIRFUZZ_* names
+pub const FEEDBACK_DEBUG: &str = "PAIRFUZZ_FEEDBACK_DEBUG";
+pub const APPEND_METADATA_DEBUG: &str = "PAIRFUZZ_APPEND_METADATA_DEBUG";
+pub const COLLECT_DEBUG: &str = "PAIRFUZZ_COLLECT_DEBUG";
+pub const LOG: &str = "PAIRFUZZ_LOG";
+pub const RV_OBS_DEBUG: &str = "PAIRFUZZ_RV_OBS_DEBUG";
+pub const COVERAGE_COMBINER_DEBUG: &str = "PAIRFUZZ_COVERAGE_COMBINER_DEBUG";
 
 // A simple global cache for boolean env checks. Values:
 // 0 = unknown (not checked yet), 1 = disabled, 2 = enabled

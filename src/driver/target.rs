@@ -37,18 +37,18 @@ pub(crate) const fn names(role: TargetRole) -> TargetNames {
         TargetRole::A => TargetNames {
             label: "A",
             return_observer: "first_return",
-            rv_env: "__DIFFRAY_RV_SHM_ID_A",
-            rv_size_env: "__DIFFRAY_RV_SHM_ID_A_SIZE",
-            rv_temp_env: "__DIFFRAY_TMP_RV_A",
-            coverage_temp_env: "__DIFFRAY_TMP_COV_A",
+            rv_env: "__PAIRFUZZ_RV_SHM_ID_A",
+            rv_size_env: "__PAIRFUZZ_RV_SHM_ID_A_SIZE",
+            rv_temp_env: "__PAIRFUZZ_TMP_RV_A",
+            coverage_temp_env: "__PAIRFUZZ_TMP_COV_A",
         },
         TargetRole::B => TargetNames {
             label: "B",
             return_observer: "second_return",
-            rv_env: "__DIFFRAY_RV_SHM_ID_B",
-            rv_size_env: "__DIFFRAY_RV_SHM_ID_B_SIZE",
-            rv_temp_env: "__DIFFRAY_TMP_RV_B",
-            coverage_temp_env: "__DIFFRAY_TMP_COV_B",
+            rv_env: "__PAIRFUZZ_RV_SHM_ID_B",
+            rv_size_env: "__PAIRFUZZ_RV_SHM_ID_B_SIZE",
+            rv_temp_env: "__PAIRFUZZ_TMP_RV_B",
+            coverage_temp_env: "__PAIRFUZZ_TMP_COV_B",
         },
     }
 }
@@ -148,7 +148,7 @@ where
             Ok((id, size)) => {
                 child_envs.push((target_names.rv_env, id.clone()));
                 child_envs.push((target_names.rv_size_env, size.clone()));
-                child_envs.push(("__DIFFRAY_RV_ROLE", target_names.label.to_owned()));
+                child_envs.push(("__PAIRFUZZ_RV_ROLE", target_names.label.to_owned()));
                 info(
                     "main",
                     &format!(
@@ -237,10 +237,10 @@ mod tests {
         let value = names(TargetRole::A);
         assert_eq!(value.label, "A");
         assert_eq!(value.return_observer, "first_return");
-        assert_eq!(value.rv_env, "__DIFFRAY_RV_SHM_ID_A");
-        assert_eq!(value.rv_size_env, "__DIFFRAY_RV_SHM_ID_A_SIZE");
-        assert_eq!(value.rv_temp_env, "__DIFFRAY_TMP_RV_A");
-        assert_eq!(value.coverage_temp_env, "__DIFFRAY_TMP_COV_A");
+        assert_eq!(value.rv_env, "__PAIRFUZZ_RV_SHM_ID_A");
+        assert_eq!(value.rv_size_env, "__PAIRFUZZ_RV_SHM_ID_A_SIZE");
+        assert_eq!(value.rv_temp_env, "__PAIRFUZZ_TMP_RV_A");
+        assert_eq!(value.coverage_temp_env, "__PAIRFUZZ_TMP_COV_A");
     }
 
     #[test]
@@ -248,9 +248,9 @@ mod tests {
         let value = names(TargetRole::B);
         assert_eq!(value.label, "B");
         assert_eq!(value.return_observer, "second_return");
-        assert_eq!(value.rv_env, "__DIFFRAY_RV_SHM_ID_B");
-        assert_eq!(value.rv_size_env, "__DIFFRAY_RV_SHM_ID_B_SIZE");
-        assert_eq!(value.rv_temp_env, "__DIFFRAY_TMP_RV_B");
-        assert_eq!(value.coverage_temp_env, "__DIFFRAY_TMP_COV_B");
+        assert_eq!(value.rv_env, "__PAIRFUZZ_RV_SHM_ID_B");
+        assert_eq!(value.rv_size_env, "__PAIRFUZZ_RV_SHM_ID_B_SIZE");
+        assert_eq!(value.rv_temp_env, "__PAIRFUZZ_TMP_RV_B");
+        assert_eq!(value.coverage_temp_env, "__PAIRFUZZ_TMP_COV_B");
     }
 }

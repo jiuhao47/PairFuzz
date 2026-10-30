@@ -35,17 +35,17 @@ const char *target_operation(void) { return "image.png.decode.rgba8"; }
 uint8_t target_schema(void) { return 1; }
 void target_cleanup(void) {}
 
-void target_execute(const uint8_t *input, size_t length, struct diffray_operation_result *result) {
-  if (apng_scope(input, length)) { result->class_id = DIFFRAY_RESULT_UNSUPPORTED; return; }
+void target_execute(const uint8_t *input, size_t length, struct pairfuzz_operation_result *result) {
+  if (apng_scope(input, length)) { result->class_id = PAIRFUZZ_RESULT_UNSUPPORTED; return; }
   png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, quiet_error, quiet_warning);
-  if (png == NULL) { result->class_id = DIFFRAY_RESULT_ADAPTER_ERROR; return; }
+  if (png == NULL) { result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR; return; }
   png_infop info = png_create_info_struct(png);
   uint8_t *pixels = NULL;
   png_bytep *rows = NULL;
-  if (info == NULL) { png_destroy_read_struct(&png, NULL, NULL); result->class_id = DIFFRAY_RESULT_ADAPTER_ERROR; return; }
+  if (info == NULL) { png_destroy_read_struct(&png, NULL, NULL); result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR; return; }
   if (setjmp(png_jmpbuf(png))) {
     free(rows); free(pixels); png_destroy_read_struct(&png, &info, NULL);
-    result->class_id = DIFFRAY_RESULT_REJECTED; return;
+    result->class_id = PAIRFUZZ_RESULT_REJECTED; return;
   }
   struct reader reader = {input, length, 0};
   png_set_read_fn(png, &reader, read_png);
@@ -54,7 +54,7 @@ void target_execute(const uint8_t *input, size_t length, struct diffray_operatio
   png_uint_32 width = png_get_image_width(png, info), height = png_get_image_height(png, info);
   if (width == 0 || height == 0) png_error(png, "zero dimensions");
   if (width > 4096 || height > 4096 || (uint64_t)width * height > 4194304) {
-    png_destroy_read_struct(&png, &info, NULL); result->class_id = DIFFRAY_RESULT_RESOURCE_LIMIT; return;
+    png_destroy_read_struct(&png, &info, NULL); result->class_id = PAIRFUZZ_RESULT_RESOURCE_LIMIT; return;
   }
   int color = png_get_color_type(png, info), depth = png_get_bit_depth(png, info);
   if (depth == 16) png_set_strip_16(png);
@@ -69,10 +69,10 @@ void target_execute(const uint8_t *input, size_t length, struct diffray_operatio
   size_t output_size = (size_t)width * height * 4;
   if (png_get_rowbytes(png, info) != (size_t)width * 4) png_error(png, "unexpected row size");
   pixels = malloc(output_size); rows = malloc((size_t)height * sizeof(*rows));
-  if (pixels == NULL || rows == NULL) { free(rows); free(pixels); png_destroy_read_struct(&png, &info, NULL); result->class_id = DIFFRAY_RESULT_ADAPTER_ERROR; return; }
+  if (pixels == NULL || rows == NULL) { free(rows); free(pixels); png_destroy_read_struct(&png, &info, NULL); result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR; return; }
   for (png_uint_32 y = 0; y < height; ++y) rows[y] = pixels + (size_t)y * width * 4;
   png_read_image(png, rows); png_read_end(png, info);
   free(rows); png_destroy_read_struct(&png, &info, NULL);
-  result->class_id = DIFFRAY_RESULT_ACCEPTED; result->width = width; result->height = height;
+  result->class_id = PAIRFUZZ_RESULT_ACCEPTED; result->width = width; result->height = height;
   result->normalized = pixels; result->normalized_len = output_size;
 }

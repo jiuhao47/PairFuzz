@@ -5,16 +5,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef DIFFRAY_MAGICK_CONFIG_PATH
-#define DIFFRAY_MAGICK_CONFIG_PATH ""
+#ifndef PAIRFUZZ_MAGICK_CONFIG_PATH
+#define PAIRFUZZ_MAGICK_CONFIG_PATH ""
 #endif
 
 int target_init(void) {
-  if (setenv("MAGICK_CONFIGURE_PATH", DIFFRAY_MAGICK_CONFIG_PATH, 1) != 0 ||
+  if (setenv("MAGICK_CONFIGURE_PATH", PAIRFUZZ_MAGICK_CONFIG_PATH, 1) != 0 ||
       setenv("MAGICK_CODER_MODULE_PATH", "/nonexistent", 1) != 0 ||
       setenv("MAGICK_CODER_FILTER_PATH", "/nonexistent", 1) != 0 ||
-      setenv("HOME", DIFFRAY_MAGICK_CONFIG_PATH, 1) != 0 ||
-      setenv("XDG_CONFIG_HOME", DIFFRAY_MAGICK_CONFIG_PATH, 1) != 0) {
+      setenv("HOME", PAIRFUZZ_MAGICK_CONFIG_PATH, 1) != 0 ||
+      setenv("XDG_CONFIG_HOME", PAIRFUZZ_MAGICK_CONFIG_PATH, 1) != 0) {
     return -1;
   }
   MagickCoreGenesis(NULL, MagickFalse);
@@ -36,28 +36,28 @@ const char *target_operation(void) { return "image.bmp.decode.rgba8"; }
 uint8_t target_schema(void) { return 1; }
 void target_cleanup(void) { MagickCoreTerminus(); }
 
-static enum diffray_result_class exception_class(
+static enum pairfuzz_result_class exception_class(
     const ExceptionInfo *exception) {
   if (exception != NULL &&
       (exception->severity == ResourceLimitError ||
        exception->severity == ResourceLimitFatalError)) {
-    return DIFFRAY_RESULT_RESOURCE_LIMIT;
+    return PAIRFUZZ_RESULT_RESOURCE_LIMIT;
   }
-  return DIFFRAY_RESULT_REJECTED;
+  return PAIRFUZZ_RESULT_REJECTED;
 }
 
 void target_execute(const uint8_t *input, size_t length,
-                    struct diffray_operation_result *result) {
+                    struct pairfuzz_operation_result *result) {
   struct bmp_header header;
   switch (bmp_scope_classify(input, length, &header)) {
     case BMP_SCOPE_UNSUPPORTED:
-      result->class_id = DIFFRAY_RESULT_UNSUPPORTED;
+      result->class_id = PAIRFUZZ_RESULT_UNSUPPORTED;
       return;
     case BMP_SCOPE_RESOURCE_LIMIT:
-      result->class_id = DIFFRAY_RESULT_RESOURCE_LIMIT;
+      result->class_id = PAIRFUZZ_RESULT_RESOURCE_LIMIT;
       return;
     case BMP_SCOPE_REJECTED:
-      result->class_id = DIFFRAY_RESULT_REJECTED;
+      result->class_id = PAIRFUZZ_RESULT_REJECTED;
       return;
     case BMP_SCOPE_DECODE:
       break;
@@ -68,7 +68,7 @@ void target_execute(const uint8_t *input, size_t length,
   if (exception == NULL || image_info == NULL) {
     if (image_info != NULL) (void)DestroyImageInfo(image_info);
     if (exception != NULL) (void)DestroyExceptionInfo(exception);
-    result->class_id = DIFFRAY_RESULT_ADAPTER_ERROR;
+    result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR;
     strcpy(result->diagnostic, "ImageMagick per-call setup failed");
     return;
   }
@@ -83,7 +83,7 @@ void target_execute(const uint8_t *input, size_t length,
   }
   if (GetImageListLength(image) != 1 || image->columns != header.width ||
       image->rows != header.height) {
-    result->class_id = DIFFRAY_RESULT_REJECTED;
+    result->class_id = PAIRFUZZ_RESULT_REJECTED;
     image = DestroyImageList(image);
     (void)DestroyImageInfo(image_info);
     (void)DestroyExceptionInfo(exception);
@@ -93,7 +93,7 @@ void target_execute(const uint8_t *input, size_t length,
   size_t output_length = (size_t)header.width * header.height * 4u;
   uint8_t *pixels = malloc(output_length);
   if (pixels == NULL) {
-    result->class_id = DIFFRAY_RESULT_ADAPTER_ERROR;
+    result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR;
     strcpy(result->diagnostic, "ImageMagick output allocation failed");
     image = DestroyImageList(image);
     (void)DestroyImageInfo(image_info);
@@ -104,8 +104,8 @@ void target_execute(const uint8_t *input, size_t length,
                         CharPixel, pixels, exception) == MagickFalse) {
     free(pixels);
     result->class_id = exception_class(exception);
-    if (result->class_id == DIFFRAY_RESULT_REJECTED) {
-      result->class_id = DIFFRAY_RESULT_ADAPTER_ERROR;
+    if (result->class_id == PAIRFUZZ_RESULT_REJECTED) {
+      result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR;
       strcpy(result->diagnostic, "ImageMagick RGBA export failed");
     }
     image = DestroyImageList(image);
@@ -118,7 +118,7 @@ void target_execute(const uint8_t *input, size_t length,
       pixels[offset] = 255;
     }
   }
-  result->class_id = DIFFRAY_RESULT_ACCEPTED;
+  result->class_id = PAIRFUZZ_RESULT_ACCEPTED;
   result->width = header.width;
   result->height = header.height;
   result->normalized = pixels;

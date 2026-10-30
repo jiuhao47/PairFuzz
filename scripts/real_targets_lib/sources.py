@@ -133,7 +133,7 @@ def fetch_source(entry: dict, cache: Path) -> Path:
             raise SourceError(f"source entry is missing {field}")
     cache.mkdir(parents=True, exist_ok=True)
     destination = cache / f"{entry['name']}-{entry['sha256']}"
-    marker = destination / ".diffray-source.json"
+    marker = destination / ".pairfuzz-source.json"
     if marker.is_file():
         try:
             recorded = json.loads(marker.read_text(encoding="utf-8"))
@@ -153,7 +153,7 @@ def fetch_source(entry: dict, cache: Path) -> Path:
                 f"SHA-256 mismatch for {entry['name']}: expected {entry['sha256']}, got {actual}"
             )
         _extract(entry, archive_path, extracted)
-        (extracted / ".diffray-source.json").write_text(
+        (extracted / ".pairfuzz-source.json").write_text(
             json.dumps(
                 {"schema_version": 1, "status": "complete", "name": entry["name"], "sha256": actual},
                 sort_keys=True,

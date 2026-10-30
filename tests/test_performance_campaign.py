@@ -89,8 +89,8 @@ class CampaignManifestTests(unittest.TestCase):
         campaign = load_campaign_module()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input"
-            path.write_bytes(b"DiffRay\n")
-            expected = hashlib.sha256(b"DiffRay\n").hexdigest()
+            path.write_bytes(b"PairFuzz\n")
+            expected = hashlib.sha256(b"PairFuzz\n").hexdigest()
 
             self.assertEqual(campaign.sha256_file(path), expected)
 
@@ -129,22 +129,24 @@ class CampaignManifestTests(unittest.TestCase):
 
 
 class ProcessRunnerTests(unittest.TestCase):
-    def test_clean_environment_removes_fuzzer_shared_memory_variables(self):
+    def test_clean_environment_removes_only_pairfuzz_private_state(self):
         campaign = load_campaign_module()
         with mock.patch.dict(
             os.environ,
             {
                 "__AFL_SHM_ID": "stale-afl",
-                "__DIFFRAY_SHM_ID": "stale-diffray",
-                "DIFFRAY_KEEP": "visible",
+                "__PAIRFUZZ_SHM_ID": "stale-pairfuzz",
+                "PAIRFUZZ_KEEP": "visible",
+                "UNRELATED_VALUE": "preserved-字节",
             },
             clear=False,
         ):
             environment = campaign.clean_environment(ROOT)
 
         self.assertNotIn("__AFL_SHM_ID", environment)
-        self.assertNotIn("__DIFFRAY_SHM_ID", environment)
-        self.assertEqual(environment["DIFFRAY_KEEP"], "visible")
+        self.assertNotIn("__PAIRFUZZ_SHM_ID", environment)
+        self.assertEqual(environment["PAIRFUZZ_KEEP"], "visible")
+        self.assertEqual(environment["UNRELATED_VALUE"], "preserved-字节")
         self.assertEqual(environment["CARGO_TARGET_DIR"], str(ROOT / "target"))
 
     def test_bounded_runner_records_early_exit(self):
@@ -373,7 +375,7 @@ class AggregationTests(unittest.TestCase):
             self.assertEqual(baseline["stable_nonduplicate_differences"], 0)
             self.assertEqual(baseline["trial_count"], 1)
             self.assertEqual(
-                summary["behavioral_signature"], "diffray-v1-blake3-coverage"
+                summary["behavioral_signature"], "pairfuzz-v1-blake3-coverage"
             )
             self.assertEqual(baseline["trials"][0]["raw_directory"], str(paths.root))
             self.assertEqual(baseline["trials"][0]["fuzzer_log"], str(paths.fuzzer_log))
@@ -512,7 +514,7 @@ class EvidenceCompatibilityTests(unittest.TestCase):
             self.assertEqual(metrics["signature_duplicates"], 0)
             self.assertEqual(
                 updated["results"]["behavioral_signature"],
-                "diffray-v1-blake3-coverage",
+                "pairfuzz-v1-blake3-coverage",
             )
 
     def test_validate_sidecars_replays_every_referenced_solution(self):

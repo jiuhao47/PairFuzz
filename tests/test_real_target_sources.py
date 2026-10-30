@@ -57,7 +57,7 @@ def entry_for(url, payload, name="fixture"):
 
 class SourceLockTests(unittest.TestCase):
     def setUp(self):
-        self.tempdir = tempfile.TemporaryDirectory(prefix="diffray-source-tests-")
+        self.tempdir = tempfile.TemporaryDirectory(prefix="pairfuzz-source-tests-")
         self.root = Path(self.tempdir.name)
         self.cache = self.root / "cache"
 
@@ -120,7 +120,7 @@ class SourceLockTests(unittest.TestCase):
     def test_archive_paths_and_links_cannot_escape(self):
         cases = {
             "parent": [("../escaped", "file", b"bad")],
-            "absolute": [("/tmp/diffray-escaped", "file", b"bad")],
+            "absolute": [("/tmp/pairfuzz-escaped", "file", b"bad")],
             "link": [("package/link", "link", "../../escaped")],
         }
         for label, members in cases.items():
@@ -215,13 +215,13 @@ class BuildProvenanceTests(unittest.TestCase):
             ranlib="/llvm/ranlib",
         )
         self.assertEqual(env["CC"], "/wrapper/cc")
-        self.assertEqual(env["DIFFRAY_TARGET_PROFILE"], "release")
+        self.assertEqual(env["PAIRFUZZ_TARGET_PROFILE"], "release")
         self.assertNotIn("SECRET_TOKEN", env)
         self.assertNotIn("__AFL_SHM_ID", env)
-        self.assertNotIn("__DIFFRAY_RV_A", env)
+        self.assertNotIn("__PAIRFUZZ_RV_A", env)
 
     def test_complete_manifest_is_atomic_and_failure_never_claims_complete(self):
-        with tempfile.TemporaryDirectory(prefix="diffray-manifest-") as raw:
+        with tempfile.TemporaryDirectory(prefix="pairfuzz-manifest-") as raw:
             root = Path(raw)
             try:
                 with BuildManifestTransaction(root, {"schema_version": 1}) as transaction:
@@ -308,7 +308,7 @@ class X509BuildTests(unittest.TestCase):
             )
 
     def test_explicit_native_gate_records_probes_symbols_and_coverage(self):
-        profile = os.environ.get("DIFFRAY_X509_TEST_PROFILE")
+        profile = os.environ.get("PAIRFUZZ_X509_TEST_PROFILE")
         if profile is None:
             self.skipTest("native X509 integration is exercised by its explicit profile gate")
         completed = subprocess.run(

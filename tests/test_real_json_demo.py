@@ -174,6 +174,24 @@ class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.demo = load_demo()
 
+    def test_clean_environment_removes_only_pairfuzz_private_state(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "__AFL_SHM_ID": "stale-afl",
+                "__PAIRFUZZ_RV_ROLE": "stale-pairfuzz",
+                "PAIRFUZZ_KEEP": "visible",
+                "UNRELATED_VALUE": "preserved-字节",
+            },
+            clear=False,
+        ):
+            environment = self.demo.environment()
+
+        self.assertNotIn("__AFL_SHM_ID", environment)
+        self.assertNotIn("__PAIRFUZZ_RV_ROLE", environment)
+        self.assertEqual(environment["PAIRFUZZ_KEEP"], "visible")
+        self.assertEqual(environment["UNRELATED_VALUE"], "preserved-字节")
+
     @staticmethod
     def _metadata(rv_a=1, rv_b=0, note="rv_zero_nonzero"):
         return {

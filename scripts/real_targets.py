@@ -90,7 +90,7 @@ def command_replay(args):
 
 
 def parser():
-    result = argparse.ArgumentParser(description="DiffRay reproducible native-target tooling")
+    result = argparse.ArgumentParser(description="PairFuzz reproducible native-target tooling")
     commands = result.add_subparsers(dest="command", required=True)
     fetch = commands.add_parser("fetch", help="download, verify, and extract locked sources")
     fetch.add_argument("--pair", choices=(*pair_names(), "all"), required=True)

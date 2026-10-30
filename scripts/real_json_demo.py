@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, fuzz and replay DiffRay's real JSON parser targets."""
+"""Build, fuzz and replay PairFuzz's real JSON parser targets."""
 
 import argparse
 import hashlib
@@ -36,7 +36,7 @@ def environment() -> dict[str, str]:
     env["ASAN_OPTIONS"] = "abort_on_error=1:detect_leaks=false"
     env["CARGO_TARGET_DIR"] = str(ROOT / "target")
     for name in list(env):
-        if name.startswith(("__AFL_", "__DIFFRAY_")):
+        if name.startswith(("__AFL_", "__PAIRFUZZ_")):
             del env[name]
     return env
 
@@ -189,7 +189,7 @@ def build() -> None:
     if not (ROOT / "LibAFL" / "crates" / "libafl" / "Cargo.toml").is_file():
         raise RuntimeError("initialize the pinned dependency: git submodule update --init LibAFL")
     commands = (
-        ["cargo", "build", "--locked", "--bin", "diffray", "-j", "4"],
+        ["cargo", "build", "--locked", "--bin", "pairfuzz", "-j", "4"],
         [
             "cargo",
             "build",
@@ -266,9 +266,9 @@ def _version_summary() -> list[dict[str, str]]:
 
 def run(seconds: float, mode: str) -> Path:
     verify()
-    fuzzer = ROOT / "target" / "debug" / "diffray"
+    fuzzer = ROOT / "target" / "debug" / "pairfuzz"
     if not fuzzer.is_file():
-        raise RuntimeError("DiffRay is missing; run the build command first")
+        raise RuntimeError("PairFuzz is missing; run the build command first")
 
     parent = ROOT / "run" / "real-json"
     parent.mkdir(parents=True, exist_ok=True)
@@ -344,7 +344,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("verify-vendor", help="verify pinned source provenance")
-    commands.add_parser("build", help="build DiffRay and the real parser targets")
+    commands.add_parser("build", help="build PairFuzz and the real parser targets")
     commands.add_parser("verify", help="check the shared target contract")
     replay_parser = commands.add_parser("replay", help="replay one differential input")
     replay_parser.add_argument("input", type=Path)

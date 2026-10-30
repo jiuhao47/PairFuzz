@@ -76,7 +76,7 @@ def load_build_manifest(path: Path, *, expected_pair=None, expected_profile=None
 def campaign_command(root: Path, manifest: BuildManifest, output: Path, cpu: int, seed: int) -> list[str]:
     seed_dir = (root / pair_spec(manifest.payload["pair"]).seed_dir).resolve()
     return [
-        str((root / "target/debug/diffray").resolve()),
+        str((root / "target/debug/pairfuzz").resolve()),
         "--pipeline", "fast",
         "--mode", "single-cov",
         "--result-policy", "exact",
@@ -110,7 +110,7 @@ def _run_target(target: Path, input_path: Path, output_path: Path) -> dict:
         text=True,
         check=False,
         timeout=30,
-        env={name: value for name, value in os.environ.items() if not name.startswith(("__AFL_", "__DIFFRAY_"))},
+        env={name: value for name, value in os.environ.items() if not name.startswith(("__AFL_", "__PAIRFUZZ_"))},
     )
     if completed.returncode != 0:
         return {

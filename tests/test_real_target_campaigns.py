@@ -29,7 +29,7 @@ from scripts.real_targets_lib.registry import pair_names
 
 class NativeCampaignTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="diffray campaign with spaces ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz campaign with spaces ")
         self.root = Path(self.temporary.name)
         (self.root / "third_party").mkdir()
         (self.root / "examples/real-targets/png/seeds").mkdir(parents=True)
@@ -109,6 +109,7 @@ class NativeCampaignTests(unittest.TestCase):
         manifest = load_build_manifest(self.manifest(a, b), expected_pair="png")
         output = self.root / "run/output with spaces"
         command = campaign_command(self.root, manifest, output, self.cpu, 0x1234)
+        self.assertEqual(command[0], str((self.root / "target/debug/pairfuzz").resolve()))
         for pair in (
             ("--pipeline", "fast"), ("--mode", "single-cov"),
             ("--result-policy", "exact"), ("--signature-version", "2"),
@@ -138,7 +139,7 @@ class NativeCampaignTests(unittest.TestCase):
         b = self.target("b", code="0000000000000002")
         manifest = self.manifest(a, b)
         self.executable(
-            "target/debug/diffray",
+            "target/debug/pairfuzz",
             "import pathlib,sys,time\n"
             "args=sys.argv[1:]\n"
             "out=pathlib.Path(args[args.index('--output')+1])\n"
@@ -207,13 +208,13 @@ class NativeCampaignTests(unittest.TestCase):
     def test_early_exit_fails_with_evidence_and_zero_solution_timeout_succeeds(self):
         a, b = self.target("a"), self.target("b")
         manifest = self.manifest(a, b)
-        self.executable("target/debug/diffray", "import sys; print('boom'); sys.exit(9)\n")
+        self.executable("target/debug/pairfuzz", "import sys; print('boom'); sys.exit(9)\n")
         with self.assertRaisesRegex(CampaignError, "early"):
             run_pair(self.root, "png", manifest, 0.2, self.cpu, 9)
         roots = sorted((self.root / "run/real-targets/campaigns/png").iterdir())
         self.assertTrue((roots[-1] / "fuzzer.log").is_file())
         self.executable(
-            "target/debug/diffray",
+            "target/debug/pairfuzz",
             "import pathlib,sys,time\n"
             "args=sys.argv[1:]\n"
             "out=pathlib.Path(args[args.index('--output')+1])\n"
@@ -233,7 +234,7 @@ class NativeCampaignTests(unittest.TestCase):
 
 class BmpCampaignTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="diffray bmp campaign ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz bmp campaign ")
         self.root = Path(self.temporary.name)
         (self.root / "third_party").mkdir()
         (self.root / "examples/real-targets/bmp/seeds").mkdir(parents=True)
@@ -310,7 +311,7 @@ class BmpCampaignTests(unittest.TestCase):
         if solution:
             solution_lines = "(solutions/'id-000').write_bytes(b'witness')\n"
         return self.executable(
-            "target/debug/diffray",
+            "target/debug/pairfuzz",
             "import pathlib,sys,time\n"
             "args=sys.argv[1:]\n"
             "out=pathlib.Path(args[args.index('--output')+1])\n"
@@ -389,7 +390,7 @@ class BmpCampaignTests(unittest.TestCase):
 
 class X509CampaignTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="diffray x509 campaign ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz x509 campaign ")
         self.root = Path(self.temporary.name)
         (self.root / "third_party").mkdir()
         (self.root / "run/build").mkdir(parents=True)
@@ -451,7 +452,7 @@ class X509CampaignTests(unittest.TestCase):
 
 class FinalGateTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="diffray final gate ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="pairfuzz final gate ")
         self.root = Path(self.temporary.name)
         (self.root / "third_party").mkdir()
 

@@ -472,8 +472,8 @@ def generate_x509(output):
     key = serialization.load_pem_private_key(X509_RSA_PRIVATE_KEY_PEM, None)
     base_name = x509.Name(
         [
-            x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay deterministic X509"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "PairFuzz deterministic X509"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PairFuzz Test"),
         ]
     )
 
@@ -515,9 +515,9 @@ def generate_x509(output):
     certificate("long-serial", serial=(1 << 158) + 0x12345)
     multi_name = x509.Name(
         [
-            x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay quoted + name"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "PairFuzz quoted + name"),
             x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "Parser Unit"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PairFuzz Test"),
         ]
     )
     certificate("multi-valued-name", serial=4, subject=multi_name)
@@ -542,16 +542,16 @@ def generate_x509(output):
     certificate(
         "dns-san",
         serial=7,
-        extensions=((x509.SubjectAlternativeName([x509.DNSName("diffray.invalid")]), False),),
+        extensions=((x509.SubjectAlternativeName([x509.DNSName("pairfuzz.invalid")]), False),),
     )
     certificate(
         "unicode-name",
         serial=8,
         subject=x509.Name(
             [
-                x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay Unicode"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "PairFuzz Unicode"),
                 x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "解析器"),
-                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PairFuzz Test"),
             ]
         ),
     )
@@ -560,9 +560,9 @@ def generate_x509(output):
         serial=9,
         subject=x509.Name(
             [
-                x509.NameAttribute(NameOID.COMMON_NAME, "DiffRay\x00NUL"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "PairFuzz\x00NUL"),
                 x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "Parser"),
-                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "DiffRay Test"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PairFuzz Test"),
             ]
         ),
     )

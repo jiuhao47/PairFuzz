@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and summarize reproducible DiffRay performance campaigns."""
+"""Run and summarize reproducible PairFuzz performance campaigns."""
 
 from __future__ import annotations
 
@@ -530,9 +530,9 @@ def generate_signature_index(
         raise ValueError("signature version 1 requires zero-nonzero policy")
     if not solution_dir.is_dir():
         return {}
-    fuzzer = repository_root / "target" / "debug" / "diffray"
+    fuzzer = repository_root / "target" / "debug" / "pairfuzz"
     if not fuzzer.is_file():
-        raise RuntimeError(f"DiffRay replay binary is missing: {fuzzer}")
+        raise RuntimeError(f"PairFuzz replay binary is missing: {fuzzer}")
     with tempfile.TemporaryDirectory(
         prefix="signature-replay-", dir=solution_dir.parent
     ) as temporary:
@@ -631,7 +631,7 @@ def aggregate_trials(records: list[TrialRecord]) -> dict[str, Any]:
         }
     return {
         "schema_version": 1,
-        "behavioral_signature": "diffray-v1-blake3-coverage",
+        "behavioral_signature": "pairfuzz-v1-blake3-coverage",
         "configurations": configurations,
     }
 
@@ -639,7 +639,7 @@ def aggregate_trials(records: list[TrialRecord]) -> dict[str, Any]:
 def clean_environment(root: Path) -> dict[str, str]:
     environment = os.environ.copy()
     for name in tuple(environment):
-        if name.startswith(("__AFL_", "__DIFFRAY_")):
+        if name.startswith(("__AFL_", "__PAIRFUZZ_")):
             del environment[name]
     environment["ASAN_OPTIONS"] = "abort_on_error=1:detect_leaks=false"
     environment["CARGO_TARGET_DIR"] = str(root.resolve() / "target")
@@ -860,7 +860,7 @@ def _sha256_tree(root: Path) -> str:
 
 def _fuzzer_command(manifest: CampaignManifest, paths: TrialPaths, mode: str) -> list[str]:
     return [
-        str(manifest.repository_root / "target" / "debug" / "diffray"),
+        str(manifest.repository_root / "target" / "debug" / "pairfuzz"),
         "--mode",
         mode,
         "-i",
@@ -1212,7 +1212,7 @@ def backfill_signatures(evidence_paths: list[Path]) -> list[dict[str, Any]]:
 
         evidence["results"][
             "behavioral_signature"
-        ] = "diffray-v1-blake3-coverage"
+        ] = "pairfuzz-v1-blake3-coverage"
         evidence["signature_backfill"] = {
             "schema_version": 1,
             "signature_version": 1,

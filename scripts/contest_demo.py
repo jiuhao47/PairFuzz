@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, exercise and replay the classic DiffRay competition demonstration."""
+"""Build, exercise and replay the classic PairFuzz competition demonstration."""
 
 import argparse
 import json
@@ -27,7 +27,7 @@ def environment():
     env["CARGO_TARGET_DIR"] = str(ROOT / "target")
     # Replays must never attach to a caller's active fuzzing session.
     for name in list(env):
-        if name.startswith(("__AFL_", "__DIFFRAY_")):
+        if name.startswith(("__AFL_", "__PAIRFUZZ_")):
             del env[name]
     return env
 
@@ -77,7 +77,7 @@ def build():
     if not (ROOT / "LibAFL" / "crates" / "libafl" / "Cargo.toml").exists():
         raise RuntimeError("Initialize the pinned dependency: git submodule update --init LibAFL")
     for command in (
-        ["cargo", "build", "--locked", "--bin", "diffray", "-j", "4"],
+        ["cargo", "build", "--locked", "--bin", "pairfuzz", "-j", "4"],
         ["cargo", "build", "--locked", "--manifest-path", "app/compiler/Cargo.toml",
          "--target-dir", str(ROOT / "target"), "--lib", "--bin", "libafl_forkserver_cc", "-j", "4"],
         ["make", "-C", str(DEMO)],
@@ -115,7 +115,7 @@ def stop_group(process):
 
 def run(seconds, mode):
     verify()
-    fuzzer = ROOT / "target" / "debug" / "diffray"
+    fuzzer = ROOT / "target" / "debug" / "pairfuzz"
     if not fuzzer.is_file():
         raise RuntimeError("Fuzzer missing; run the build command first")
     parent = ROOT / "run" / "contest"

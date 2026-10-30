@@ -243,7 +243,7 @@ def _sha256(path: Path) -> str:
 
 
 def _source_root(cache_path: Path) -> Path:
-    children = [path for path in cache_path.iterdir() if path.name != ".diffray-source.json"]
+    children = [path for path in cache_path.iterdir() if path.name != ".pairfuzz-source.json"]
     if len(children) != 1 or not children[0].is_dir():
         raise RuntimeError(f"expected one extracted source directory in {cache_path}")
     return children[0]

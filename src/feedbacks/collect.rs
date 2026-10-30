@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use std::u8;
 
 // Module-local debug helpers (mirror metadata.rs style). Controlled by
-// environment variable `DIFFRAY_COLLECT_DEBUG`.
+// environment variable `PAIRFUZZ_COLLECT_DEBUG`.
 fn collect_debug_log(tag: &str, msg: &str) {
     if crate::driver::env_var::env_bool_cached(crate::driver::env_var::COLLECT_DEBUG) {
         crate::utils::logging::debug(tag, msg);

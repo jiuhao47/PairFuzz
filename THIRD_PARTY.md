@@ -8,9 +8,9 @@
 - `Cargo.lock`、`app/compiler/Cargo.lock`：Rust 直接与传递依赖；
 - `LibAFL` gitlink：固定上游源码提交。
 
-第三方许可证只约束相应组件，并不自动为 DiffRay 原创代码选择许可证。根项目许可证
+第三方许可证只约束相应组件，并不自动为 PairFuzz 原创代码选择许可证。根项目许可证
 仍待项目权利人确认；在权利人确认前，不能把 LibAFL 的双许可证或任一目标库许可证
-复制为 DiffRay 的授权声明。
+复制为 PairFuzz 的授权声明。
 
 ## 运行框架
 
@@ -52,6 +52,6 @@ GPL-3.0-or-later 的对应源码与许可证义务。仅提交适配器、契约
 
 ## 归属边界
 
-DiffRay 原创或历史项目代码主要位于 `src/`、`app/compiler/`、目标适配器和工作流脚本；
+PairFuzz 原创或历史项目代码主要位于 `src/`、`app/compiler/`、目标适配器和工作流脚本；
 LibAFL 以及上述解析/图像/密码库仍归各自上游作者所有。历史恢复点、本次新增贡献和
 借鉴范围见 [代码来源与依赖归属](docs/contest/provenance.md)。

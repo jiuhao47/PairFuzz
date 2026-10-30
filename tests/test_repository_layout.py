@@ -1,11 +1,37 @@
 import json
 import subprocess
 from pathlib import Path
+import tempfile
 import tomllib
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def tracked_identity_offenders(root):
+    forbidden = ("diff" + "ray").casefold()
+    completed = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+    paths = completed.stdout.decode("utf-8").split("\0")
+    offenders = []
+    for relative in filter(None, paths):
+        if forbidden in relative.casefold():
+            offenders.append((relative, "path"))
+        path = root / relative
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if forbidden in content.casefold():
+            offenders.append((relative, "content"))
+    return offenders
 
 
 class RepositoryLayoutTests(unittest.TestCase):
@@ -58,17 +84,25 @@ class RepositoryLayoutTests(unittest.TestCase):
         self.assertIn("Usage: pairfuzz", completed.stdout)
         self.assertFalse(former_binary.exists())
 
-    def test_no_former_named_tracked_paths(self):
-        forbidden = ("diff" + "ray").casefold()
-        completed = subprocess.run(
-            ["git", "ls-files", "-z"],
-            cwd=ROOT,
-            capture_output=True,
-            check=True,
-        )
-        paths = completed.stdout.decode("utf-8").split("\0")
-        offenders = [path for path in paths if forbidden in path.casefold()]
-        self.assertEqual(offenders, [])
+    def test_tracked_tree_has_no_former_identity(self):
+        self.assertEqual(tracked_identity_offenders(ROOT), [])
+
+    def test_identity_guard_skips_only_undecodable_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            binary = root / "opaque.bin"
+            binary.write_bytes(b"\xff" + ("diff" + "ray").encode("ascii"))
+            subprocess.run(["git", "add", binary.name], cwd=root, check=True)
+            self.assertEqual(tracked_identity_offenders(root), [])
+
+            forbidden_path = root / (("diff" + "ray") + ".bin")
+            binary.rename(forbidden_path)
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            self.assertEqual(
+                tracked_identity_offenders(root),
+                [(forbidden_path.name, "path")],
+            )
 
     def test_performance_evidence_uses_reachable_sanitized_project_commits(self):
         expected_migration = {

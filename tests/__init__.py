@@ -1,1 +1,1 @@
-"""DiffRay integration tests."""
+"""PairFuzz integration tests."""

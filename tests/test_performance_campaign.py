@@ -438,6 +438,7 @@ class AggregationTests(unittest.TestCase):
 
 
 class EvidenceCompatibilityTests(unittest.TestCase):
+    FORMER_IDENTITY = "diff" + "ray"
     HISTORY_SOURCE_COMMIT = "82d6d3649fb59e0b526c3377becf2fabc5455d43"
     IDENTITY_MIGRATION = {
         "schema_version": 1,
@@ -446,7 +447,8 @@ class EvidenceCompatibilityTests(unittest.TestCase):
         "allowed_changes": ["identity_namespace", "machine_paths"],
     }
     HISTORICAL_ROOT = (
-        "/home/user/workspace/diffray_rust_old/.worktrees/performance-multicore/"
+        f"/home/user/workspace/{FORMER_IDENTITY}_rust_old/"
+        ".worktrees/performance-multicore/"
     )
 
     def test_pre_rename_checkpoints_only_change_approved_identity_leaves(self):
@@ -525,9 +527,9 @@ class EvidenceCompatibilityTests(unittest.TestCase):
             return value
         if value.startswith(cls.HISTORICAL_ROOT):
             value = value.removeprefix(cls.HISTORICAL_ROOT)
-        if value == "diffray-v1-blake3-coverage":
+        if value == f"{cls.FORMER_IDENTITY}-v1-blake3-coverage":
             return "pairfuzz-v1-blake3-coverage"
-        if value == "target/debug/diffray":
+        if value == f"target/debug/{cls.FORMER_IDENTITY}":
             return "target/debug/pairfuzz"
         return value
 

@@ -171,7 +171,7 @@ pub fn trace(module: &str, msg: &str) {
     log(LogLevel::Trace, module, msg)
 }
 
-/// Initialize logger level from an environment variable like DIFFRAY_LOG (optional),
+/// Initialize logger level from an environment variable like PAIRFUZZ_LOG (optional),
 /// or leave default INFO. Returns the chosen level.
 pub fn init_from_env() -> LogLevel {
     if let Ok(s) = std::env::var(LOG) {
@@ -194,7 +194,7 @@ pub fn init_from_env() -> LogLevel {
 /// Initialize logger from `-v` style verbosity count and optional log directory.
 ///
 /// Verbosity mapping:
-/// - verbose == 0: use DIFFRAY_LOG env var if present, otherwise keep default (Info)
+/// - verbose == 0: use PAIRFUZZ_LOG env var if present, otherwise keep default (Info)
 /// - verbose == 1: Info
 /// - verbose == 2: Debug
 /// - verbose >=3: Trace
@@ -207,7 +207,7 @@ pub fn init_from_verbose(verbose: u8, dir: Option<PathBuf>) -> LogLevel {
 
     let lvl = match verbose {
         0 => {
-            // honor DIFFRAY_LOG if present, otherwise keep current
+            // honor PAIRFUZZ_LOG if present, otherwise keep current
             init_from_env()
         }
         1 => LogLevel::Info,

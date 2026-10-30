@@ -1,6 +1,6 @@
-# 参与 DiffRay 开发
+# 参与 PairFuzz 开发
 
-感谢关注 DiffRay。本仓库是 ChinaSoft 2026 Rust 软件原型开发竞赛的精简交付版本，
+感谢关注 PairFuzz。本仓库是 ChinaSoft 2026 Rust 软件原型开发竞赛的精简交付版本，
 接受能够保持双目标执行、证据可复现和第三方边界清晰的改进。
 
 ## 开始前

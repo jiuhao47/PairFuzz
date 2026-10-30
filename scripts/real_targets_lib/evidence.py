@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 from .registry import pair_names
@@ -167,6 +168,8 @@ def write_smoke_evidence(
             isinstance(record.get("runs"), list) and len(record["runs"]) == 3
             for record in replays
         )
+        if three_run_complete != saved:
+            raise EvidenceError(f"{pair} {profile} three-run replay is incomplete")
         for record in replays:
             for run in record.get("runs", []):
                 for role in ("a", "b"):
@@ -213,7 +216,7 @@ def write_smoke_evidence(
     payload = {
         "schema_version": 1,
         "label": "smoke-not-performance-ranking",
-        "recorded_at": "2026-10-28",
+        "recorded_at": date.today().isoformat(),
         "pair": pair,
         "operation": operations.pop(),
         "semantic_abi_version": 1,

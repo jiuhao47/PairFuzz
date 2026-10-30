@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+from datetime import date
 import stat
 import subprocess
 import tempfile
@@ -25,6 +26,9 @@ from scripts.real_targets_lib.evidence import (
     write_smoke_evidence,
 )
 from scripts.real_targets_lib.registry import pair_names
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeCampaignTests(unittest.TestCase):
@@ -594,6 +598,62 @@ class FinalGateTests(unittest.TestCase):
                 summary,
             )
 
+    def test_committed_native_evidence_matches_selected_builds(self):
+        build_root = REPOSITORY_ROOT / "run/real-targets/build"
+        if not build_root.is_dir():
+            self.skipTest("native build cache is absent")
+        for pair in pair_names():
+            evidence_path = (
+                REPOSITORY_ROOT
+                / "docs/contest/performance"
+                / f"native-{pair}-smoke.json"
+            )
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            for profile in ("asan", "release"):
+                with self.subTest(pair=pair, profile=profile):
+                    record = evidence["profiles"][profile]
+                    manifest_path = REPOSITORY_ROOT / record["raw_build_manifest"]
+                    self.assertTrue(manifest_path.is_file(), manifest_path)
+                    self.assertEqual(
+                        hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                        record["build_manifest_sha256"],
+                    )
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    expected_targets = {
+                        role: manifest["targets"][role]["sha256"]
+                        for role in ("a", "b")
+                    }
+                    self.assertEqual(record["target_sha256"], expected_targets)
+                    for role in ("a", "b"):
+                        target = REPOSITORY_ROOT / manifest["targets"][role]["path"]
+                        self.assertTrue(target.is_file(), target)
+                        self.assertEqual(
+                            hashlib.sha256(target.read_bytes()).hexdigest(),
+                            expected_targets[role],
+                        )
+
+    def test_committed_zero_solution_records_have_zero_replay_counts(self):
+        for pair in pair_names():
+            evidence_path = (
+                REPOSITORY_ROOT
+                / "docs/contest/performance"
+                / f"native-{pair}-smoke.json"
+            )
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            for profile, record in evidence["profiles"].items():
+                with self.subTest(pair=pair, profile=profile):
+                    saved = record["solutions_saved"]
+                    completeness = record["replay_completeness"]
+                    self.assertEqual(completeness["saved"], saved)
+                    self.assertEqual(completeness["audited"], saved)
+                    self.assertEqual(completeness["three_run_complete"], saved)
+                    if saved == 0:
+                        self.assertTrue(record["zero_solutions"])
+                        self.assertEqual(
+                            completeness,
+                            {"saved": 0, "audited": 0, "three_run_complete": 0},
+                        )
+
     def test_smoke_export_rejects_a_mixed_build_manifest(self):
         dependencies = ("zlib", "libpng", "libspng", "xxhash", "xxhash-license")
         (self.root / "third_party/real-targets.lock.json").write_text(
@@ -660,6 +720,36 @@ class FinalGateTests(unittest.TestCase):
             summaries[profile] = summary
         output = self.root / "smoke.json"
         write_smoke_evidence(self.root, "png", summaries, output, host={})
+        compact = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(compact["recorded_at"], date.today().isoformat())
+        for record in compact["profiles"].values():
+            self.assertTrue(record["zero_solutions"])
+            self.assertEqual(
+                record["replay_completeness"],
+                {"saved": 0, "audited": 0, "three_run_complete": 0},
+            )
+
+        release = json.loads(summaries["release"].read_text())
+        release["solutions_saved"] = 1
+        release["stable_signatures"] = 1
+        release["zero_solutions"] = False
+        release["replays"] = [
+            {
+                "runs": [
+                    {"a": {"class": "accepted"}, "b": {"class": "rejected"}},
+                    {"a": {"class": "accepted"}, "b": {"class": "rejected"}},
+                ]
+            }
+        ]
+        summaries["release"].write_text(json.dumps(release))
+        with self.assertRaisesRegex(EvidenceError, "three-run"):
+            write_smoke_evidence(self.root, "png", summaries, output, host={})
+
+        release["solutions_saved"] = 0
+        release["stable_signatures"] = 0
+        release["zero_solutions"] = True
+        release["replays"] = []
+        summaries["release"].write_text(json.dumps(release))
         release = json.loads(summaries["release"].read_text())
         release["target_sha256"]["b"] = "d" * 64
         summaries["release"].write_text(json.dumps(release))

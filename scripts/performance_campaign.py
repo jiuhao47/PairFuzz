@@ -33,6 +33,33 @@ class ManifestError(RuntimeError):
     """The performance workload manifest is invalid or incomplete."""
 
 
+IDENTITY_MIGRATION = {
+    "schema_version": 1,
+    "source_commit": "82d6d3649fb59e0b526c3377becf2fabc5455d43",
+    "kind": "pre-rename-historical-checkpoint",
+    "allowed_changes": ["identity_namespace", "machine_paths"],
+}
+
+
+def validate_identity_migration(evidence: dict[str, Any]) -> None:
+    """Reject historical checkpoints outside the approved identity-only rewrite."""
+    if evidence.get("identity_migration") != IDENTITY_MIGRATION:
+        raise ManifestError("invalid or missing historical identity migration metadata")
+
+    def reject_absolute(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                reject_absolute(key)
+                reject_absolute(item)
+        elif isinstance(value, list):
+            for item in value:
+                reject_absolute(item)
+        elif isinstance(value, str) and value.startswith("/"):
+            raise ManifestError(f"historical evidence contains an absolute path: {value}")
+
+    reject_absolute(evidence)
+
+
 class CampaignManifest:
     """Validated immutable inputs for one family of performance trials."""
 
@@ -1240,6 +1267,9 @@ def _named_target_hashes(environment: dict[str, Any]) -> dict[str, str]:
 def compare_evidence(baseline_path: Path, candidate_path: Path) -> dict[str, Any]:
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    if "identity_migration" in baseline or "identity_migration" in candidate:
+        validate_identity_migration(baseline)
+        validate_identity_migration(candidate)
     baseline_environment = baseline["environment"]
     candidate_environment = candidate["environment"]
     if (

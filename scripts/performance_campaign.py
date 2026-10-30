@@ -803,7 +803,7 @@ def capture_environment(
     governor_path = cpu_root / "cpufreq" / "scaling_governor"
     return {
         "schema_version": 1,
-        "source_baseline": "2ebbb17dcb9711dcf29c356e4ce044fc163ea6c0",
+        "source_baseline": "e6461a6ca65e74e1c02d13b33beb53d850eb6efc",
         "measurement_commit": _output(["git", "rev-parse", "HEAD"], root),
         "libafl_commit": _output(
             ["git", "-C", str(root / "LibAFL"), "rev-parse", "HEAD"], root

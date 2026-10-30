@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 import tomllib
@@ -8,6 +9,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepositoryLayoutTests(unittest.TestCase):
+    def test_performance_evidence_uses_reachable_sanitized_project_commits(self):
+        expected_migration = {
+            "schema_version": 1,
+            "project_commit_ids": "mapped_to_sanitized_history",
+        }
+        for relative in (
+            "docs/contest/performance/baseline-0.15.4.json",
+            "docs/contest/performance/upgrade-only-0.16.1.json",
+        ):
+            with self.subTest(evidence=relative):
+                evidence = json.loads((ROOT / relative).read_text(encoding="utf-8"))
+                self.assertEqual(
+                    evidence.get("history_privacy_migration"),
+                    expected_migration,
+                )
+                environment = evidence["environment"]
+                for field in ("source_baseline", "measurement_commit"):
+                    value = environment[field]
+                    self.assertRegex(value, r"^[0-9a-f]{40}$")
+                    result = subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", value, "HEAD"],
+                        cwd=ROOT,
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, field)
+
     def test_rust_entrypoint_is_thin_and_runtime_is_separate(self):
         runtime = ROOT / "src" / "driver" / "runtime.rs"
         self.assertTrue(runtime.is_file())
@@ -280,11 +308,12 @@ class RepositoryLayoutTests(unittest.TestCase):
                 with self.subTest(document=document.name, token=token):
                     self.assertNotIn(token, content)
 
-    def test_provenance_records_remote_recovery_point(self):
+    def test_provenance_records_source_archive_recovery_point(self):
         content = (ROOT / "docs" / "contest" / "provenance.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("internal-source-remote", content)
+        self.assertIn("私有源码归档", content)
+        self.assertNotIn("internal-" + "source-remote", content)
         self.assertIn("dcf9efb0347e488b7a1e12f6ec42fc5299539035", content)
 
     def test_structure_lists_every_retained_product_area(self):

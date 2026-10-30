@@ -308,13 +308,39 @@ class RepositoryLayoutTests(unittest.TestCase):
                 with self.subTest(document=document.name, token=token):
                     self.assertNotIn(token, content)
 
-    def test_provenance_records_source_archive_recovery_point(self):
-        content = (ROOT / "docs" / "contest" / "provenance.md").read_text(
-            encoding="utf-8"
+    def test_source_archive_recovery_identifier_stays_private(self):
+        documents = (
+            ROOT / "docs" / "contest" / "provenance.md",
+            ROOT
+            / "docs"
+            / "superpowers"
+            / "plans"
+            / "2026-10-26-contest-repository-pruning.md",
+            ROOT
+            / "docs"
+            / "superpowers"
+            / "specs"
+            / "2026-10-26-contest-repository-pruning-design.md",
         )
-        self.assertIn("私有源码归档", content)
-        self.assertNotIn("internal-" + "source-remote", content)
-        self.assertIn("dcf9efb0347e488b7a1e12f6ec42fc5299539035", content)
+        full_commit = r"[0-9a-f]{40}"
+        recovery_references = (
+            rf"main@{full_commit}",
+            rf"refs/heads/main[^\n]*=\s*{full_commit}",
+            rf"(?is)(?:private source archive at its `main` snapshot|"
+            rf"私有源码归档的 `main` 快照)\s*`{full_commit}`",
+            rf"(?is)full commit\s*`{full_commit}`",
+            rf"(?is)remote `main` still resolves to\s*`{full_commit}`",
+        )
+        for document in documents:
+            with self.subTest(document=document.name):
+                content = document.read_text(encoding="utf-8")
+                for pattern in recovery_references:
+                    self.assertNotRegex(content, pattern)
+
+        provenance = documents[0].read_text(encoding="utf-8")
+        self.assertIn("私有源码归档", provenance)
+        self.assertNotIn("internal-" + "source-remote", provenance)
+        self.assertIn("精确恢复标识仅保存在私有审计记录中", provenance)
 
     def test_structure_lists_every_retained_product_area(self):
         content = (ROOT / "docs" / "STRUCTURE.md").read_text(encoding="utf-8")

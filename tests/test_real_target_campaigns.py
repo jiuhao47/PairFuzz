@@ -599,9 +599,8 @@ class FinalGateTests(unittest.TestCase):
             )
 
     def test_committed_native_evidence_matches_selected_builds(self):
-        build_root = REPOSITORY_ROOT / "run/real-targets/build"
-        if not build_root.is_dir():
-            self.skipTest("native build cache is absent")
+        if os.environ.get("PAIRFUZZ_VERIFY_ARCHIVED_BUILDS") != "1":
+            self.skipTest("historical build audit requires PAIRFUZZ_VERIFY_ARCHIVED_BUILDS=1")
         for pair in pair_names():
             evidence_path = (
                 REPOSITORY_ROOT

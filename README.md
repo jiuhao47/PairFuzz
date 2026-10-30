@@ -135,6 +135,6 @@ just check
 | [docs/contest/performance/README.md](docs/contest/performance/README.md) | 性能测量口径和已提交证据 |
 | [docs/STRUCTURE.md](docs/STRUCTURE.md) | 当前仓库模块结构 |
 
-PairFuzz 原创代码采用 MIT 许可证，全文见 [LICENSE](LICENSE)；第三方组件继续遵循各自
-许可证。正式提交还需要队伍名称、联系人、公开仓库 URL、固定评审 commit/tag、报名表、
-签字承诺书和最终稿件。
+PairFuzz 原创代码采用 [MIT 许可证](LICENSE)，原创文档（含参赛稿件与图表）采用
+[CC BY-SA 4.0](LICENSE-DOCS.md)。第三方材料继续遵循各自许可证。
+正式提交版本与材料状态见[提交清单](docs/contest/submission-checklist.md)。

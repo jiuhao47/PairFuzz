@@ -9,7 +9,8 @@
 - `LibAFL` gitlink：固定上游源码提交。
 
 第三方许可证只约束相应组件。PairFuzz 原创代码采用 MIT 许可证，全文见 [LICENSE](LICENSE)；
-该授权不改变 LibAFL、目标库或其他第三方组件各自的许可证和分发义务。
+原创文档采用 [CC BY-SA 4.0](LICENSE-DOCS.md)。这些授权不改变 LibAFL、目标库或其他
+第三方材料各自的许可证和分发义务。
 
 ## 运行框架
 

@@ -80,6 +80,7 @@ git add src/feedbacks/semantic.rs tests/test_semantic_runtime.py
 
 ## 许可证与来源
 
-第三方组件及其许可证见 [THIRD_PARTY.md](THIRD_PARTY.md) 和机器可读锁文件。当前根项目
-原创代码许可证仍待权利人确认；在确认前，贡献不应被解释为已经获得某个开源许可证。
+原创代码采用 [MIT](LICENSE)，原创文档采用 [CC BY-SA 4.0](LICENSE-DOCS.md)。
+提交贡献时，请确保你有权按对应许可证提供该贡献。
+第三方组件及其许可证见 [THIRD_PARTY.md](THIRD_PARTY.md) 和机器可读锁文件。
 提交第三方代码、数据、夹具或借鉴实现时必须同时说明来源和适用许可。

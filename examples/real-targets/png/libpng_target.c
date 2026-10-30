@@ -40,8 +40,9 @@ void target_execute(const uint8_t *input, size_t length, struct pairfuzz_operati
   png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, quiet_error, quiet_warning);
   if (png == NULL) { result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR; return; }
   png_infop info = png_create_info_struct(png);
-  uint8_t *pixels = NULL;
-  png_bytep *rows = NULL;
+  /* Keep ownership defined when libpng longjmps after an allocation. */
+  uint8_t *volatile pixels = NULL;
+  png_bytep *volatile rows = NULL;
   if (info == NULL) { png_destroy_read_struct(&png, NULL, NULL); result->class_id = PAIRFUZZ_RESULT_ADAPTER_ERROR; return; }
   if (setjmp(png_jmpbuf(png))) {
     free(rows); free(pixels); png_destroy_read_struct(&png, &info, NULL);

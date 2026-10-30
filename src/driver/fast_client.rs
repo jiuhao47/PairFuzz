@@ -10,7 +10,7 @@ use libafl::{
     generators::RandPrintablesGenerator,
     inputs::BytesInput,
     mutators::{havoc_mutations, tokens_mutations, HavocScheduledMutator, StdMOptMutator, Tokens},
-    observers::{CanTrack, HitcountsMapObserver, StdMapObserver, TimeObserver},
+    observers::{CanTrack, TimeObserver},
     schedulers::{
         powersched::PowerSchedule, IndexesLenTimeMinimizerScheduler, StdWeightedScheduler,
     },
@@ -62,21 +62,11 @@ pub(crate) fn run_fast_client(
             names(TargetRole::B).coverage_temp_env,
         )?;
 
-    let map_observer_a = unsafe {
-        HitcountsMapObserver::new(StdMapObserver::differential_from_mut_ptr(
-            "first-edges",
-            ptr_a,
-            num_edges,
-        ))
-    }
-    .track_indices();
-    let map_observer_b = unsafe {
-        HitcountsMapObserver::new(StdMapObserver::differential_from_mut_ptr(
-            "second-edges",
-            ptr_b,
-            num_edges,
-        ))
-    };
+    let map_observer_a =
+        unsafe { crate::driver::target::coverage_observer("first-edges", ptr_a, num_edges) }
+            .track_indices();
+    let map_observer_b =
+        unsafe { crate::driver::target::coverage_observer("second-edges", ptr_b, num_edges) };
     let time_observer = TimeObserver::new("time");
     let rv_observer_a = ReturnValueObserver::new("first_return");
     let rv_observer_b = ReturnValueObserver::new("second_return");
@@ -117,14 +107,14 @@ pub(crate) fn run_fast_client(
         rv_shmem_a = Some(
             crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
                 &mut shmem_provider,
-                8,
+                crate::observers::return_value::RESULT_TRANSPORT_SIZE,
                 "__PAIRFUZZ_RV_SHM_ID_A",
             )?,
         );
         rv_shmem_b = Some(
             crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
                 &mut shmem_provider,
-                8,
+                crate::observers::return_value::RESULT_TRANSPORT_SIZE,
                 "__PAIRFUZZ_RV_SHM_ID_B",
             )?,
         );

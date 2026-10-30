@@ -768,41 +768,6 @@ where
             testcase.add_metadata(meta);
         }
 
-        // Attempt to clear any temporary source shared-memory used by the
-        // ShmemComboUpdater observer. We delegate to a helper so the logic
-        // is centralized and easier to reuse or test.
-        self.clear_shmem_combo_updater_sources(observers);
-
         Ok(())
-    }
-}
-
-impl<C> PairFuzzFeedback<C>
-where
-    C: libafl::observers::CanTrack
-        + MapObserver
-        + for<'it> libafl_bolts::AsIter<'it, Item = C::Entry>,
-    C::Entry: Into<u8> + Copy,
-{
-    /// Helper to clear ShmemComboUpdater source buffers when we only have an
-    /// immutable reference to the observers. This is a best-effort operation
-    /// that skips silently if no updater is present.
-    fn clear_shmem_combo_updater_sources<OT>(&self, observers: &OT)
-    where
-        OT: MatchNameRef,
-    {
-        use crate::observers::shmem::ShmemComboUpdater;
-        use libafl_bolts::tuples::Handle;
-        use std::borrow::Cow;
-
-        let handle: Handle<ShmemComboUpdater> = Handle::new(Cow::from("shmem_combo_updater"));
-        if let Some(upd) = observers.get(&handle) {
-            // Best-effort clear; skip silently if no updater is present.
-            upd.clear_shmem_sources();
-            feedback_debug_log(
-                "pairfuzz_feedback",
-                "append_metadata: cleared shmem_combo_updater sources",
-            );
-        }
     }
 }

@@ -62,6 +62,7 @@ real-targets-check: real-json-verify
     python3 scripts/real_targets.py build --pair all --profile release > run/real-targets/release-manifests.json
     python3 scripts/real_targets.py verify --pair all --profile release --manifest-map run/real-targets/release-manifests.json
     python3 -m unittest tests.test_real_target_sources tests.test_real_target_semantic tests.test_real_target_png tests.test_real_target_bmp tests.test_real_target_x509 tests.test_real_target_campaigns -v
+    PAIRFUZZ_PNG_TEST_PROFILE=asan python3 -m unittest tests.test_real_target_png.PngContractTests.test_late_libpng_rejections_do_not_leak_adapter_allocations -v
 
 contest-paper:
     mkdir -p run/contest-paper

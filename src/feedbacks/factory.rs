@@ -7,8 +7,8 @@ use crate::{
     observers::ReturnValueObserver,
 };
 use libafl::{
-    feedback_and_fast, feedback_or_fast,
-    feedbacks::{FastAndFeedback, FastOrFeedback, MaxMapFeedback},
+    feedback_and_fast, feedback_or,
+    feedbacks::{EagerOrFeedback, FastAndFeedback, MaxMapFeedback},
     observers::{CanTrack, MapObserver},
 };
 use libafl_bolts::{AsIter, Named, ToSlice};
@@ -50,7 +50,7 @@ where
 }
 
 pub(crate) type Objective<C> =
-    FastAndFeedback<FastOrFeedback<CrashObjective, DiffObjective>, MaxMapFeedback<C, C>>;
+    FastAndFeedback<EagerOrFeedback<CrashObjective, DiffObjective>, MaxMapFeedback<C, C>>;
 
 pub(crate) fn build_objective<C>(
     objective_map: &C,
@@ -68,7 +68,7 @@ where
     let difference = DiffObjective::new("zero_nonzero", &[rv_a, rv_b]);
     let map_difference = MaxMapFeedback::new(objective_map);
     feedback_and_fast!(
-        feedback_or_fast!(CrashObjective::new(), difference),
+        feedback_or!(CrashObjective::new(), difference),
         map_difference
     )
 }
@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn objective_factory_preserves_zero_nonzero_fast_composition() {
+    fn objective_factory_preserves_zero_nonzero_coverage_gate() {
         let objective_map = HitcountsMapObserver::new(StdMapObserver::differential_owned(
             "objective-edges",
             vec![0u8; 16],
@@ -129,7 +129,7 @@ mod tests {
         let diff = name.find("DiffObjective(zero_nonzero)").unwrap();
         let map = name.find("objective-edges").unwrap();
 
-        assert!(name.starts_with("Fast AND (Fast OR ("));
+        assert!(name.starts_with("Fast AND (Eager OR ("));
         assert!(crash < diff && diff < map);
     }
 
@@ -155,5 +155,145 @@ mod tests {
         );
 
         assert_eq!(objective.name().as_ref(), "DifferentialObjective");
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_regressions {
+    use super::*;
+    use libafl::{
+        corpus::{InMemoryCorpus, Testcase},
+        events::NopEventManager,
+        executors::ExitKind,
+        feedbacks::Feedback,
+        inputs::BytesInput,
+        observers::{HitcountsMapObserver, Observer, StdMapObserver},
+        state::StdState,
+        HasMetadata,
+    };
+    use libafl_bolts::{
+        rands::StdRand,
+        shmem::{ShMemProvider, StdShMemProvider},
+        tuples::tuple_list,
+    };
+
+    #[test]
+    fn rejected_legacy_candidates_do_not_annotate_later_solutions() {
+        for rejected_crash in [true, false] {
+            let map =
+                HitcountsMapObserver::new(StdMapObserver::differential_owned("obj", vec![1_u8, 0]));
+            let a = ReturnValueObserver::new("a");
+            let b = ReturnValueObserver::new("b");
+            let mut objective = build_objective(&map, &a, &b);
+            let mut feedback = ();
+            let mut state = StdState::new(
+                StdRand::with_seed(1),
+                InMemoryCorpus::<BytesInput>::new(),
+                InMemoryCorpus::new(),
+                &mut feedback,
+                &mut objective,
+            )
+            .unwrap();
+            let input = BytesInput::new(vec![0]);
+            let mut manager = NopEventManager::new();
+            let mut provider = StdShMemProvider::new().unwrap();
+            // Accept one initial crash, then reject a semantic/crash candidate on its covered map.
+            for (index, (crash, coverage)) in [
+                (true, vec![1_u8, 0]),
+                (rejected_crash, vec![1_u8, 0]),
+                (!rejected_crash, vec![0_u8, 1]),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let map =
+                    HitcountsMapObserver::new(StdMapObserver::differential_owned("obj", coverage));
+                let mut a = ReturnValueObserver::new("a");
+                let mut b = ReturnValueObserver::new("b");
+                for (obs, value) in [(&mut a, 0_u64), (&mut b, 1_u64)] {
+                    let mut shm = provider.new_shmem(16).unwrap();
+                    shm[..8].copy_from_slice(&value.to_ne_bytes());
+                    shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
+                    obs.set_shmem(shm).unwrap();
+                    obs.post_exec(
+                        &mut state,
+                        &input,
+                        &if crash { ExitKind::Crash } else { ExitKind::Ok },
+                    )
+                    .unwrap();
+                }
+                let observers = tuple_list!(map, a, b);
+                let exit = if crash { ExitKind::Crash } else { ExitKind::Ok };
+                let interesting = objective
+                    .is_interesting(&mut state, &mut manager, &input, &observers, &exit)
+                    .unwrap();
+                assert_eq!(interesting, index != 1);
+                if interesting {
+                    let mut testcase = Testcase::new(input.clone());
+                    objective
+                        .append_metadata(&mut state, &mut manager, &observers, &mut testcase)
+                        .unwrap();
+                    let info = testcase
+                        .metadata::<crate::feedbacks::objectives::ExitInfo>()
+                        .unwrap();
+                    assert_eq!(
+                        info.crash.is_some(),
+                        crash,
+                        "stale crash metadata at {index}"
+                    );
+                    assert_eq!(
+                        info.rv_a,
+                        if crash { None } else { Some(0) },
+                        "stale RV metadata at {index}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod missing_result_regression {
+    use super::*;
+    use libafl::{
+        corpus::InMemoryCorpus, events::NopEventManager, executors::ExitKind, feedbacks::Feedback,
+        inputs::BytesInput, observers::Observer, state::StdState,
+    };
+    use libafl_bolts::{
+        rands::StdRand,
+        shmem::{ShMemProvider, StdShMemProvider},
+        tuples::tuple_list,
+    };
+    #[test]
+    fn legacy_zero_nonzero_distinguishes_missing_from_published_zero() {
+        let a = ReturnValueObserver::new("a");
+        let mut b = ReturnValueObserver::new("b");
+        let mut provider = StdShMemProvider::new().unwrap();
+        let mut shm = provider.new_shmem(16).unwrap();
+        shm[..8].copy_from_slice(&0_u64.to_ne_bytes());
+        shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
+        b.set_shmem(shm).unwrap();
+        let mut objective = DiffObjective::new("zero_nonzero", &[&a, &b]);
+        let mut feedback = ();
+        let mut state = StdState::new(
+            StdRand::with_seed(1),
+            InMemoryCorpus::<BytesInput>::new(),
+            InMemoryCorpus::new(),
+            &mut feedback,
+            &mut objective,
+        )
+        .unwrap();
+        let input = BytesInput::new(vec![0]);
+        b.post_exec(&mut state, &input, &ExitKind::Ok).unwrap();
+        let observers = tuple_list!(a, b);
+        assert!(objective
+            .is_interesting(
+                &mut state,
+                &mut NopEventManager::new(),
+                &input,
+                &observers,
+                &ExitKind::Ok
+            )
+            .unwrap());
     }
 }

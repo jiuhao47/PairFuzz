@@ -197,6 +197,7 @@ class BuildManifestTransaction:
             **self.identity,
             **fields,
             "status": "complete",
+            "result_transport_version": 2,
             "commands": self.commands,
         }
         descriptor, temporary_name = tempfile.mkstemp(prefix=".build-", suffix=".json", dir=self.root)
@@ -242,6 +243,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def compiler_identity(root: Path, wrapper: Path, version: str, cxx_wrapper: Path) -> dict:
+    # --version describes the delegated compiler, not the wrapper's injected
+    # flags/macros. Both wrapper executables participate in target generation.
+    return {
+        "path": str(wrapper.relative_to(root)),
+        "version": version,
+        "sha256": _sha256(wrapper),
+        "cxx_path": str(cxx_wrapper.relative_to(root)),
+        "cxx_sha256": _sha256(cxx_wrapper),
+    }
+
+
 def _source_root(cache_path: Path) -> Path:
     children = [path for path in cache_path.iterdir() if path.name != ".pairfuzz-source.json"]
     if len(children) != 1 or not children[0].is_dir():
@@ -272,7 +285,10 @@ def _build_png(root: Path, spec, profile: str) -> Path:
     tracked.extend(sorted((root / "examples/real-targets/common").glob("*.h")))
     inputs = {
         "profile": profile,
-        "compiler": {"path": str(wrapper.relative_to(root)), "version": compiler_version},
+        "compiler": compiler_identity(
+            root, wrapper, compiler_version,
+            root / "app/compiler/target/debug/libafl_forkserver_cxx",
+        ),
         "flags": {"compile": flags.compile, "link": flags.link},
         "dependencies": lock_subset,
         "sources": {str(path.relative_to(root)): _sha256(path) for path in tracked},
@@ -441,7 +457,10 @@ def _build_bmp(root: Path, spec, profile: str) -> Path:
     tracked.extend(sorted((root / "examples/real-targets/bmp").glob("bmp_scope.*")))
     inputs = {
         "profile": profile,
-        "compiler": {"path": str(wrapper.relative_to(root)), "version": compiler_version},
+        "compiler": compiler_identity(
+            root, wrapper, compiler_version,
+            root / "app/compiler/target/debug/libafl_forkserver_cxx",
+        ),
         "configure_probe_compiler": {
             "cc": probe_cc,
             "cxx": probe_cxx,
@@ -689,7 +708,10 @@ def _build_x509(root: Path, spec, profile: str) -> Path:
     tracked.extend(sorted((root / "examples/real-targets/x509").glob("*.h")))
     inputs = {
         "profile": profile,
-        "compiler": {"path": str(wrapper.relative_to(root)), "version": compiler_version},
+        "compiler": compiler_identity(
+            root, wrapper, compiler_version,
+            root / "app/compiler/target/debug/libafl_forkserver_cxx",
+        ),
         "configure_probe_compiler": {"cc": probe_cc, "cxx": probe_cxx},
         "flags": {"compile": flags.compile, "link": flags.link},
         "preprocessor_flags": ("-D_GNU_SOURCE",),

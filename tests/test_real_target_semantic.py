@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -12,8 +13,9 @@ COMMON = ROOT / "examples" / "real-targets" / "common"
 FIXTURES = ROOT / "tests" / "fixtures"
 LIMIT = 1024 * 1024
 MASK64 = (1 << 64) - 1
-CLANG = ROOT / "run" / "toolchain" / "bin" / "clang"
-CLANGXX = ROOT / "run" / "toolchain" / "bin" / "clang++"
+COMPILER_PATH = str(ROOT / "run" / "toolchain" / "bin") + os.pathsep + os.environ["PATH"]
+CLANG = shutil.which("clang", path=COMPILER_PATH) or "clang"
+CLANGXX = shutil.which("clang++", path=COMPILER_PATH) or "clang++"
 COMPILER_TARGET = ROOT / "app" / "compiler" / "target" / "debug"
 
 

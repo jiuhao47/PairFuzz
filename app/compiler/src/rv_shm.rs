@@ -10,6 +10,7 @@ const FAILED: i32 = -1;
 const RESULT_SIZE: usize = std::mem::size_of::<u64>();
 
 static RESULT_STATE: AtomicI32 = AtomicI32::new(UNINITIALIZED);
+static RESULT_PRESENT_PTR: AtomicPtr<u64> = AtomicPtr::new(ptr::null_mut());
 static RESULT_PTR: AtomicPtr<u64> = AtomicPtr::new(ptr::null_mut());
 
 unsafe fn environment(name: &'static [u8]) -> *const c_char {
@@ -204,12 +205,22 @@ pub extern "C" fn pairfuzz_result_init() -> c_int {
             RESULT_STATE.store(FAILED, Ordering::Release);
             return -1;
         };
+        // Protocol 2 adds a publication word after the full-width result.
+        // Eight-byte mappings remain supported for older external callers.
+        let protocol = environment(b"__PAIRFUZZ_RV_PROTOCOL\0");
+        if !protocol.is_null() && (CStr::from_ptr(protocol).to_bytes() != b"2" || len < 16) {
+            RESULT_STATE.store(FAILED, Ordering::Release);
+            return -1;
+        }
         let mapped = map_result(id, len);
         if mapped.is_null() {
             RESULT_STATE.store(FAILED, Ordering::Release);
             return -1;
         }
         RESULT_PTR.store(mapped, Ordering::Release);
+        if len >= 16 {
+            RESULT_PRESENT_PTR.store(mapped.add(1), Ordering::Release);
+        }
         clear_opposite_environment(role[0]);
         RESULT_STATE.store(MAPPED, Ordering::Release);
         0
@@ -217,7 +228,7 @@ pub extern "C" fn pairfuzz_result_init() -> c_int {
 }
 
 /// Publish one semantic result. Initialization and mapping happen at most once;
-/// the execution hot path is a single volatile 64-bit store.
+/// the execution hot path stores the value followed by its publication word.
 #[no_mangle]
 pub extern "C" fn pairfuzz_publish_result(value: u64) {
     if RESULT_STATE.load(Ordering::Acquire) == UNINITIALIZED && pairfuzz_result_init() != 0 {
@@ -225,6 +236,37 @@ pub extern "C" fn pairfuzz_publish_result(value: u64) {
     }
     let result = RESULT_PTR.load(Ordering::Acquire);
     if !result.is_null() {
-        unsafe { ptr::write_volatile(result, value) };
+        unsafe {
+            ptr::write_volatile(result, value);
+            let published = RESULT_PRESENT_PTR.load(Ordering::Acquire);
+            if !published.is_null() {
+                ptr::write_volatile(published, 1);
+            }
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+    #[test]
+    fn publishes_zero_and_full_width_values_with_presence() {
+        let mut provider = StdShMemProvider::new().unwrap();
+        let mut shm = provider.new_shmem(16).unwrap();
+        unsafe {
+            libafl_bolts::shmem::ShMem::write_to_env(&shm, "__PAIRFUZZ_RV_SHM_ID_A").unwrap();
+        }
+        let id = std::env::var("__PAIRFUZZ_RV_SHM_ID_A").unwrap();
+        std::env::set_var("__PAIRFUZZ_RV_SHM_ID_A", format!("sysv:{id}"));
+        std::env::set_var("__PAIRFUZZ_RV_ROLE", "A");
+        std::env::set_var("__PAIRFUZZ_RV_PROTOCOL", "2");
+        assert_eq!(pairfuzz_result_init(), 0);
+        for value in [0_u64, u64::MAX, 0x1234_5678_9abc_def0] {
+            shm[..16].fill(0);
+            pairfuzz_publish_result(value);
+            assert_eq!(&shm[..8], &value.to_ne_bytes());
+            assert_eq!(&shm[8..16], &1_u64.to_ne_bytes());
+        }
     }
 }

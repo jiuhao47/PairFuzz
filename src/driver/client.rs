@@ -92,9 +92,8 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
             cov_shm_id_a = Some(id);
             // create observer pointing at this shmem
             unsafe {
-                let obs_a =
-                    StdMapObserver::differential_from_mut_ptr("first-edges", ptr_a, num_edges);
-                map_observer_a = HitcountsMapObserver::new(obs_a);
+                map_observer_a =
+                    crate::driver::target::coverage_observer("first-edges", ptr_a, num_edges);
             }
             _cov_shmem_a = Some(s_a);
         }
@@ -119,9 +118,8 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
         Ok((s_b, ptr_b, id)) => {
             cov_shm_id_b = Some(id);
             unsafe {
-                let obs_b =
-                    StdMapObserver::differential_from_mut_ptr("second-edges", ptr_b, num_edges);
-                map_observer_b = HitcountsMapObserver::new(obs_b);
+                map_observer_b =
+                    crate::driver::target::coverage_observer("second-edges", ptr_b, num_edges);
             }
             _cov_shmem_b = Some(s_b);
         }
@@ -227,14 +225,14 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
 
     // Some targets expect __AFL_SHM_ID in the environment; we write any allocated
     // coverage shmem ids into the parent's env so forkserver builders can pick them up.
-    // Allocate semantic-result transport regions (u64, 8 bytes each).
+    // Allocate semantic-result transport regions (value and publication word).
     let mut rv_shmem_a: Option<StdShMem> = None;
     let mut rv_shmem_b: Option<StdShMem> = None;
     if args.prog_a.is_some() || args.prog_b.is_some() {
         // use the same provider to allocate small shmems; warn on errors (will fallback to TLS)
         match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
             &mut shmem_provider,
-            8,
+            crate::observers::return_value::RESULT_TRANSPORT_SIZE,
             "__PAIRFUZZ_RV_SHM_ID_A",
         ) {
             Ok(s) => rv_shmem_a = Some(s),
@@ -242,7 +240,7 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
         }
         match crate::observers::shmem::rv_shmem::try_new_shmem_and_write_env(
             &mut shmem_provider,
-            8,
+            crate::observers::return_value::RESULT_TRANSPORT_SIZE,
             "__PAIRFUZZ_RV_SHM_ID_B",
         ) {
             Ok(s) => rv_shmem_b = Some(s),

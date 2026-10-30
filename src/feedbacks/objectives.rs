@@ -73,6 +73,8 @@ where
         _observers: &OT,
         exit_kind: &ExitKind,
     ) -> Result<bool, Error> {
+        self.crash_pending = false;
+        self.last_crash = None;
         let is_crash = match exit_kind {
             ExitKind::Crash | ExitKind::Timeout => true,
             ExitKind::Diff { primary, secondary } => {
@@ -234,6 +236,9 @@ where
         observers: &OT,
         _exit_kind: &ExitKind,
     ) -> Result<bool, Error> {
+        self.rv_pending = false;
+        self.last_rv_a = None;
+        self.last_rv_b = None;
         if self.observer_handles.len() < 2 {
             return Ok(false);
         }
@@ -262,10 +267,7 @@ where
         let vb = b.last_value();
 
         let is = match self.mode.as_ref() {
-            "zero_nonzero" => {
-                (va == Some(0) && vb.map(|x| x != 0).unwrap_or(false))
-                    || (vb == Some(0) && va.map(|x| x != 0).unwrap_or(false))
-            }
+            "zero_nonzero" => crate::feedbacks::semantic::ResultPolicy::ZeroNonzero.differs(va, vb),
             _ => va != vb,
         };
 

@@ -122,6 +122,19 @@ where
         ),
     );
 
+    // A legacy publisher cannot signal presence; reject it before any input runs.
+    const RESULT_PROTOCOL_MARKER: &[u8] = b"__PAIRFUZZ_RV_PROTOCOL\0";
+    let supports_result_protocol = std::fs::read(program)
+        .map(|data| {
+            data.windows(RESULT_PROTOCOL_MARKER.len())
+                .any(|w| w == RESULT_PROTOCOL_MARKER)
+        })
+        .unwrap_or(false);
+    if !supports_result_protocol {
+        error("main", &format!("Target {} lacks semantic result protocol 2; rebuild it with the current PairFuzz compiler runtime", target_names.label));
+        std::process::exit(1);
+    }
+
     let mut builder = ForkserverExecutor::builder()
         .program(program.as_os_str().to_os_string())
         .shmem_provider(provider)
@@ -149,6 +162,7 @@ where
                 child_envs.push((target_names.rv_env, id.clone()));
                 child_envs.push((target_names.rv_size_env, size.clone()));
                 child_envs.push(("__PAIRFUZZ_RV_ROLE", target_names.label.to_owned()));
+                child_envs.push(("__PAIRFUZZ_RV_PROTOCOL", "2".to_owned()));
                 info(
                     "main",
                     &format!(
@@ -252,5 +266,49 @@ mod tests {
         assert_eq!(value.rv_size_env, "__PAIRFUZZ_RV_SHM_ID_B_SIZE");
         assert_eq!(value.rv_temp_env, "__PAIRFUZZ_TMP_RV_B");
         assert_eq!(value.coverage_temp_env, "__PAIRFUZZ_TMP_COV_B");
+    }
+}
+
+/// Build a target-local coverage observer. The caller keeps the mapping alive.
+pub(crate) unsafe fn coverage_observer<'a>(
+    name: &'static str,
+    ptr: *mut u8,
+    len: usize,
+) -> libafl::observers::HitcountsMapObserver<libafl::observers::StdMapObserver<'a, u8, false>> {
+    libafl::observers::HitcountsMapObserver::new(libafl::observers::StdMapObserver::from_mut_ptr(
+        name, ptr, len,
+    ))
+}
+
+#[cfg(test)]
+mod coverage_lifecycle_tests {
+    use super::coverage_observer;
+    use libafl::{executors::ExitKind, observers::Observer};
+    #[test]
+    fn target_maps_reset_without_feedback_and_preserve_other_target() {
+        let mut a = [0_u8; 4];
+        let mut b = [0_u8; 4];
+        let mut oa = unsafe { coverage_observer("a", a.as_mut_ptr(), 4) };
+        let mut ob = unsafe { coverage_observer("b", b.as_mut_ptr(), 4) };
+        for previous_exit in [ExitKind::Ok, ExitKind::Crash, ExitKind::Timeout] {
+            oa.pre_exec(&mut (), &()).unwrap();
+            a[0] = 3;
+            oa.post_exec(&mut (), &(), &previous_exit).unwrap();
+            ob.pre_exec(&mut (), &()).unwrap();
+            b[1] = 1;
+            ob.post_exec(&mut (), &(), &previous_exit).unwrap();
+            assert_eq!(a, [4, 0, 0, 0]);
+            // No feedback append: covers rejected inputs, solutions and calibration.
+            for _ in 0..2 {
+                oa.pre_exec(&mut (), &()).unwrap();
+                a[2] = 3;
+                oa.post_exec(&mut (), &(), &ExitKind::Ok).unwrap();
+                ob.pre_exec(&mut (), &()).unwrap();
+                b[3] = 1;
+                ob.post_exec(&mut (), &(), &ExitKind::Ok).unwrap();
+                assert_eq!(a, [0, 0, 4, 0]);
+                assert_eq!(b, [0, 0, 0, 1]);
+            }
+        }
     }
 }

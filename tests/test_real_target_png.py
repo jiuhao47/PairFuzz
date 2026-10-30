@@ -67,6 +67,23 @@ class PngContractTests(unittest.TestCase):
         report = json.loads(completed.stdout)
         return report, output
 
+    def test_late_libpng_rejections_do_not_leak_adapter_allocations(self):
+        if self.profile != "asan":
+            self.skipTest("allocation cleanup is checked by the ASAN native gate")
+        binary = ROOT / self.manifest["targets"]["a"]["path"]
+        for name in ("bad-iend", "missing-iend"):
+            with self.subTest(fixture=name):
+                output = Path(self.temporary.name) / (name + "-leak-check.canonical")
+                completed = subprocess.run(
+                    [str(binary), "--replay", str(PNG / "seeds" / (name + ".png")),
+                     "--normalized-output", str(output)],
+                    env={**os.environ, "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1:malloc_context_size=30"},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(json.loads(completed.stdout)["class"], "rejected")
+                self.assertFalse(output.exists())
+
     def test_contract_pins_conversion_and_resource_policy(self):
         self.assertEqual(self.contract["schema_version"], 1)
         self.assertEqual(self.contract["operation"], "image.png.decode.rgba8")

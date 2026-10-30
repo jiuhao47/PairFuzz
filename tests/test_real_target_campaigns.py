@@ -67,6 +67,7 @@ class NativeCampaignTests(unittest.TestCase):
             "pair": "png",
             "operation": "image.png.decode.rgba8",
             "profile": profile,
+            "result_transport_version": 2,
             "fingerprint": "a" * 64,
             "source_sha256": {"libpng": "b" * 64},
             "seed_sha256": {
@@ -86,6 +87,57 @@ class NativeCampaignTests(unittest.TestCase):
             "pathlib.Path(sys.argv[4]).write_bytes(data)\n"
             f"print(json.dumps({{'schema_version':1,'operation':'image.png.decode.rgba8','class':'accepted','semantic_code':'{code}','width':1,'height':1,'normalized_length':len(data),'facts':{{}},'diagnostic':''}}))\n",
         )
+
+    def test_standalone_replay_uses_discovery_sanitizer_policy(self):
+        target = self.executable(
+            "targets/environment",
+            "import json,os\n"
+            "print(json.dumps({'class':'rejected','semantic_code':'1000000000000000',"
+            "'asan_options':os.environ.get('ASAN_OPTIONS'),"
+            "'afl_present':'__AFL_SHM_ID' in os.environ}))\n",
+        )
+        input_path = self.root / "input"
+        input_path.write_bytes(b"x")
+        with mock.patch.dict(os.environ, {"ASAN_OPTIONS": "detect_leaks=true", "__AFL_SHM_ID": "123"}):
+            result = replay_pair(self.manifest(target, target), input_path, self.root / "audit")
+        report = result["runs"][0]["a"]
+        self.assertEqual(report["asan_options"], "abort_on_error=1:detect_leaks=false")
+        self.assertFalse(report["afl_present"])
+
+    def test_timeout_is_recorded_and_other_target_is_replayed(self):
+        from scripts.real_targets_lib import campaigns
+        a = self.executable("targets/a", "import time\ntime.sleep(60)\n")
+        b = self.target("b")
+        input_path = self.root / "input"
+        input_path.write_bytes(b"x")
+        real_run = subprocess.run
+
+        def timeout_a(argv, **kwargs):
+            if argv[0] == str(a):
+                kwargs["timeout"] = 0.05
+            return real_run(argv, **kwargs)
+
+        with mock.patch.object(campaigns.subprocess, "run", side_effect=timeout_a):
+            result = replay_pair(self.manifest(a, b), input_path, self.root / "audit")
+        self.assertTrue(result["stable"])
+        self.assertTrue(result["differential"])
+        self.assertEqual(len(result["runs"]), 3)
+        for run in result["runs"]:
+            self.assertEqual(run["a"]["class"], "timeout")
+            self.assertEqual(run["b"]["class"], "accepted")
+        self.assertTrue((self.root / "audit/replay.json").is_file())
+
+    def test_incomplete_standalone_semantics_never_claim_coverage_match(self):
+        from scripts.real_targets_lib.campaigns import _semantic_pairs_match_coverage
+
+        record = {
+            "runs": [
+                {"a": {"semantic_code": None}, "b": {"semantic_code": "1"}},
+                {"a": {"semantic_code": None}, "b": {"semantic_code": "1"}},
+                {"a": {"semantic_code": None}, "b": {"semantic_code": "1"}},
+            ]
+        }
+        self.assertFalse(_semantic_pairs_match_coverage(record["runs"], []))
 
     def test_validation_rejects_bad_duration_cpu_pair_and_profile(self):
         a, b = self.target("a"), self.target("b")
@@ -232,6 +284,7 @@ class NativeCampaignTests(unittest.TestCase):
         signature_replay.assert_not_called()
         summary = json.loads((result / "summary.json").read_text())
         self.assertTrue(summary["zero_solutions"])
+        self.assertEqual(summary["result_transport_version"], 2)
         self.assertEqual(summary["solutions_saved"], 0)
         self.assertNotEqual(roots[-1], result)
 

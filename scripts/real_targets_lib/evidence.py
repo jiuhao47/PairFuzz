@@ -97,6 +97,7 @@ def write_native_summary(evidence_paths, output: Path) -> Path:
             {
                 "pair": pair,
                 "operation": payload.get("operation"),
+                "result_transport_version": payload.get("result_transport_version", 1),
                 "source_versions": payload.get("source_versions", {}),
                 "evidence": path.name,
                 "evidence_sha256": _sha256(path),
@@ -138,6 +139,7 @@ def write_smoke_evidence(
     operations = set()
     source_identities = []
     seed_identities = []
+    transport_versions = set()
     for profile in ("asan", "release"):
         summary_path = Path(campaign_summaries[profile]).resolve()
         summary = json.loads(summary_path.read_text())
@@ -208,10 +210,13 @@ def write_smoke_evidence(
         operations.add(summary["operation"])
         source_identities.append(manifest["source_sha256"])
         seed_identities.append(summary["seed_sha256"])
+        transport_versions.add(summary.get("result_transport_version", 1))
     if len(seeds) != 1 or len(operations) != 1:
         raise EvidenceError(f"{pair} campaigns mix seed or operation")
     if source_identities[0] != source_identities[1] or seed_identities[0] != seed_identities[1]:
         raise EvidenceError(f"{pair} campaigns mix source or seed manifests")
+    if len(transport_versions) != 1:
+        raise EvidenceError(f"{pair} campaigns mix result transport versions")
     dependencies = pair_spec(pair).dependencies
     payload = {
         "schema_version": 1,
@@ -220,6 +225,7 @@ def write_smoke_evidence(
         "pair": pair,
         "operation": operations.pop(),
         "semantic_abi_version": 1,
+        "result_transport_version": transport_versions.pop(),
         "result_policy": "exact",
         "signature_version": 2,
         "campaign_seed": seeds.pop(),

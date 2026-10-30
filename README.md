@@ -1,7 +1,7 @@
 # PairFuzz：基于 Rust 的双目标差分模糊测试系统
 
 PairFuzz 用同一输入驱动两个程序实现，隔离收集两侧覆盖图和语义返回值，通过反馈引导
-语料保留与变异，并把值得审计的行为差异连同元数据保存下来。核心调度、状态管理、
+语料保留与变异，并把可复现的行为差异连同元数据保存下来。核心调度、状态管理、
 双目标执行、反馈、进程生命周期和回放由 **Rust 2021 + LibAFL 0.16.1** 实现；本地
 C/C++ 目标通过 forkserver、共享内存和 SanitizerCoverage 接入。
 
@@ -20,7 +20,7 @@ Ubuntu 可先安装基础依赖：
 
 ```bash
 sudo apt-get install build-essential clang-18 llvm-18-dev \
-  libclang-18-dev libclang-rt-18-dev pkg-config python3 git
+  libclang-18-dev libclang-rt-18-dev pkg-config cmake python3 git
 git submodule update --init LibAFL
 rustup toolchain install 1.93.1 --profile minimal --component rustfmt
 cargo install just --locked
@@ -67,7 +67,9 @@ PairFuzz 还完整支持三组从固定源码构建的原生目标：
 | BMP 解码 | ImageMagick 7.1.2-34 | GraphicsMagick 1.3.48 | 尺寸与 RGBA8 |
 | DER X.509 解析 | OpenSSL 4.1.0 | wolfSSL 5.9.4 | 重编码 DER |
 
-harness 将结果类别和规范化结果指纹编码进完整 `u64`。fast 管线使用
+harness 将结果类别和规范化结果指纹编码进完整 `u64`。当前共享内存传输使用
+16 字节布局（语义值与发布标志），用发布标志区分有效零值与未写回结果；升级后必须
+重新构建目标及其静态运行时，不能复用旧 ABI 的目标二进制。fast 管线使用
 `result-policy=exact`、signature v2 和原子差分目标：先比较语义码，再仅为候选计算双侧
 覆盖签名；保存仍要求新的差分目标覆盖。独立 replay 连续执行三次，并用规范化
 SHA-256 审计紧凑指纹。

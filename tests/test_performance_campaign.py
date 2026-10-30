@@ -216,7 +216,9 @@ class ProcessRunnerTests(unittest.TestCase):
                 [sys.executable, "-c", parent],
                 cwd=root,
                 env=os.environ.copy(),
-                duration=0.8,
+                # Allow process-spawn overhead even when another build is using
+                # the selected CPU; the children still contribute 0.4 CPU-s.
+                duration=2.0,
                 cpu=self._available_cpu(),
                 log_path=root / "cpu.log",
             )

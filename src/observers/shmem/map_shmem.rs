@@ -120,48 +120,6 @@ impl Named for ShmemComboUpdater {
     }
 }
 
-impl ShmemComboUpdater {
-    /// Clear the attached shmem source buffers (zero first `num_edges` bytes).
-    /// This is intended to be called by collectors after they have finished
-    /// reading observer data to avoid interfering with collection timing.
-    ///
-    /// Safety: we perform raw writes into the mapped shared-memory region using
-    /// an immutable borrow. This is intentional: the underlying mapping is
-    /// shared memory and not subject to Rust's usual aliasing guarantees.
-    /// Use only when you cannot obtain a mutable reference to the updater.
-    pub fn clear_shmem_sources(&self) {
-        if self.num_edges == 0 {
-            return;
-        }
-        use core::ptr;
-        if let Some(a) = &self.shmem_a {
-            let a_len = usize::min(a.len(), self.num_edges);
-            let ptr_start = a.as_ptr() as *mut u8;
-            unsafe {
-                for i in 0..a_len {
-                    ptr::write(ptr_start.add(i), 0u8);
-                }
-            }
-        }
-        if let Some(b) = &self.shmem_b {
-            let b_len = usize::min(b.len(), self.num_edges);
-            let ptr_start = b.as_ptr() as *mut u8;
-            unsafe {
-                for i in 0..b_len {
-                    ptr::write(ptr_start.add(i), 0u8);
-                }
-            }
-        }
-        combiner_debug_log(
-            "coverage_combiner",
-            &format!(
-                "ShmemComboUpdater::clear_shmem_sources: cleared {} edges",
-                self.num_edges
-            ),
-        );
-    }
-}
-
 // Custom serialization: serialize only the name and num_edges. On deserialize
 // re-create the updater with a fresh combined buffer and no attached shmems.
 impl Serialize for ShmemComboUpdater {

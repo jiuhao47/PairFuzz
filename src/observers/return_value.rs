@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
 const SEMANTIC_VALUE_SIZE: usize = std::mem::size_of::<SemanticValue>();
+/// Protocol 2: native-endian u64 value followed by native-endian u64 published (1).
+pub(crate) const RESULT_TRANSPORT_SIZE: usize = 16;
 
 /// An observer that tracks the semantic value of harness executions.
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,11 +51,11 @@ impl ReturnValueObserver {
 
     /// Attach/replace the rv shmem mapping for this observer.
     pub fn set_shmem(&mut self, shmem: StdShMem) -> Result<(), Error> {
-        if shmem.len() < SEMANTIC_VALUE_SIZE {
+        if shmem.len() < RESULT_TRANSPORT_SIZE {
             return Err(Error::illegal_argument(format!(
                 "semantic result mapping is {} bytes; at least {} required",
                 shmem.len(),
-                SEMANTIC_VALUE_SIZE
+                RESULT_TRANSPORT_SIZE
             )));
         }
         self.rv_shmem = Some(shmem);
@@ -96,7 +98,7 @@ where
         self.last_value = None;
         self.last_exit_kind = None;
         if let Some(shmem) = &mut self.rv_shmem {
-            shmem[..SEMANTIC_VALUE_SIZE].fill(0);
+            shmem[..RESULT_TRANSPORT_SIZE].fill(0);
         }
         Ok(())
     }
@@ -108,9 +110,13 @@ where
         // Crashes and timeouts must never expose a stale or partially written value.
         if matches!(exit_kind, ExitKind::Ok) {
             if let Some(shm) = &self.rv_shmem {
-                let mut bytes = [0_u8; SEMANTIC_VALUE_SIZE];
-                bytes.copy_from_slice(&shm[..SEMANTIC_VALUE_SIZE]);
-                self.last_value = Some(SemanticValue::from_ne_bytes(bytes));
+                let mut published = [0_u8; 8];
+                published.copy_from_slice(&shm[8..RESULT_TRANSPORT_SIZE]);
+                if u64::from_ne_bytes(published) == 1 {
+                    let mut bytes = [0_u8; SEMANTIC_VALUE_SIZE];
+                    bytes.copy_from_slice(&shm[..SEMANTIC_VALUE_SIZE]);
+                    self.last_value = Some(SemanticValue::from_ne_bytes(bytes));
+                }
             }
         }
 
@@ -172,6 +178,19 @@ mod tests {
     }
 
     #[test]
+    fn unpublished_normal_exit_is_missing_not_zero() {
+        use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
+        let mut provider = StdShMemProvider::new().unwrap();
+        let shm = provider.new_shmem(16).unwrap();
+        let mut obs = ReturnValueObserver::new("rv");
+        obs.set_shmem(shm).unwrap();
+        let mut state = DummyState::new();
+        obs.pre_exec(&mut state, &()).unwrap();
+        obs.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
+        assert_eq!(obs.last_value(), None);
+    }
+
+    #[test]
     fn observer_no_shmem_keeps_none() {
         // TLS is deprecated; without shmem attached, the observer will not update last_value
         let mut obs = ReturnValueObserver::new("rv");
@@ -187,7 +206,7 @@ mod tests {
 
         let mut provider = StdShMemProvider::new().expect("failed to create shmem provider");
         // allocate 8 bytes, more than enough for an i32
-        let mut shm = provider.new_shmem(8).expect("failed to alloc shmem");
+        let mut shm = provider.new_shmem(16).expect("failed to alloc shmem");
 
         let value: i32 = 0x12345678;
         let bytes = value.to_ne_bytes();
@@ -195,6 +214,7 @@ mod tests {
         let ptr = shm.as_mut_ptr();
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, 4) };
 
+        shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
         // create observer and attach shmem, then post_exec
         let mut obs = ReturnValueObserver::new("rv");
         obs.set_shmem(shm).unwrap();
@@ -208,7 +228,8 @@ mod tests {
         use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 
         let mut provider = StdShMemProvider::new().unwrap();
-        let mut shm = provider.new_shmem(8).unwrap();
+        let mut shm = provider.new_shmem(16).unwrap();
+        shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
         shm[..8].copy_from_slice(&7_u64.to_ne_bytes());
         let mut obs = ReturnValueObserver::new("rv");
         obs.set_shmem(shm).unwrap();
@@ -226,8 +247,9 @@ mod tests {
         use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 
         let mut provider = StdShMemProvider::new().unwrap();
-        let mut shm = provider.new_shmem(8).unwrap();
+        let mut shm = provider.new_shmem(16).unwrap();
         let value = 0x3123_4567_89ab_cdef_u64;
+        shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
         shm[..8].copy_from_slice(&value.to_ne_bytes());
         let mut observer = ReturnValueObserver::new("rv");
         observer.set_shmem(shm).unwrap();
@@ -251,7 +273,8 @@ mod tests {
         use libafl_bolts::shmem::{ShMemProvider, StdShMemProvider};
 
         let mut provider = StdShMemProvider::new().unwrap();
-        let mut shm = provider.new_shmem(8).unwrap();
+        let mut shm = provider.new_shmem(16).unwrap();
+        shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
         shm[..8].copy_from_slice(&7_u64.to_ne_bytes());
         let mut observer = ReturnValueObserver::new("rv");
         observer.set_shmem(shm).unwrap();
@@ -259,7 +282,7 @@ mod tests {
         observer.post_exec(&mut state, &(), &ExitKind::Ok).unwrap();
         observer.pre_exec(&mut state, &()).unwrap();
         assert_eq!(observer.last_value(), None);
-        assert_eq!(observer.snapshot_bytes(8), Some(vec![0; 8]));
+        assert_eq!(observer.snapshot_bytes(16), Some(vec![0; 16]));
     }
 
     #[test]
@@ -268,7 +291,8 @@ mod tests {
 
         for exit_kind in [ExitKind::Crash, ExitKind::Timeout] {
             let mut provider = StdShMemProvider::new().unwrap();
-            let mut shm = provider.new_shmem(8).unwrap();
+            let mut shm = provider.new_shmem(16).unwrap();
+            shm[8..16].copy_from_slice(&1_u64.to_ne_bytes());
             shm[..8].copy_from_slice(&7_u64.to_ne_bytes());
             let mut observer = ReturnValueObserver::new("rv");
             observer.set_shmem(shm).unwrap();

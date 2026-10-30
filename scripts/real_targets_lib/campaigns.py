@@ -103,15 +103,27 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def _run_target(target: Path, input_path: Path, output_path: Path) -> dict:
-    completed = subprocess.run(
-        [str(target), "--replay", str(input_path), "--normalized-output", str(output_path)],
-        cwd=target.parent,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-        env={name: value for name, value in os.environ.items() if not name.startswith(("__AFL_", "__PAIRFUZZ_"))},
-    )
+    try:
+        completed = subprocess.run(
+            [str(target), "--replay", str(input_path), "--normalized-output", str(output_path)],
+            cwd=target.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+            env=clean_environment(target.parent),
+        )
+    except subprocess.TimeoutExpired:
+        # subprocess.run kills and reaps the child before raising. Preserve the
+        # outcome so a single hanging input cannot discard the remaining audit.
+        output_path.unlink(missing_ok=True)
+        return {
+            "exit_code": None,
+            "signal": None,
+            "class": "timeout",
+            "semantic_code": None,
+            "normalized_sha256": None,
+        }
     if completed.returncode != 0:
         return {
             "exit_code": completed.returncode if completed.returncode >= 0 else None,
@@ -132,11 +144,22 @@ def _run_target(target: Path, input_path: Path, output_path: Path) -> dict:
 
 def _standalone_outcome(report: dict) -> tuple:
     return (
+        report.get("class"),
         report.get("exit_code"),
         report.get("signal"),
         report.get("semantic_code"),
         report.get("normalized_sha256"),
     )
+
+
+def _semantic_pairs_match_coverage(runs: list[dict], coverage_pairs: list[list[int]]) -> bool:
+    standalone_pairs = [
+        [int(run["a"]["semantic_code"], 16), int(run["b"]["semantic_code"], 16)]
+        for run in runs
+        if run["a"]["semantic_code"] is not None
+        and run["b"]["semantic_code"] is not None
+    ]
+    return len(standalone_pairs) == len(runs) and standalone_pairs == coverage_pairs
 
 
 def replay_pair(manifest: Path, input_path: Path, output_dir: Path) -> dict:
@@ -214,7 +237,7 @@ def _preflight_seeds(build: BuildManifest, seeds: list[Path], output: Path) -> N
             normalized = output / f"{index:03d}-{role}.canonical"
             pair[role] = _run_target(build.targets[role], seed, normalized)
             normalized.unlink(missing_ok=True)
-            if pair[role].get("class") in ("adapter-error", "process-error"):
+            if pair[role].get("class") in ("adapter-error", "process-error", "timeout"):
                 failed = (seed, role, pair[role]["class"])
         records.append({"seed": str(seed), "targets": pair})
     _write_json(output / "summary.json", {"schema_version": 1, "seeds": records})
@@ -280,15 +303,6 @@ def run_pair(root: Path, pair: str, manifest: Path, seconds: float, cpu: int, se
             }
         else:
             signatures = coverage.get("signatures", [])
-            standalone_pairs = [
-                [
-                    int(run["a"]["semantic_code"], 16),
-                    int(run["b"]["semantic_code"], 16),
-                ]
-                for run in record["runs"]
-                if run["a"]["semantic_code"] is not None
-                and run["b"]["semantic_code"] is not None
-            ]
             coverage_pairs = coverage.get("return_pairs", [])
             coverage_report = {
                 "stable": bool(coverage.get("stable")),
@@ -298,8 +312,8 @@ def run_pair(root: Path, pair: str, manifest: Path, seconds: float, cpu: int, se
                 if len(signatures) == 3 and len(set(signatures)) == 1
                 else None,
                 "return_pairs": coverage_pairs,
-                "standalone_codes_match": (
-                    not standalone_pairs or standalone_pairs == coverage_pairs
+                "standalone_codes_match": _semantic_pairs_match_coverage(
+                    record["runs"], coverage_pairs
                 ),
                 "discovery_elapsed_nanos": coverage.get("discovery_elapsed_nanos"),
             }
@@ -326,6 +340,7 @@ def run_pair(root: Path, pair: str, manifest: Path, seconds: float, cpu: int, se
         "profile": build.payload["profile"],
         "seed": seed,
         "semantic_abi_version": 1,
+        "result_transport_version": build.payload.get("result_transport_version", 1),
         "result_policy": "exact",
         "signature_version": 2,
         "build_manifest_sha256": sha256_file(build.path),

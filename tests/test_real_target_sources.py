@@ -166,6 +166,21 @@ class SourceLockTests(unittest.TestCase):
 
 
 class BuildProvenanceTests(unittest.TestCase):
+    def test_wrapper_only_changes_invalidate_build_identity(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            wrapper = root / "cc"
+            cxx_wrapper = root / "cxx"
+            wrapper.write_bytes(b"wrapper-v1")
+            cxx_wrapper.write_bytes(b"cxx-v1")
+            original = native_builds.compiler_identity(root, wrapper, "clang 20", cxx_wrapper)
+            wrapper.write_bytes(b"wrapper-v2")
+            changed_c = native_builds.compiler_identity(root, wrapper, "clang 20", cxx_wrapper)
+            self.assertNotEqual(build_fingerprint(original), build_fingerprint(changed_c))
+            cxx_wrapper.write_bytes(b"cxx-v2")
+            changed_cxx = native_builds.compiler_identity(root, wrapper, "clang 20", cxx_wrapper)
+            self.assertNotEqual(build_fingerprint(changed_c), build_fingerprint(changed_cxx))
+
     def test_pair_registry_is_immutable_and_complete(self):
         png = pair_spec("png")
         self.assertEqual(png.operation, "image.png.decode.rgba8")
@@ -235,6 +250,7 @@ class BuildProvenanceTests(unittest.TestCase):
                 manifest = transaction.complete({"targets": ["a", "b"]})
             data = json.loads(manifest.read_text())
             self.assertEqual(data["status"], "complete")
+            self.assertEqual(data["result_transport_version"], 2)
             self.assertIn("-O3", data["commands"][0]["argv"])
 
 

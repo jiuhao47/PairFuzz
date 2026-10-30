@@ -595,10 +595,12 @@ mod tests {
         let mut rv_a = ReturnValueObserver::new("first_return");
         let mut rv_b = ReturnValueObserver::new("second_return");
         let mut provider = StdShMemProvider::new().unwrap();
-        let mut rv_shmem_a = provider.new_shmem(8).unwrap();
-        let mut rv_shmem_b = provider.new_shmem(8).unwrap();
+        let mut rv_shmem_a = provider.new_shmem(16).unwrap();
+        let mut rv_shmem_b = provider.new_shmem(16).unwrap();
         rv_shmem_a[..8].copy_from_slice(&0_u64.to_ne_bytes());
         rv_shmem_b[..8].copy_from_slice(&1_u64.to_ne_bytes());
+        rv_shmem_a[8..16].copy_from_slice(&1_u64.to_ne_bytes());
+        rv_shmem_b[8..16].copy_from_slice(&1_u64.to_ne_bytes());
         rv_a.set_shmem(rv_shmem_a).unwrap();
         rv_b.set_shmem(rv_shmem_b).unwrap();
         let mut objective =

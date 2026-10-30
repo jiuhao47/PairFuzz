@@ -413,12 +413,12 @@ class RepositoryLayoutTests(unittest.TestCase):
             / "docs"
             / "superpowers"
             / "plans"
-            / "2026-10-26-contest-repository-pruning.md",
+            / "2026-10-30-pairfuzz-identity-migration.md",
             ROOT
             / "docs"
             / "superpowers"
             / "specs"
-            / "2026-10-26-contest-repository-pruning-design.md",
+            / "2026-10-30-pairfuzz-identity-migration-design.md",
         )
         full_commit = r"[0-9a-f]{40}"
         recovery_references = (

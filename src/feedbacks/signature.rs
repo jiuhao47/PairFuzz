@@ -353,7 +353,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "diffray-signature-sidecar-{}-{unique}",
+            "pairfuzz-signature-sidecar-{}-{unique}",
             std::process::id()
         ));
         let signature = super::DifferentialSignature::from_bytes([0xa5; 32]);

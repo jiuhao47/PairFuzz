@@ -9,6 +9,67 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepositoryLayoutTests(unittest.TestCase):
+    def test_pairfuzz_is_the_only_root_package_and_product_binary(self):
+        completed = subprocess.run(
+            ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        metadata = json.loads(completed.stdout)
+        root = next(
+            package
+            for package in metadata["packages"]
+            if Path(package["manifest_path"]) == ROOT / "Cargo.toml"
+        )
+        self.assertEqual(root["name"], "pairfuzz")
+        self.assertEqual(root["default_run"], "pairfuzz")
+        binary_names = {
+            target["name"]
+            for target in root["targets"]
+            if "bin" in target["kind"]
+        }
+        self.assertEqual(binary_names, {"pairfuzz", "libafl_cc", "libafl_cxx"})
+
+    def test_pairfuzz_help_uses_new_binary(self):
+        former = "diff" + "ray"
+        former_binary = ROOT / "target" / "debug" / former
+        former_binary.unlink(missing_ok=True)
+
+        build = subprocess.run(
+            ["cargo", "build", "--locked", "--bin", "pairfuzz"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(build.returncode, 0, build.stderr)
+
+        binary = ROOT / "target" / "debug" / "pairfuzz"
+        completed = subprocess.run(
+            [str(binary), "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Usage: pairfuzz", completed.stdout)
+        self.assertFalse(former_binary.exists())
+
+    def test_no_former_named_tracked_paths(self):
+        forbidden = ("diff" + "ray").casefold()
+        completed = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+        )
+        paths = completed.stdout.decode("utf-8").split("\0")
+        offenders = [path for path in paths if forbidden in path.casefold()]
+        self.assertEqual(offenders, [])
+
     def test_performance_evidence_uses_reachable_sanitized_project_commits(self):
         expected_migration = {
             "schema_version": 1,

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Log level for diffray logger.
+/// Log level for pairfuzz logger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {
     Error = 1,
@@ -49,8 +49,8 @@ fn open_log_file() -> io::Result<File> {
         .unwrap()
         .clone();
     let path = match dir_opt {
-        Some(p) => p.join("diffray.log"),
-        None => PathBuf::from("diffray.log"),
+        Some(p) => p.join("pairfuzz.log"),
+        None => PathBuf::from("pairfuzz.log"),
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -76,7 +76,7 @@ fn set_cloexec(f: &File) -> io::Result<()> {
     }
 }
 
-/// Set the directory where diffray.log will be written. Pass `None` to use repo root.
+/// Set the directory where pairfuzz.log will be written. Pass `None` to use repo root.
 pub fn set_log_dir(dir: Option<PathBuf>) {
     let mutex = LOG_DIR.get_or_init(|| Mutex::new(None));
     let mut guard = mutex.lock().unwrap();
@@ -108,7 +108,7 @@ fn now_ts() -> f64 {
 }
 
 /// Log a message at the given level with a module tag. This synchronously writes
-/// to stderr/stdout and appends to `diffray.log` in the repository root.
+/// to stderr/stdout and appends to `pairfuzz.log` in the repository root.
 pub fn log(level: LogLevel, module: &str, msg: &str) {
     // Fast path: check level
     if level > get_level() {

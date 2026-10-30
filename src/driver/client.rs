@@ -203,14 +203,14 @@ pub(crate) fn run_legacy_client(args: &Args) -> Result<(), Box<dyn std::error::E
 
     // Initialize named metadata for map observers so corpus/state resume and
     // scheduler heuristics that rely on observer metadata work correctly.
-    // We create a temporary DiffrayFeedback instance and use its
+    // We create a temporary PairFuzzFeedback instance and use its
     // `StateInitializer` impl to register any named metadata in the `State`.
     {
-        let mut tmp_maps_fb = crate::feedbacks::diffray_feedback::DiffrayFeedback::new_single_cov(
+        let mut tmp_maps_fb = crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback::new_single_cov(
             &map_observer_a,
             &map_observer_b,
         );
-        let _ = <crate::feedbacks::diffray_feedback::DiffrayFeedback<_> as
+        let _ = <crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<_> as
             libafl::feedbacks::StateInitializer<_>>::init_state(&mut tmp_maps_fb, &mut state);
     }
 

@@ -1,4 +1,4 @@
-// Centralized constants for diffray, placed under the `driver` module as requested.
+// Centralized constants for pairfuzz, placed under the `driver` module as requested.
 // Keep comments in English as required by repository instructions.
 
 /// Default coverage map size used by executors and observers.

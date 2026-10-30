@@ -1,4 +1,4 @@
-// Centralized metadata append helpers for DiffrayFeedback
+// Centralized metadata append helpers for PairFuzzFeedback
 use crate::feedbacks::hist_stats::{
     history_contains, history_insert, ComboSeenStats, HistKey, HistVal,
 };
@@ -30,20 +30,20 @@ use libafl_bolts::tuples::MatchNameRef;
 use std::borrow::Cow;
 use std::u8;
 
-// Reuse the DiffrayFeedback type defined in diffray_feedback.rs
-// local debug helpers (mirror those in diffray_feedback.rs but module-local)
+// Reuse the PairFuzzFeedback type defined in pairfuzz_feedback.rs
+// local debug helpers (mirror those in pairfuzz_feedback.rs but module-local)
 fn append_metadata_debug_log(tag: &str, msg: &str) {
     if crate::driver::env_var::env_bool_cached(crate::driver::env_var::APPEND_METADATA_DEBUG) {
         crate::utils::logging::debug(tag, msg);
     }
 }
 
-// Free functions that implement the append_* behavior for DiffrayFeedback.
+// Free functions that implement the append_* behavior for PairFuzzFeedback.
 // These are implemented as module-level functions to avoid duplicate inherent impls
-// across files while keeping the public API via the methods in `diffray_feedback.rs`.
+// across files while keeping the public API via the methods in `pairfuzz_feedback.rs`.
 
 pub fn append_single_cov<C, EM, I, OT, S>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     _manager: &mut EM,
     observers: &OT,
@@ -95,9 +95,9 @@ where
         // single scope so we can update max/min and bits without moving data out.
         let stats_mut = {
             let named_mut = state.named_metadata_map_mut();
-            named_mut
-                .get_mut::<TwoStateStats>(name)
-                .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: stats metadata missing"))?
+            named_mut.get_mut::<TwoStateStats>(name).ok_or_else(|| {
+                Error::illegal_argument("PairFuzzFeedback: stats metadata missing")
+            })?
         };
         let _covered = stats_mut.num_covered_map_indexes;
 
@@ -157,7 +157,7 @@ where
             // bounds check: ensure vectors were resized correctly; if not, return error instead of panic
             if i >= max_seen.len() || i >= min_seen.len() {
                 return Err(Error::illegal_argument(&format!(
-                    "DiffrayFeedback: stats vector length mismatch for '{}' at idx {} (max_seen.len={}, min_seen.len={})",
+                    "PairFuzzFeedback: stats vector length mismatch for '{}' at idx {} (max_seen.len={}, min_seen.len={})",
                     name, i, max_seen.len(), min_seen.len()
                 )));
             }
@@ -405,7 +405,7 @@ pub fn append_rv_path<S: HasNamedMetadata>(
 /// Append SingleRvCov entries: compute per-side (rv, path) and insert when
 /// this execution meets the SingleRvCov interesting criteria.
 pub fn append_single_rv_cov<C, S, OT>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     observers: &OT,
 ) -> Result<(), Error>
@@ -560,7 +560,7 @@ where
 }
 
 pub fn append_single_rv<C, S, OT>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     observers: &OT,
 ) -> Result<(), Error>
@@ -600,7 +600,7 @@ where
 }
 
 pub fn append_single_pl<C, S, OT>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     observers: &OT,
 ) -> Result<(), Error>
@@ -646,7 +646,7 @@ where
 }
 
 pub fn append_combo_cov<C, S, OT>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     observers: &OT,
 ) -> Result<(), Error>
@@ -705,7 +705,7 @@ where
 }
 
 pub fn append_combo_rv<C, S, OT>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     observers: &OT,
 ) -> Result<(), Error>
@@ -758,7 +758,7 @@ where
 }
 
 pub fn append_combo_pl<C, S, OT>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     observers: &OT,
 ) -> Result<(), Error>
@@ -825,7 +825,7 @@ where
 /// `append_single_cov`, but does so directly at execution time without
 /// creating a Testcase.
 pub fn append_exec_cov<C, EM, I, OT, S>(
-    this: &crate::feedbacks::diffray_feedback::DiffrayFeedback<C>,
+    this: &crate::feedbacks::pairfuzz_feedback::PairFuzzFeedback<C>,
     state: &mut S,
     manager: &mut EM,
     observers: &OT,
@@ -840,7 +840,7 @@ where
     OT: MatchNameRef,
 {
     // Persist behavior is now unconditional when callers invoke this helper.
-    // Caller (e.g. DiffrayFeedback) selects when to invoke based on mode/logic.
+    // Caller (e.g. PairFuzzFeedback) selects when to invoke based on mode/logic.
     let mut summaries: Vec<(Cow<'static, str>, usize, usize)> = Vec::new();
     for (idx, handle) in this.map_refs.iter().enumerate() {
         let name = &this.names[idx];
@@ -861,7 +861,7 @@ where
         let stats_mut = state
             .named_metadata_map_mut()
             .get_mut::<TwoStateStats>(name)
-            .ok_or_else(|| Error::illegal_argument("DiffrayFeedback: stats metadata missing"))?;
+            .ok_or_else(|| Error::illegal_argument("PairFuzzFeedback: stats metadata missing"))?;
         let covered_ever_before = stats_mut.num_covered_map_indexes;
 
         // Prepare container for newly-discovered indices; used only for debug
@@ -919,7 +919,7 @@ where
                 .named_metadata_map_mut()
                 .get_mut::<TwoStateStats>(name)
                 .ok_or_else(|| {
-                    Error::illegal_argument("DiffrayFeedback: stats metadata missing")
+                    Error::illegal_argument("PairFuzzFeedback: stats metadata missing")
                 })?;
             stats_mut.num_covered_map_indexes = covered_ever as usize;
         }

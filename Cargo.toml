@@ -1,9 +1,9 @@
 [package]
-name = "diffray"
+name = "pairfuzz"
 version = "0.1.0"
 authors = ["Junyan Jiang <jiangjunyan20040728@gmail.com>"]
 edition = "2021"
-default-run = "diffray"
+default-run = "pairfuzz"
 
 [features]
 # Re-export libafl's track_hit_feedbacks feature so code in this crate can use
@@ -55,7 +55,7 @@ env = "1.0.1"
 env_logger = "0.11.8"
 
 [[bin]]
-name = "diffray"
+name = "pairfuzz"
 path = "src/main.rs"
 
 [[bin]]

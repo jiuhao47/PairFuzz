@@ -1,7 +1,7 @@
 use crate::{
     driver::args::RunMode,
     feedbacks::{
-        differential_objective::DifferentialObjective, diffray_feedback::DiffrayFeedback,
+        differential_objective::DifferentialObjective, pairfuzz_feedback::PairFuzzFeedback,
         semantic::ResultPolicy, CrashObjective, DiffObjective,
     },
     observers::ReturnValueObserver,
@@ -19,19 +19,19 @@ pub(crate) fn build_feedback<C>(
     map_b: &C,
     rv_a: &ReturnValueObserver,
     rv_b: &ReturnValueObserver,
-) -> DiffrayFeedback<C>
+) -> PairFuzzFeedback<C>
 where
     C: CanTrack + MapObserver + for<'it> AsIter<'it, Item = C::Entry> + Named,
     C::Entry: Into<u8> + Copy,
 {
     match mode {
-        RunMode::SinglePl => DiffrayFeedback::new_single_pl(map_a, map_b),
-        RunMode::ComboPl => DiffrayFeedback::new_combo_pl(map_a, map_b),
-        RunMode::SingleRv => DiffrayFeedback::new_single_rv(rv_a, rv_b, map_a, map_b),
-        RunMode::SingleRvCov => DiffrayFeedback::new_single_rv_cov(rv_a, rv_b, map_a, map_b),
-        RunMode::ComboRv => DiffrayFeedback::new_combo_rv(rv_a, rv_b, map_a, map_b),
-        RunMode::ComboCov => DiffrayFeedback::new_combo_cov(map_a, map_b),
-        RunMode::SingleCov | RunMode::ReplayCov => DiffrayFeedback::new_single_cov(map_a, map_b),
+        RunMode::SinglePl => PairFuzzFeedback::new_single_pl(map_a, map_b),
+        RunMode::ComboPl => PairFuzzFeedback::new_combo_pl(map_a, map_b),
+        RunMode::SingleRv => PairFuzzFeedback::new_single_rv(rv_a, rv_b, map_a, map_b),
+        RunMode::SingleRvCov => PairFuzzFeedback::new_single_rv_cov(rv_a, rv_b, map_a, map_b),
+        RunMode::ComboRv => PairFuzzFeedback::new_combo_rv(rv_a, rv_b, map_a, map_b),
+        RunMode::ComboCov => PairFuzzFeedback::new_combo_cov(map_a, map_b),
+        RunMode::SingleCov | RunMode::ReplayCov => PairFuzzFeedback::new_single_cov(map_a, map_b),
     }
 }
 
@@ -78,7 +78,7 @@ mod tests {
     use super::{build_feedback, build_objective};
     use crate::{
         driver::args::RunMode,
-        feedbacks::{diffray_feedback::Mode, semantic::ResultPolicy},
+        feedbacks::{pairfuzz_feedback::Mode, semantic::ResultPolicy},
         observers::ReturnValueObserver,
     };
     use libafl::observers::{HitcountsMapObserver, StdMapObserver};

@@ -87,7 +87,7 @@ impl std::fmt::Display for SimpleMonitorMode {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "diffray")]
+#[command(name = "pairfuzz")]
 #[command(
     about = "A differential fuzzer for finding behavioral differences between two implementations"
 )]
@@ -201,42 +201,42 @@ mod fast_pipeline_tests {
 
     #[test]
     fn pipeline_choices_parse() {
-        let legacy = Args::try_parse_from(["diffray"]);
+        let legacy = Args::try_parse_from(["pairfuzz"]);
         assert_eq!(legacy.unwrap().pipeline, PipelineChoice::Legacy);
-        let fast = Args::try_parse_from(["diffray", "--pipeline", "fast"]);
+        let fast = Args::try_parse_from(["pairfuzz", "--pipeline", "fast"]);
         assert_eq!(fast.unwrap().pipeline, PipelineChoice::Fast);
     }
 
     #[test]
     fn schedule_choices_parse() {
-        let explore = Args::try_parse_from(["diffray"]);
+        let explore = Args::try_parse_from(["pairfuzz"]);
         assert_eq!(explore.unwrap().schedule, ScheduleChoice::Explore);
-        let fast = Args::try_parse_from(["diffray", "--schedule", "fast"]);
+        let fast = Args::try_parse_from(["pairfuzz", "--schedule", "fast"]);
         assert_eq!(fast.unwrap().schedule, ScheduleChoice::Fast);
     }
 
     #[test]
     fn mutator_choices_parse() {
-        let havoc = Args::try_parse_from(["diffray"]);
+        let havoc = Args::try_parse_from(["pairfuzz"]);
         assert_eq!(havoc.unwrap().mutator, MutatorChoice::Havoc);
-        let mopt = Args::try_parse_from(["diffray", "--mutator", "mopt"]);
+        let mopt = Args::try_parse_from(["pairfuzz", "--mutator", "mopt"]);
         assert_eq!(mopt.unwrap().mutator, MutatorChoice::MOpt);
     }
 
     #[test]
     fn client_core_identity_parses() {
-        let args = Args::try_parse_from(["diffray", "--client-core-id", "31"]).unwrap();
+        let args = Args::try_parse_from(["pairfuzz", "--client-core-id", "31"]).unwrap();
         assert_eq!(args.client_core_id, Some(31));
     }
 
     #[test]
     fn semantic_policy_exact_rejects_legacy_fuzzing_before_startup() {
-        let exact = Args::try_parse_from(["diffray", "--result-policy", "exact"]).unwrap();
+        let exact = Args::try_parse_from(["pairfuzz", "--result-policy", "exact"]).unwrap();
         assert_eq!(exact.result_policy, ResultPolicy::Exact);
         assert!(exact.validate_semantic_options().is_err());
 
         let fast =
-            Args::try_parse_from(["diffray", "--pipeline", "fast", "--result-policy", "exact"])
+            Args::try_parse_from(["pairfuzz", "--pipeline", "fast", "--result-policy", "exact"])
                 .unwrap();
         assert!(fast.validate_semantic_options().is_ok());
     }

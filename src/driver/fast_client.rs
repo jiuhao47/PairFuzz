@@ -218,7 +218,7 @@ pub(crate) fn run_fast_client(
         .map_feedback(&calibration_feedback)
         .uses_autotokens(true)
         .tokens(&tokens)
-        .banner("diffray".to_owned())
+        .banner("pairfuzz".to_owned())
         .version(env!("CARGO_PKG_VERSION").to_owned())
         .exec_timeout(args.timeout_ms)
         .target_mode("differential-forkserver".to_owned())

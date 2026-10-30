@@ -447,7 +447,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "diffray"
+name = "pairfuzz"
 version = "0.1.0"
 dependencies = [
  "anyhow",

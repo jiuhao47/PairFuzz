@@ -58,8 +58,8 @@ mod tests {
     #[test]
     fn json_log_path_uses_log_directory() {
         assert_eq!(
-            json_log_path(Some(Path::new("/tmp/diffray-monitor-test"))),
-            PathBuf::from("/tmp/diffray-monitor-test/fuzzer_stats.json")
+            json_log_path(Some(Path::new("/tmp/pairfuzz-monitor-test"))),
+            PathBuf::from("/tmp/pairfuzz-monitor-test/fuzzer_stats.json")
         );
     }
 }

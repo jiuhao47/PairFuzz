@@ -46,16 +46,16 @@ pub enum Mode {
     SingleRvCov,
 }
 
-/// Per-observer configuration for DiffrayFeedback
+/// Per-observer configuration for PairFuzzFeedback
 #[derive(Clone, Debug)]
-pub struct DiffrayConfig {
+pub struct PairFuzzConfig {
     pub high_delta: u8,
     pub low_delta: u8,
     pub check_high: bool,
     pub check_low: bool,
 }
 
-impl Default for DiffrayConfig {
+impl Default for PairFuzzConfig {
     fn default() -> Self {
         Self {
             high_delta: 1,
@@ -66,7 +66,7 @@ impl Default for DiffrayConfig {
     }
 }
 
-impl DiffrayConfig {
+impl PairFuzzConfig {
     /// NewOnly template: disables both high/low checks so the observer only
     /// reports newly-seen indices (no delta-based checks).
     pub fn new_only() -> Self {
@@ -94,7 +94,7 @@ pub struct ObserverInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiffrayFeedback<C> {
+pub struct PairFuzzFeedback<C> {
     /// names and handles for each observer involved
     pub(crate) names: Vec<Cow<'static, str>>,
     pub(crate) _stats_names: Vec<Cow<'static, str>>,
@@ -102,7 +102,7 @@ pub struct DiffrayFeedback<C> {
     /// optional ReturnValueObserver handles per map observer
     pub(crate) rv_refs: Vec<Option<Handle<ReturnValueObserver>>>,
     /// per-observer config objects
-    pub(crate) configs: Vec<DiffrayConfig>,
+    pub(crate) configs: Vec<PairFuzzConfig>,
     /// novelties aggregated across all observers (optional when observers support novelties)
     /// Use SmallVec to avoid heap allocations for the common small case.
     pub(crate) novelties: Option<smallvec::SmallVec<[usize; 8]>>,
@@ -116,7 +116,7 @@ pub struct DiffrayFeedback<C> {
     pub(crate) mode: Mode,
 }
 
-// Module-level gated debug logger for DiffrayFeedback
+// Module-level gated debug logger for PairFuzzFeedback
 fn feedback_debug_log(tag: &str, msg: &str) {
     if crate::driver::env_var::env_bool_cached(crate::driver::env_var::FEEDBACK_DEBUG) {
         crate::utils::logging::debug(tag, msg);
@@ -131,15 +131,15 @@ fn feedback_debug_log_lazy<F: FnOnce() -> String>(tag: &str, msg_fn: F) {
     }
 }
 
-/// Methods for DiffrayFeedback
-impl<C> DiffrayFeedback<C>
+/// Methods for PairFuzzFeedback
+impl<C> PairFuzzFeedback<C>
 where
     C: libafl::observers::CanTrack
         + MapObserver
         + for<'it> libafl_bolts::AsIter<'it, Item = C::Entry>,
     C::Entry: Into<u8> + Copy,
 {
-    /// General constructor: build a two-observer DiffrayFeedback using the
+    /// General constructor: build a two-observer PairFuzzFeedback using the
     /// provided `mode`. Optionally supply return-value observers when the
     /// mode requires them (SingleRv/ComboRv). This consolidates construction
     /// logic in one place so callers can choose mode-driven construction.
@@ -163,11 +163,11 @@ where
 
         // Choose per-observer configs: for PL/RV modes prefer new_only(),
         // otherwise use default two-state deltas for coverage modes.
-        let configs: Vec<DiffrayConfig> = match mode {
+        let configs: Vec<PairFuzzConfig> = match mode {
             Mode::SingleRv | Mode::ComboRv | Mode::SinglePL | Mode::ComboPL => {
-                vec![DiffrayConfig::new_only(), DiffrayConfig::new_only()]
+                vec![PairFuzzConfig::new_only(), PairFuzzConfig::new_only()]
             }
-            _ => vec![DiffrayConfig::default(), DiffrayConfig::default()],
+            _ => vec![PairFuzzConfig::default(), PairFuzzConfig::default()],
         };
 
         let novelties = if C::NOVELTIES {
@@ -183,7 +183,7 @@ where
             .collect::<Vec<_>>()
             .join(",");
 
-        DiffrayFeedback {
+        PairFuzzFeedback {
             names,
             _stats_names: stats_names,
             map_refs,
@@ -196,7 +196,7 @@ where
             mode,
         }
     }
-    /// Construct a DiffrayFeedback for two map observers in SingleCov mode.
+    /// Construct a PairFuzzFeedback for two map observers in SingleCov mode.
     ///
     /// This helper is convenient for the driver which commonly combines
     /// two coverage observers (A and B). It preserves observer names,
@@ -209,7 +209,7 @@ where
         Self::new_with_mode(map_a, map_b, Mode::SingleCov, None, None)
     }
 
-    /// Construct a DiffrayFeedback for two return-value observers in SingleRv mode.
+    /// Construct a PairFuzzFeedback for two return-value observers in SingleRv mode.
     ///
     /// This helper is convenient for the driver which may select return-value
     /// novelty as the primary feedback. It stores rv handles and leaves map
@@ -226,7 +226,7 @@ where
         Self::new_with_mode(map_a, map_b, Mode::SingleRv, Some(rv_a), Some(rv_b))
     }
 
-    /// Construct a DiffrayFeedback for SingleRvCov mode (RV + per-side path).
+    /// Construct a PairFuzzFeedback for SingleRvCov mode (RV + per-side path).
     pub fn new_single_rv_cov(
         rv_a: &ReturnValueObserver,
         rv_b: &ReturnValueObserver,
@@ -239,7 +239,7 @@ where
         Self::new_with_mode(map_a, map_b, Mode::SingleRvCov, Some(rv_a), Some(rv_b))
     }
 
-    /// Construct a DiffrayFeedback for two map observers in SinglePL mode.
+    /// Construct a PairFuzzFeedback for two map observers in SinglePL mode.
     ///
     /// Similar to SingleCov but the combination/novelty semantics are handled
     /// by the PL logic (single PL counts per map).
@@ -250,7 +250,7 @@ where
         Self::new_with_mode(map_a, map_b, Mode::SinglePL, None, None)
     }
 
-    /// Construct a DiffrayFeedback for two map observers in ComboCov mode.
+    /// Construct a PairFuzzFeedback for two map observers in ComboCov mode.
     ///
     /// Similar to ComboPL but uses exact per-observer indices vectors as the
     /// novelty key (Mode::ComboCov).
@@ -261,7 +261,7 @@ where
         Self::new_with_mode(map_a, map_b, Mode::ComboCov, None, None)
     }
 
-    /// Construct a DiffrayFeedback for two return-value observers in ComboRv mode.
+    /// Construct a PairFuzzFeedback for two return-value observers in ComboRv mode.
     ///
     /// Similar to `new_two_single_rv` but sets the mode to `ComboRv` so the
     /// feedback considers tuples of return-values for novelty.
@@ -277,7 +277,7 @@ where
         Self::new_with_mode(map_a, map_b, Mode::ComboRv, Some(rv_a), Some(rv_b))
     }
 
-    /// Construct a DiffrayFeedback for two map observers in ComboPL mode.
+    /// Construct a PairFuzzFeedback for two map observers in ComboPL mode.
     ///
     /// This behaves like SinglePL for collection but treats the vector of per-map
     /// indices-counts as a combo novelty key persisted as ComboHistStats.
@@ -572,7 +572,7 @@ where
     }
 }
 
-impl<C> Named for DiffrayFeedback<C>
+impl<C> Named for PairFuzzFeedback<C>
 where
     C: libafl::observers::CanTrack
         + MapObserver
@@ -584,13 +584,13 @@ where
         // builds so incorrect construction is caught early during development.
         debug_assert!(
             !self.names.is_empty(),
-            "DiffrayFeedback.names must be non-empty"
+            "PairFuzzFeedback.names must be non-empty"
         );
         &self.names[0]
     }
 }
 
-impl<C> libafl::feedbacks::HasObserverHandle for DiffrayFeedback<C>
+impl<C> libafl::feedbacks::HasObserverHandle for PairFuzzFeedback<C>
 where
     C: libafl::observers::CanTrack
         + MapObserver
@@ -603,13 +603,13 @@ where
         // Constructor guarantees at least one handle.
         debug_assert!(
             !self.map_refs.is_empty(),
-            "DiffrayFeedback.map_refs must be non-empty"
+            "PairFuzzFeedback.map_refs must be non-empty"
         );
         &self.map_refs[0]
     }
 }
 
-impl<C, S> StateInitializer<S> for DiffrayFeedback<C>
+impl<C, S> StateInitializer<S> for PairFuzzFeedback<C>
 where
     C: libafl::observers::CanTrack
         + MapObserver
@@ -620,7 +620,7 @@ where
     fn init_state(&mut self, state: &mut S) -> Result<(), Error> {
         // For each observer we add TwoStateStats and MapFeedbackMetadata under
         // the observer's name so other tools see per-observer history as before.
-        let cap: usize = std::env::var("DIFFRAY_TWOSTATE_CAPACITY")
+        let cap: usize = std::env::var("PAIRFUZZ_TWOSTATE_CAPACITY")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(crate::driver::constants::MAP_SIZE);
@@ -639,7 +639,7 @@ where
             // Log initialization with PID so we can correlate metadata
             // re-creation across process restarts or multiple workers.
             crate::utils::logging::debug(
-                "diffray_feedback",
+                "pairfuzz_feedback",
                 &format!(
                     "Initialized TwoStateStats metadata '{}' with capacity {} (pid={})",
                     name,
@@ -652,7 +652,7 @@ where
     }
 }
 
-impl<C, EM, I, OT, S> Feedback<EM, I, OT, S> for DiffrayFeedback<C>
+impl<C, EM, I, OT, S> Feedback<EM, I, OT, S> for PairFuzzFeedback<C>
 where
     C: libafl::observers::CanTrack
         + MapObserver
@@ -677,7 +677,7 @@ where
         observers: &OT,
         _exit_kind: &libafl::executors::ExitKind,
     ) -> Result<bool, Error> {
-        feedback_debug_log("diffray_feedback", "enter is_interesting()");
+        feedback_debug_log("pairfuzz_feedback", "enter is_interesting()");
 
         // Part 1: collect per-observer infos (delegated to collect module)
         let infos = crate::feedbacks::collect::collect::<C, S, OT>(self, state, observers)?;
@@ -700,7 +700,7 @@ where
         if any_found && !matches!(self.mode, Mode::SingleCov) {
             crate::feedbacks::metadata::append_exec_cov(self, state, _manager, observers)?;
         }
-        feedback_debug_log_lazy("diffray_feedback", || {
+        feedback_debug_log_lazy("pairfuzz_feedback", || {
             format!("final is_interesting -> {}", final_result,)
         });
         Ok(final_result)
@@ -724,7 +724,7 @@ where
         observers: &OT,
         testcase: &mut Testcase<I>,
     ) -> Result<(), Error> {
-        feedback_debug_log("diffray_feedback", "enter append_metadata()");
+        feedback_debug_log("pairfuzz_feedback", "enter append_metadata()");
         // Persist return-value history for SingleRv / ComboRv modes.
         match self.mode {
             Mode::Debug => {
@@ -777,7 +777,7 @@ where
     }
 }
 
-impl<C> DiffrayFeedback<C>
+impl<C> PairFuzzFeedback<C>
 where
     C: libafl::observers::CanTrack
         + MapObserver
@@ -800,7 +800,7 @@ where
             // Best-effort clear; skip silently if no updater is present.
             upd.clear_shmem_sources();
             feedback_debug_log(
-                "diffray_feedback",
+                "pairfuzz_feedback",
                 "append_metadata: cleared shmem_combo_updater sources",
             );
         }

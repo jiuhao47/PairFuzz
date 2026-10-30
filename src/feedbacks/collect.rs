@@ -1,5 +1,5 @@
-use crate::feedbacks::diffray_feedback::{DiffrayFeedback, Mode, ObserverInfo};
 use crate::feedbacks::metadata::TwoStateStats;
+use crate::feedbacks::pairfuzz_feedback::{Mode, ObserverInfo, PairFuzzFeedback};
 use crate::feedbacks::semantic::SemanticValue;
 use crate::observers::ReturnValueObserver;
 use crate::utils::bits::BitsRef;
@@ -19,12 +19,12 @@ fn collect_debug_log(tag: &str, msg: &str) {
     }
 }
 
-/// Collect-only helpers extracted from `diffray_feedback.rs` to reduce file size
+/// Collect-only helpers extracted from `pairfuzz_feedback.rs` to reduce file size
 /// and separate concerns. These functions mirror the previous `collect_*` methods
-/// and are thin wrappers that operate on `DiffrayFeedback` references.
+/// and are thin wrappers that operate on `PairFuzzFeedback` references.
 
 pub fn collect_found<C, S, OT>(
-    f: &DiffrayFeedback<C>,
+    f: &PairFuzzFeedback<C>,
     idx: usize,
     handle: &Handle<C>,
     state: &S,
@@ -121,7 +121,7 @@ where
 /// configured at `f.rv_refs[idx]` if present. This replaces the prior two
 /// variants and centralizes RV collection logic.
 pub fn collect_rv<C, OT>(
-    f: &DiffrayFeedback<C>,
+    f: &PairFuzzFeedback<C>,
     idx: usize,
     observers: &OT,
 ) -> Result<Option<(String, Option<SemanticValue>)>, Error>
@@ -142,7 +142,7 @@ where
 }
 
 pub fn collect_indices<C, S, OT>(
-    f: &DiffrayFeedback<C>,
+    f: &PairFuzzFeedback<C>,
     _idx: usize,
     handle: &Handle<C>,
     _state: &S,
@@ -219,7 +219,7 @@ where
 }
 
 pub fn collect<C, S, OT>(
-    f: &DiffrayFeedback<C>,
+    f: &PairFuzzFeedback<C>,
     state: &S,
     observers: &OT,
 ) -> Result<Vec<ObserverInfo>, Error>

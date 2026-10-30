@@ -1,5 +1,5 @@
 use crate::{
-    feedbacks::diffray_feedback::DiffrayFeedback,
+    feedbacks::pairfuzz_feedback::PairFuzzFeedback,
     feedbacks::semantic::{ResultPolicy, SemanticValue},
     feedbacks::signature::{
         compute_signature_v1, compute_signature_v2, DifferentialSignature, ExitClass,
@@ -146,7 +146,7 @@ fn persisted_elapsed_nanos(path: &Path) -> Option<u64> {
 }
 
 fn signature_observation<C, EX>(
-    feedback: &DiffrayFeedback<C>,
+    feedback: &PairFuzzFeedback<C>,
     executor: &EX,
     exit_kind: ExitKind,
     policy: ResultPolicy,
@@ -206,7 +206,7 @@ where
 }
 
 fn reset_replay_maps<C, EX>(
-    feedback: &DiffrayFeedback<C>,
+    feedback: &PairFuzzFeedback<C>,
     executor: &mut EX,
 ) -> Result<(), libafl::Error>
 where
@@ -242,7 +242,7 @@ pub(crate) fn run_replay_cov<C, EM, EX, F, S>(
     input_dir: Option<&Path>,
     log_dir: Option<&Path>,
     num_edges: usize,
-    feedback: &DiffrayFeedback<C>,
+    feedback: &PairFuzzFeedback<C>,
     state: &mut S,
     fuzzer: &mut F,
     executor: &mut EX,
@@ -475,7 +475,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "diffray-replay-test-{}-{unique}",
+            "pairfuzz-replay-test-{}-{unique}",
             std::process::id()
         ));
         let nested = root.join("nested");

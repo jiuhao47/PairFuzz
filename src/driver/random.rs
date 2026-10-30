@@ -1,4 +1,4 @@
-const CLIENT_SEED_DOMAIN: &[u8] = b"diffray-client-seed-v1\0";
+const CLIENT_SEED_DOMAIN: &[u8] = b"pairfuzz-client-seed-v1\0";
 
 #[must_use]
 pub(crate) fn derive_client_seed(campaign_seed: u64, stable_index: u32, core_id: u32) -> u64 {
@@ -31,7 +31,7 @@ mod tests {
     fn seed_derivation_matches_fixed_vector() {
         assert_eq!(
             derive_client_seed(0x0123_4567_89ab_cdef, 7, 11),
-            0x8dc1_a5e0_ecc7_4b32
+            0x4981_e8b0_ad57_2342
         );
     }
 }

@@ -8,9 +8,8 @@
 - `Cargo.lock`、`app/compiler/Cargo.lock`：Rust 直接与传递依赖；
 - `LibAFL` gitlink：固定上游源码提交。
 
-第三方许可证只约束相应组件，并不自动为 PairFuzz 原创代码选择许可证。根项目许可证
-仍待项目权利人确认；在权利人确认前，不能把 LibAFL 的双许可证或任一目标库许可证
-复制为 PairFuzz 的授权声明。
+第三方许可证只约束相应组件。PairFuzz 原创代码采用 MIT 许可证，全文见 [LICENSE](LICENSE)；
+该授权不改变 LibAFL、目标库或其他第三方组件各自的许可证和分发义务。
 
 ## 运行框架
 

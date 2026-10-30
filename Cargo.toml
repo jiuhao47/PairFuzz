@@ -3,6 +3,7 @@ name = "pairfuzz"
 version = "0.1.0"
 authors = ["Junyan Jiang <jiangjunyan20040728@gmail.com>"]
 edition = "2021"
+license = "MIT"
 default-run = "pairfuzz"
 
 [features]

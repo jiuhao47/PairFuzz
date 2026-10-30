@@ -135,5 +135,6 @@ just check
 | [docs/contest/performance/README.md](docs/contest/performance/README.md) | 性能测量口径和已提交证据 |
 | [docs/STRUCTURE.md](docs/STRUCTURE.md) | 当前仓库模块结构 |
 
-当前仓库尚待项目权利人选择原创代码的根许可证；第三方许可证不能替代该决定。正式提交
-还需要团队信息、公开仓库 URL、固定评审 commit/tag、报名表、签字承诺书和最终稿件。
+PairFuzz 原创代码采用 MIT 许可证，全文见 [LICENSE](LICENSE)；第三方组件继续遵循各自
+许可证。正式提交还需要队伍名称、联系人、公开仓库 URL、固定评审 commit/tag、报名表、
+签字承诺书和最终稿件。

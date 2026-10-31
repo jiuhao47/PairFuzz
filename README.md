@@ -78,7 +78,7 @@ SHA-256 审计紧凑指纹。
 just real-targets-check
 ```
 
-该命令会取得并校验八个锁定来源，构建 ASan/release 目标，并运行 PNG、BMP、X.509
+该命令会取得并校验八个上游软件来源及一份独立许可证记录，构建 ASan/release 目标，并运行 PNG、BMP、X.509
 契约与既有 JSON 验证，因而需要网络、本地可用的 Clang/LLVM 工具链、数 GiB 临时磁盘和
 较长构建时间。可通过 `real-targets-fetch`、`real-targets-build`、
 `real-targets-verify`、`real-targets-run` 和 `real-targets-replay` 分别操作单个 pair；
@@ -134,3 +134,9 @@ just check
 
 PairFuzz 原创代码采用 [MIT 许可证](LICENSE)。第三方材料继续遵循各自许可证，版本、
 来源和分发义务见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+
+## 贡献与参赛边界
+
+姜俊彦负责架构与 Rust 实现、目标适配和文档整理；张志宇参与方案讨论与实验设计。
+公开历史还包含早期非参赛协作者 ElinorCoding 的原型阶段提交；当前参赛文件树中已无
+其存续代码行。

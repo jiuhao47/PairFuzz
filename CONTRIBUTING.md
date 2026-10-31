@@ -34,8 +34,9 @@ just check
 just real-targets-check
 ```
 
-后者会下载锁定源码并构建 PNG、BMP、X.509 的 ASan/release 目标，需要网络、Docker
-可用的 Clang 工具链、数 GiB 临时磁盘和较长时间。只改 Rust 或普通文档时不应无理由
+后者会下载锁定源码并构建 PNG、BMP、X.509 的 ASan/release 目标，需要网络、本地可用的
+Clang/LLVM 工具链、数 GiB 临时磁盘和较长时间；Docker 只是当前验证环境中可选的工具链
+提供方式。只改 Rust 或普通文档时不应无理由
 重复该门禁；涉及原生契约、适配器、来源锁、编译 profile 或结果导出时必须运行。
 
 ## 修改目标适配器

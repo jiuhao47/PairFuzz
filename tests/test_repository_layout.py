@@ -1,4 +1,6 @@
+import base64
 import json
+import re
 import subprocess
 from pathlib import Path
 import tempfile
@@ -86,6 +88,28 @@ class RepositoryLayoutTests(unittest.TestCase):
 
     def test_tracked_tree_has_no_former_identity(self):
         self.assertEqual(tracked_identity_offenders(ROOT), [])
+
+    def test_x509_probe_uses_pairfuzz_identity_and_marks_test_key(self):
+        generator = (ROOT / "scripts/generate_real_target_fixtures.py").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r'X509_PROBE_DER_BASE64 = """(.*?)"""', generator, re.DOTALL
+        )
+        self.assertIsNotNone(match)
+        probe = base64.b64decode(match.group(1))
+        self.assertIn(b"PairFuzz", probe)
+        self.assertNotIn(("diff" + "ray").encode("ascii"), probe)
+        self.assertIn("Public deterministic test fixture only", generator)
+        self.assertIn("never use this key for security or production", generator)
+
+        seed_bytes = b"".join(
+            path.read_bytes()
+            for path in sorted((ROOT / "examples/real-targets/x509/seeds").iterdir())
+            if path.is_file()
+        )
+        self.assertIn(b"PairFuzz", seed_bytes)
+        self.assertNotIn(("diff" + "ray").encode("ascii"), seed_bytes)
 
     def test_public_repository_excludes_internal_document_artifacts(self):
         forbidden = (

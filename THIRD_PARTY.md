@@ -8,9 +8,8 @@
 - `Cargo.lock`、`app/compiler/Cargo.lock`：Rust 直接与传递依赖；
 - `LibAFL` gitlink：固定上游源码提交。
 
-第三方许可证只约束相应组件。PairFuzz 原创代码采用 MIT 许可证，全文见 [LICENSE](LICENSE)；
-原创文档采用 [CC BY-SA 4.0](LICENSE-DOCS.md)。这些授权不改变 LibAFL、目标库或其他
-第三方材料各自的许可证和分发义务。
+第三方许可证只约束相应组件。PairFuzz 原创代码与根目录说明采用 MIT 许可证，全文见
+[LICENSE](LICENSE)。该授权不改变 LibAFL、目标库或其他第三方材料各自的许可证和分发义务。
 
 ## 运行框架
 
@@ -29,8 +28,7 @@
 | mjson | 1.2.7 / `1.2.7` | 保存构建所需最小源码和许可证，逐文件哈希固定 | MIT |
 
 可运行 `python3 scripts/real_json_demo.py verify-vendor` 验证这些字节。cJSON 1.7.19 的
-JSON Patch 递归耗尽通告涉及未参与本演示构建的可选 `cJSON_Utils`；边界记录在
-`docs/contest/provenance.md`。
+JSON Patch 递归耗尽通告涉及未参与本演示构建的可选 `cJSON_Utils`。
 
 ## 原生语义差分目标
 
@@ -52,6 +50,5 @@ GPL-3.0-or-later 的对应源码与许可证义务。仅提交适配器、契约
 
 ## 归属边界
 
-PairFuzz 原创或历史项目代码主要位于 `src/`、`app/compiler/`、目标适配器和工作流脚本；
-LibAFL 以及上述解析/图像/密码库仍归各自上游作者所有。历史恢复点、本次新增贡献和
-借鉴范围见 [代码来源与依赖归属](docs/contest/provenance.md)。
+PairFuzz 项目代码主要位于 `src/`、`app/compiler/`、目标适配器和工作流脚本；LibAFL
+以及上述解析、图像和密码库仍归各自上游作者所有，并继续适用各自许可证。

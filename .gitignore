@@ -7,8 +7,7 @@ __pycache__/
 .vscode/
 .cur_input_*
 
-# Local competition tools and generated artifacts.
+# Local development tools and generated artifacts.
 .tools/
-.superpowers/
 .worktrees/
 examples/contest/*.o

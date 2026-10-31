@@ -87,6 +87,34 @@ class RepositoryLayoutTests(unittest.TestCase):
     def test_tracked_tree_has_no_former_identity(self):
         self.assertEqual(tracked_identity_offenders(ROOT), [])
 
+    def test_public_repository_excludes_internal_document_artifacts(self):
+        forbidden = (
+            ROOT / "LICENSE-DOCS.md",
+            ROOT / "LICENSES/CC-BY-SA-4.0.txt",
+            ROOT / "tests/test_contest_documentation.py",
+        )
+        for path in forbidden:
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertFalse(path.exists(), str(path))
+
+        self.assertEqual(
+            [path for path in (ROOT / "docs").rglob("*") if path.is_file()], []
+        )
+        tracked = set(subprocess.check_output(
+            ["git", "ls-files"], cwd=ROOT, text=True
+        ).splitlines())
+        deleted = set(subprocess.check_output(
+            ["git", "ls-files", "--deleted"], cwd=ROOT, text=True
+        ).splitlines())
+        tracked -= deleted
+        self.assertFalse(any(path.startswith("docs/") for path in tracked))
+
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertNotIn(".superpowers/", gitignore)
+        self.assertNotIn("ChinaSoft 2026", contributing)
+        self.assertNotIn("## 实验与证据", contributing)
+
     def test_identity_guard_skips_only_undecodable_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -103,33 +131,6 @@ class RepositoryLayoutTests(unittest.TestCase):
                 tracked_identity_offenders(root),
                 [(forbidden_path.name, "path")],
             )
-
-    def test_performance_evidence_uses_reachable_sanitized_project_commits(self):
-        expected_migration = {
-            "schema_version": 1,
-            "project_commit_ids": "mapped_to_sanitized_history",
-        }
-        for relative in (
-            "docs/contest/performance/baseline-0.15.4.json",
-            "docs/contest/performance/upgrade-only-0.16.1.json",
-        ):
-            with self.subTest(evidence=relative):
-                evidence = json.loads((ROOT / relative).read_text(encoding="utf-8"))
-                self.assertEqual(
-                    evidence.get("history_privacy_migration"),
-                    expected_migration,
-                )
-                environment = evidence["environment"]
-                for field in ("source_baseline", "measurement_commit"):
-                    value = environment[field]
-                    self.assertRegex(value, r"^[0-9a-f]{40}$")
-                    result = subprocess.run(
-                        ["git", "merge-base", "--is-ancestor", value, "HEAD"],
-                        cwd=ROOT,
-                        capture_output=True,
-                        check=False,
-                    )
-                    self.assertEqual(result.returncode, 0, field)
 
     def test_rust_entrypoint_is_thin_and_runtime_is_separate(self):
         runtime = ROOT / "src" / "driver" / "runtime.rs"
@@ -207,7 +208,7 @@ class RepositoryLayoutTests(unittest.TestCase):
             with self.subTest(wrapper_token=token):
                 self.assertIn(token, wrapper)
 
-    def test_required_competition_paths_exist(self):
+    def test_required_product_paths_exist(self):
         required = (
             "src/main.rs",
             "app/compiler/Cargo.toml",
@@ -223,13 +224,6 @@ class RepositoryLayoutTests(unittest.TestCase):
             "LibAFL",
             "README.md",
             "Justfile",
-            "docs/contest/README.md",
-            "docs/contest/real-native-targets.md",
-            "docs/contest/performance/README.md",
-            "docs/contest/performance/native-png-smoke.json",
-            "docs/contest/performance/native-bmp-smoke.json",
-            "docs/contest/performance/native-x509-smoke.json",
-            "docs/contest/performance/native-targets-summary.json",
             "examples/real-targets/png/contract.json",
             "examples/real-targets/bmp/contract.json",
             "examples/real-targets/x509/contract.json",
@@ -300,8 +294,6 @@ class RepositoryLayoutTests(unittest.TestCase):
                 "contest-demo",
                 "contest-replay",
                 "contest-verify",
-                "contest-paper",
-                "contest-paper-clean",
                 "real-json-build",
                 "real-json-demo",
                 "real-json-replay",
@@ -379,13 +371,8 @@ class RepositoryLayoutTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, content)
 
-    def test_participant_docs_do_not_reference_removed_paths(self):
-        documents = [ROOT / "README.md", ROOT / "docs" / "STRUCTURE.md"]
-        documents.extend(
-            path
-            for path in sorted((ROOT / "docs" / "contest").glob("*.md"))
-            if path.name != "provenance.md"
-        )
+    def test_public_root_documents_do_not_reference_removed_paths(self):
+        documents = [ROOT / "README.md", ROOT / "THIRD_PARTY.md"]
         forbidden = (
             "benchmark/",
             "docker/",
@@ -405,65 +392,6 @@ class RepositoryLayoutTests(unittest.TestCase):
             for token in forbidden:
                 with self.subTest(document=document.name, token=token):
                     self.assertNotIn(token, content)
-
-    def test_source_archive_recovery_identifier_stays_private(self):
-        documents = (
-            ROOT / "docs" / "contest" / "provenance.md",
-            ROOT
-            / "docs"
-            / "superpowers"
-            / "plans"
-            / "2026-10-30-pairfuzz-identity-migration.md",
-            ROOT
-            / "docs"
-            / "superpowers"
-            / "specs"
-            / "2026-10-30-pairfuzz-identity-migration-design.md",
-        )
-        full_commit = r"[0-9a-f]{40}"
-        recovery_references = (
-            rf"main@{full_commit}",
-            rf"refs/heads/main[^\n]*=\s*{full_commit}",
-            rf"(?is)(?:private source archive at its `main` snapshot|"
-            rf"私有源码归档的 `main` 快照)\s*`{full_commit}`",
-            rf"(?is)full commit\s*`{full_commit}`",
-            rf"(?is)remote `main` still resolves to\s*`{full_commit}`",
-        )
-        for document in documents:
-            with self.subTest(document=document.name):
-                content = document.read_text(encoding="utf-8")
-                for pattern in recovery_references:
-                    self.assertNotRegex(content, pattern)
-
-        provenance = documents[0].read_text(encoding="utf-8")
-        self.assertIn("私有源码归档", provenance)
-        self.assertNotIn("internal-" + "source-remote", provenance)
-        self.assertIn("精确恢复标识仅保存在私有审计记录中", provenance)
-
-    def test_structure_lists_every_retained_product_area(self):
-        content = (ROOT / "docs" / "STRUCTURE.md").read_text(encoding="utf-8")
-        retained = (
-            "src/",
-            "app/compiler/",
-            "examples/real-json/",
-            "examples/contest/",
-            "examples/real-targets/",
-            "scripts/",
-            "tests/",
-            "third_party/",
-            "docs/contest/",
-            "LibAFL/",
-            "driver/runtime.rs",
-            "driver/monitor.rs",
-            "driver/target.rs",
-            "driver/replay.rs",
-            "feedbacks/factory.rs",
-            "real-native-targets.md",
-        )
-        for path in retained:
-            with self.subTest(path=path):
-                self.assertIn(path, content)
-
 
 if __name__ == "__main__":
     unittest.main()

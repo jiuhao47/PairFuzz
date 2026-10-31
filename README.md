@@ -5,9 +5,8 @@ PairFuzz 用同一输入驱动两个程序实现，隔离收集两侧覆盖图�
 双目标执行、反馈、进程生命周期和回放由 **Rust 2021 + LibAFL 0.16.1** 实现；本地
 C/C++ 目标通过 forkserver、共享内存和 SanitizerCoverage 接入。
 
-本参赛版本从 2026 年 2 月的经典双目标实现恢复，并继续完成了 LibAFL 升级、快速单
-客户端管线、完整 `u64` 语义结果、稳定签名和三组原生目标接入。历史与本次新增内容的
-边界见[来源与依赖](docs/contest/provenance.md)。
+当前实现包含 LibAFL 0.16.1 快速单客户端管线、完整 `u64` 语义结果、稳定差分签名，
+以及 JSON、PNG、BMP 和 X.509 四组双目标工作负载。
 
 ## 环境
 
@@ -53,9 +52,8 @@ just real-json-demo 30
 
 固定夹具 `examples/real-json/known-difference.json` 的预期结果是
 **cJSON=1、mjson=0**。这是两个解析器的兼容性差异，不自动等于安全漏洞。有限时长
-campaign 具有随机性；若没有保存解，脚本会保留日志而不会用固定夹具冒充随机发现。
-保存样本只有在 forkserver 外独立复现、且元数据与返回值一致后才计数。详见
-[真实 JSON 演示](docs/contest/real-json-demo.md)。
+campaign 具有随机性；若没有保存解，脚本会保留日志而不会用固定夹具替代随机发现。
+保存样本只有在 forkserver 外独立复现、且元数据与返回值一致后才计数。
 
 ## 扩展验证：规范化原生语义
 
@@ -82,9 +80,10 @@ just real-targets-check
 
 该命令会取得并校验八个锁定来源，构建 ASan/release 目标，并运行 PNG、BMP、X.509
 契约与既有 JSON 验证，因而需要网络、本地可用的 Clang/LLVM 工具链、数 GiB 临时磁盘和
-较长构建时间。单个 pair 的 fetch/build/verify/run/replay 命令、许可证和故障排查见
-[原生语义差分目标](docs/contest/real-native-targets.md)。特别是分发链接 wolfSSL 的产物
-前必须履行对应 GPL-3.0-or-later 义务。
+较长构建时间。可通过 `real-targets-fetch`、`real-targets-build`、
+`real-targets-verify`、`real-targets-run` 和 `real-targets-replay` 分别操作单个 pair；
+使用 `just --list` 查看完整参数。分发链接 wolfSSL 的产物前必须履行对应
+GPL-3.0-or-later 义务。
 
 ## 系统结构
 
@@ -129,14 +128,9 @@ just check
 | [app/compiler/](app/compiler/) | 插桩包装器、forkserver 静态运行时和 `u64` 语义共享内存 ABI |
 | [examples/real-json/](examples/real-json/) | cJSON/mjson 最小用例、种子与固定差异 |
 | [examples/real-targets/](examples/real-targets/) | PNG/BMP/X.509 适配器、契约和小型夹具 |
-| [scripts/](scripts/) | 构建、验证、campaign、回放和证据导出入口 |
+| [scripts/](scripts/) | 构建、验证、campaign 和回放入口 |
 | [third_party/](third_party/) | JSON vendored 字节、原生来源锁和许可证清单 |
-| [tests/](tests/) | 供应链、ABI、契约、进程生命周期、证据和结构回归 |
-| [docs/contest/README.md](docs/contest/README.md) | 参赛总览和演示讲稿 |
-| [docs/contest/verification.md](docs/contest/verification.md) | 验证环境、结果与限制 |
-| [docs/contest/performance/README.md](docs/contest/performance/README.md) | 性能测量口径和已提交证据 |
-| [docs/STRUCTURE.md](docs/STRUCTURE.md) | 当前仓库模块结构 |
+| [tests/](tests/) | 供应链、ABI、契约、进程生命周期和结构回归 |
 
-PairFuzz 原创代码采用 [MIT 许可证](LICENSE)，原创文档（含参赛稿件与图表）采用
-[CC BY-SA 4.0](LICENSE-DOCS.md)。第三方材料继续遵循各自许可证。
-正式提交版本与材料状态见[提交清单](docs/contest/submission-checklist.md)。
+PairFuzz 原创代码采用 [MIT 许可证](LICENSE)。第三方材料继续遵循各自许可证，版本、
+来源和分发义务见 [THIRD_PARTY.md](THIRD_PARTY.md)。

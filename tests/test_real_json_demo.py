@@ -350,18 +350,21 @@ class DocumentationTests(unittest.TestCase):
                 )
 
     def test_provenance_records_exact_upstream_revisions(self):
-        provenance = (ROOT / "docs" / "contest" / "provenance.md").read_text(
-            encoding="utf-8"
+        manifest = json.loads(
+            (ROOT / "third_party" / "json-libs.json").read_text(encoding="utf-8")
         )
+        documented = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
+        libraries = {entry["name"]: entry for entry in manifest["libraries"]}
         expected = (
             ("cJSON", "1.7.19", "c859b25da02955fef659d658b8f324b5cde87be3"),
             ("mjson", "1.2.7", "032a2eaca1a989e56d88218f2a3cb91a68afebe8"),
         )
         for name, version, commit in expected:
             with self.subTest(library=name):
-                self.assertIn(name, provenance)
-                self.assertIn(version, provenance)
-                self.assertIn(commit, provenance)
+                self.assertEqual(libraries[name]["version"], version)
+                self.assertEqual(libraries[name]["commit"], commit)
+                self.assertIn(name, documented)
+                self.assertIn(version, documented)
 
 
 if __name__ == "__main__":

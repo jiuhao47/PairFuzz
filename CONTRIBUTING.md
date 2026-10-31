@@ -1,7 +1,6 @@
 # 参与 PairFuzz 开发
 
-感谢关注 PairFuzz。本仓库是 ChinaSoft 2026 Rust 软件原型开发竞赛的精简交付版本，
-接受能够保持双目标执行、证据可复现和第三方边界清晰的改进。
+感谢关注 PairFuzz。本仓库接受能够保持双目标执行、结果可复现和第三方边界清晰的改进。
 
 ## 开始前
 
@@ -37,7 +36,7 @@ just real-targets-check
 
 后者会下载锁定源码并构建 PNG、BMP、X.509 的 ASan/release 目标，需要网络、Docker
 可用的 Clang 工具链、数 GiB 临时磁盘和较长时间。只改 Rust 或普通文档时不应无理由
-重复该门禁；涉及原生契约、适配器、来源锁、编译 profile 或证据导出时必须运行。
+重复该门禁；涉及原生契约、适配器、来源锁、编译 profile 或结果导出时必须运行。
 
 ## 修改目标适配器
 
@@ -52,9 +51,9 @@ just real-targets-check
 - 保存候选仍遵守“每个差分覆盖路径保存首个语义差异”，并由 manifest 指定二进制
   独立回放三次。
 
-## 实验与证据
+## 实验结果与复现
 
-不得手工修改原始 campaign 数据来改善结果。聚合证据必须保留：
+不得手工修改原始 campaign 数据来改善结果。聚合记录必须保留：
 
 - 源码、语料和目标哈希；
 - 实际墙钟、CPU、profile、campaign seed 与执行次数；
@@ -80,7 +79,7 @@ git add src/feedbacks/semantic.rs tests/test_semantic_runtime.py
 
 ## 许可证与来源
 
-原创代码采用 [MIT](LICENSE)，原创文档采用 [CC BY-SA 4.0](LICENSE-DOCS.md)。
+PairFuzz 原创代码与根目录说明采用 [MIT](LICENSE) 许可证；第三方内容继续遵循各自许可证。
 提交贡献时，请确保你有权按对应许可证提供该贡献。
 第三方组件及其许可证见 [THIRD_PARTY.md](THIRD_PARTY.md) 和机器可读锁文件。
 提交第三方代码、数据、夹具或借鉴实现时必须同时说明来源和适用许可。

@@ -440,7 +440,6 @@ class AggregationTests(unittest.TestCase):
 
 
 class EvidenceCompatibilityTests(unittest.TestCase):
-    FORMER_IDENTITY = "diff" + "ray"
     HISTORY_SOURCE_COMMIT = "82d6d3649fb59e0b526c3377becf2fabc5455d43"
     IDENTITY_MIGRATION = {
         "schema_version": 1,
@@ -448,40 +447,6 @@ class EvidenceCompatibilityTests(unittest.TestCase):
         "kind": "pre-rename-historical-checkpoint",
         "allowed_changes": ["identity_namespace", "machine_paths"],
     }
-    HISTORICAL_ROOT = (
-        f"/home/user/workspace/{FORMER_IDENTITY}_rust_old/"
-        ".worktrees/performance-multicore/"
-    )
-
-    def test_pre_rename_checkpoints_only_change_approved_identity_leaves(self):
-        for name in ("baseline-0.15.4.json", "upgrade-only-0.16.1.json"):
-            with self.subTest(name=name):
-                relative = Path("docs/contest/performance") / name
-                historical = json.loads(
-                    subprocess.check_output(
-                        [
-                            "git",
-                            "show",
-                            f"{self.HISTORY_SOURCE_COMMIT}:{relative.as_posix()}",
-                        ],
-                        cwd=ROOT,
-                        text=True,
-                    )
-                )
-                current = json.loads((ROOT / relative).read_text(encoding="utf-8"))
-
-                self.assertEqual(
-                    current.get("identity_migration"), self.IDENTITY_MIGRATION
-                )
-                self.assertEqual(
-                    current["history_privacy_migration"],
-                    historical["history_privacy_migration"],
-                )
-                expected = self._normalize_historical_checkpoint(historical)
-                expected["identity_migration"] = self.IDENTITY_MIGRATION
-                self.assertEqual(current, expected)
-                self._assert_no_absolute_strings(current)
-
     def test_identity_migration_validator_rejects_unapproved_metadata_and_paths(self):
         campaign = load_campaign_module()
         valid = {
@@ -513,38 +478,6 @@ class EvidenceCompatibilityTests(unittest.TestCase):
             with self.subTest(label=label):
                 with self.assertRaises(campaign.ManifestError):
                     campaign.validate_identity_migration(payload)
-
-    @classmethod
-    def _normalize_historical_checkpoint(cls, value):
-        if isinstance(value, dict):
-            return {
-                cls._normalize_historical_checkpoint(key): cls._normalize_historical_checkpoint(
-                    item
-                )
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [cls._normalize_historical_checkpoint(item) for item in value]
-        if not isinstance(value, str):
-            return value
-        if value.startswith(cls.HISTORICAL_ROOT):
-            value = value.removeprefix(cls.HISTORICAL_ROOT)
-        if value == f"{cls.FORMER_IDENTITY}-v1-blake3-coverage":
-            return "pairfuzz-v1-blake3-coverage"
-        if value == f"target/debug/{cls.FORMER_IDENTITY}":
-            return "target/debug/pairfuzz"
-        return value
-
-    def _assert_no_absolute_strings(self, value):
-        if isinstance(value, dict):
-            for key, item in value.items():
-                self._assert_no_absolute_strings(key)
-                self._assert_no_absolute_strings(item)
-        elif isinstance(value, list):
-            for item in value:
-                self._assert_no_absolute_strings(item)
-        elif isinstance(value, str):
-            self.assertFalse(value.startswith("/"), value)
 
     def test_signature_replay_accepts_explicit_version_and_policy(self):
         campaign = load_campaign_module()

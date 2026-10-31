@@ -7,7 +7,7 @@ from .registry import pair_names
 from .registry import pair_spec
 
 
-class EvidenceError(RuntimeError):
+class ReplayReportError(RuntimeError):
     pass
 
 
@@ -23,20 +23,20 @@ def _load_evidence(path: Path) -> dict:
     try:
         payload = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
-        raise EvidenceError(f"cannot read smoke evidence {path}: {error}") from error
+        raise ReplayReportError(f"cannot read smoke report {path}: {error}") from error
     if payload.get("schema_version") != 1:
-        raise EvidenceError(f"unsupported smoke evidence schema in {path}")
+        raise ReplayReportError(f"unsupported smoke report schema in {path}")
     return payload
 
 
 def _validate_profiles(pair: str, payload: dict) -> None:
     profiles = payload.get("profiles")
     if not isinstance(profiles, dict) or set(profiles) != {"asan", "release"}:
-        raise EvidenceError(f"{pair} evidence profiles must be exactly asan and release")
+        raise ReplayReportError(f"{pair} report profiles must be exactly asan and release")
     for name in ("asan", "release"):
         record = profiles[name]
         if record.get("profile", name) != name:
-            raise EvidenceError(f"{pair} evidence mixes profiles")
+            raise ReplayReportError(f"{pair} report mixes profiles")
         saved = record.get("solutions_saved")
         replay = record.get("replay_completeness")
         if (
@@ -47,7 +47,7 @@ def _validate_profiles(pair: str, payload: dict) -> None:
             or replay.get("audited") != saved
             or replay.get("three_run_complete") != saved
         ):
-            raise EvidenceError(f"{pair} {name} replay evidence is incomplete")
+            raise ReplayReportError(f"{pair} {name} replay report is incomplete")
         for key in (
             "wall_seconds",
             "executions",
@@ -56,7 +56,7 @@ def _validate_profiles(pair: str, payload: dict) -> None:
             "target_sha256",
         ):
             if key not in record:
-                raise EvidenceError(f"{pair} {name} evidence is missing {key}")
+                raise ReplayReportError(f"{pair} {name} report is missing {key}")
 
 
 def write_native_summary(evidence_paths, output: Path) -> Path:
@@ -65,12 +65,12 @@ def write_native_summary(evidence_paths, output: Path) -> Path:
     expected = pair_names()
     actual = tuple(payload.get("pair") for payload in payloads)
     if actual != expected:
-        raise EvidenceError(
-            f"evidence pair order must be {', '.join(expected)}, got {actual}"
+        raise ReplayReportError(
+            f"report pair order must be {', '.join(expected)}, got {actual}"
         )
     seeds = {payload.get("campaign_seed") for payload in payloads}
     if len(seeds) != 1 or None in seeds:
-        raise EvidenceError("all native smoke evidence must use the same seed")
+        raise ReplayReportError("all native smoke reports must use the same seed")
     pairs = []
     for path, payload in zip(paths, payloads):
         pair = payload["pair"]
@@ -131,7 +131,7 @@ def write_smoke_evidence(
 ) -> Path:
     root = Path(root).resolve()
     if set(campaign_summaries) != {"asan", "release"}:
-        raise EvidenceError("smoke evidence requires exactly asan and release campaigns")
+        raise ReplayReportError("smoke report requires exactly asan and release campaigns")
     lock = json.loads((root / "third_party/real-targets.lock.json").read_text())
     locked = {entry["name"]: entry for entry in lock["sources"]}
     profiles = {}
@@ -149,7 +149,7 @@ def write_smoke_evidence(
             or summary.get("pair") != pair
             or summary.get("profile") != profile
         ):
-            raise EvidenceError(f"{profile} campaign does not match {pair}")
+            raise ReplayReportError(f"{profile} campaign does not match {pair}")
         campaign_root = summary_path.parent
         campaign = json.loads((campaign_root / "campaign.json").read_text())
         manifest_path = Path(campaign["manifest"]).resolve()
@@ -161,22 +161,22 @@ def write_smoke_evidence(
             or summary.get("target_sha256")
             != {role: manifest["targets"][role]["sha256"] for role in ("a", "b")}
         ):
-            raise EvidenceError(f"{pair} {profile} mixes build manifests")
+            raise ReplayReportError(f"{pair} {profile} mixes build manifests")
         replays = summary.get("replays")
         saved = summary.get("solutions_saved")
         if type(saved) is not int or not isinstance(replays, list) or len(replays) != saved:
-            raise EvidenceError(f"{pair} {profile} replay count is incomplete")
+            raise ReplayReportError(f"{pair} {profile} replay count is incomplete")
         three_run_complete = sum(
             isinstance(record.get("runs"), list) and len(record["runs"]) == 3
             for record in replays
         )
         if three_run_complete != saved:
-            raise EvidenceError(f"{pair} {profile} three-run replay is incomplete")
+            raise ReplayReportError(f"{pair} {profile} three-run replay is incomplete")
         for record in replays:
             for run in record.get("runs", []):
                 for role in ("a", "b"):
                     if run[role].get("class") == "adapter-error":
-                        raise EvidenceError(f"{pair} {profile} replay contains adapter-error")
+                        raise ReplayReportError(f"{pair} {profile} replay contains adapter-error")
         wall_seconds = summary["wall_seconds"]
         executions = summary["executions"]
         profile_record = {
@@ -212,11 +212,11 @@ def write_smoke_evidence(
         seed_identities.append(summary["seed_sha256"])
         transport_versions.add(summary.get("result_transport_version", 1))
     if len(seeds) != 1 or len(operations) != 1:
-        raise EvidenceError(f"{pair} campaigns mix seed or operation")
+        raise ReplayReportError(f"{pair} campaigns mix seed or operation")
     if source_identities[0] != source_identities[1] or seed_identities[0] != seed_identities[1]:
-        raise EvidenceError(f"{pair} campaigns mix source or seed manifests")
+        raise ReplayReportError(f"{pair} campaigns mix source or seed manifests")
     if len(transport_versions) != 1:
-        raise EvidenceError(f"{pair} campaigns mix result transport versions")
+        raise ReplayReportError(f"{pair} campaigns mix result transport versions")
     dependencies = pair_spec(pair).dependencies
     payload = {
         "schema_version": 1,

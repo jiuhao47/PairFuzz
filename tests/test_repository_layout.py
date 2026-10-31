@@ -228,7 +228,7 @@ class RepositoryLayoutTests(unittest.TestCase):
             "examples/real-targets/bmp/contract.json",
             "examples/real-targets/x509/contract.json",
             "scripts/real_targets.py",
-            "scripts/real_targets_lib/evidence.py",
+            "scripts/real_targets_lib/replay_report.py",
             "third_party/real-targets.lock.json",
         )
         for relative in required:

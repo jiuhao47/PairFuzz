@@ -20,8 +20,8 @@ from scripts.real_targets_lib.campaigns import (
     verify_manifests,
     verify_pair,
 )
-from scripts.real_targets_lib.evidence import (
-    EvidenceError,
+from scripts.real_targets_lib.replay_report import (
+    ReplayReportError,
     write_native_summary,
     write_smoke_evidence,
 )
@@ -635,17 +635,17 @@ class FinalGateTests(unittest.TestCase):
         self.assertEqual([item["pair"] for item in payload["pairs"]], list(pair_names()))
         self.assertTrue(all(Path(item["evidence"]).name.endswith(".json") for item in payload["pairs"]))
 
-        with self.assertRaisesRegex(EvidenceError, "seed"):
+        with self.assertRaisesRegex(ReplayReportError, "seed"):
             write_native_summary(
                 [self.evidence("png"), self.evidence("bmp", seed=8), self.evidence("x509")],
                 summary,
             )
-        with self.assertRaisesRegex(EvidenceError, "profiles"):
+        with self.assertRaisesRegex(ReplayReportError, "profiles"):
             write_native_summary(
                 [self.evidence("png"), self.evidence("bmp", profiles=("release",)), self.evidence("x509")],
                 summary,
             )
-        with self.assertRaisesRegex(EvidenceError, "replay"):
+        with self.assertRaisesRegex(ReplayReportError, "replay"):
             write_native_summary(
                 [self.evidence("png"), self.evidence("bmp", complete=False), self.evidence("x509")],
                 summary,
@@ -739,7 +739,7 @@ class FinalGateTests(unittest.TestCase):
             }
         ]
         summaries["release"].write_text(json.dumps(release))
-        with self.assertRaisesRegex(EvidenceError, "three-run"):
+        with self.assertRaisesRegex(ReplayReportError, "three-run"):
             write_smoke_evidence(self.root, "png", summaries, output, host={})
 
         release["solutions_saved"] = 0
@@ -750,7 +750,7 @@ class FinalGateTests(unittest.TestCase):
         release = json.loads(summaries["release"].read_text())
         release["target_sha256"]["b"] = "d" * 64
         summaries["release"].write_text(json.dumps(release))
-        with self.assertRaisesRegex(EvidenceError, "manifest"):
+        with self.assertRaisesRegex(ReplayReportError, "manifest"):
             write_smoke_evidence(self.root, "png", summaries, output, host={})
 
     def test_final_recipe_and_readme_cover_release_obligations(self):
